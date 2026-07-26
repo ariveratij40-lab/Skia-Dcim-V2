@@ -90,7 +90,7 @@ services:
       JWT_SECRET: skia_dev_jwt_secret_change_in_prod
       UPLOADS_DIR: /app/uploads
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GROQ_API_KEY: ***REMOVED***
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
       # DATABASE_URL — NUNCA usar localhost; siempre el nombre del contenedor
       DATABASE_URL: postgres://skia_user:skia_dev_pass@skia_postgres_staging:5432/skia_db?sslmode=disable
     volumes:
