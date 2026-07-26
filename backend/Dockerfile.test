@@ -1,0 +1,21 @@
+FROM golang:1.25-alpine
+
+WORKDIR /app
+
+# Instalar dependencias
+RUN apk add --no-cache git
+
+# Copiar go.mod
+COPY go.mod ./
+
+# Generar go.sum y descargar dependencias
+RUN go mod download && go mod tidy && go mod verify
+
+# Copiar código fuente
+COPY . .
+
+# Ejecutar pruebas
+RUN go test -v -cover -timeout 30s ./... 2>&1 | tee test-results.txt
+
+# Mostrar resultados
+CMD ["cat", "test-results.txt"]
