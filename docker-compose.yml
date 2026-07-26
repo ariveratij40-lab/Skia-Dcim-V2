@@ -1,0 +1,155 @@
+version: '3.8'
+
+# ============================================================
+# SKIA DCIM Platform — docker-compose.yml
+#
+# REGLAS CRÍTICAS VPS (NO MODIFICAR):
+#   - Red externa: infra_network (compartida con Nginx global)
+#   - Nginx upstream: proxy_pass http://skia_web_staging:3000
+#   - Nginx upstream: proxy_pass http://skia_api_staging:8080
+#   - DATABASE_URL siempre apunta a skia_postgres_staging:5432
+#   - NO usar localhost para PostgreSQL
+# ============================================================
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────
+  skia_postgres_staging:
+    image: postgres:16-alpine
+    container_name: skia_postgres_staging
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: skia_db
+      POSTGRES_USER: skia_user
+      POSTGRES_PASSWORD: skia_dev_pass
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - skia_postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    networks:
+      - infra_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skia_user -d skia_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────
+  skia_redis:
+    image: redis:7-alpine
+    container_name: skia_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass skia_redis_dev
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - skia_redis_data:/data
+    networks:
+      - infra_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "skia_redis_dev", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── pgAdmin ─────────────────────────────────────────────────
+  skia_pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: skia_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@skia.dev
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "127.0.0.1:5050:80"
+    networks:
+      - infra_network
+    depends_on:
+      skia_postgres_staging:
+        condition: service_healthy
+
+  # ── Backend Go API ──────────────────────────────────────────
+  skia_api_staging:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: skia_api_staging
+    restart: unless-stopped
+    environment:
+      APP_ENV: development
+      PORT: 8080
+      DB_HOST: skia_postgres_staging
+      DB_PORT: 5432
+      DB_NAME: skia_db
+      DB_USER: skia_user
+      DB_PASSWORD: skia_dev_pass
+      REDIS_HOST: skia_redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: skia_redis_dev
+      JWT_SECRET: skia_dev_jwt_secret_change_in_prod
+      UPLOADS_DIR: /app/uploads
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ***REMOVED***
+      # DATABASE_URL — NUNCA usar localhost; siempre el nombre del contenedor
+      DATABASE_URL: postgres://skia_user:skia_dev_pass@skia_postgres_staging:5432/skia_db?sslmode=disable
+    volumes:
+      - skia_uploads:/app/uploads
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - infra_network
+    depends_on:
+      skia_postgres_staging:
+        condition: service_healthy
+      skia_redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Frontend Next.js ────────────────────────────────────────
+  skia_web_staging:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: skia_web_staging
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # NEXT_PUBLIC_API_URL: usado por el cliente (browser) — apunta al dominio público
+      # INTERNAL_API_URL: usado por el servidor Next.js (SSR/rewrites) — nombre del contenedor
+      NEXT_PUBLIC_API_URL: http://skia_api_staging:8080
+      INTERNAL_API_URL: http://skia_api_staging:8080
+    ports:
+      - "127.0.0.1:3000:3000"
+    networks:
+      - infra_network
+    depends_on:
+      skia_api_staging:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+# ── Volúmenes ────────────────────────────────────────────────
+volumes:
+  skia_postgres_data:
+    driver: local
+  skia_redis_data:
+    driver: local
+  skia_uploads:
+    driver: local
+
+# ── Red externa compartida con Nginx global ──────────────────
+# CRÍTICO: NO cambiar a bridge local ni crear redes nuevas.
+# Nginx del VPS usa esta red para resolver los upstreams:
+#   proxy_pass http://skia_web_staging:3000;
+#   proxy_pass http://skia_api_staging:8080;
+networks:
+  infra_network:
+    external: true
