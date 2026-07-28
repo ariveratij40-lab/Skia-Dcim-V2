@@ -146,6 +146,7 @@ func main() {
 	http.HandleFunc("/api/auth/login", handleLogin)
 	http.HandleFunc("/api/auth/register", handleRegister)
 	http.HandleFunc("/api/auth/forgot-password", handleForgotPassword)
+	http.HandleFunc("/api/auth/reset-password", handleResetPassword)
 	http.HandleFunc("/api/auth/tenants", handleGetTenants)
 	http.HandleFunc("/api/auth/select-tenant", handleSelectTenant)
 	http.HandleFunc("/api/auth/select-branch", handleSelectBranch)
@@ -884,11 +885,92 @@ type ForgotPasswordRequest struct {
 	Email string `json:"email"`
 }
 
+type ResetPasswordRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
+// generateResetToken genera un token seguro de 48 bytes en base64 URL-safe
+func generateResetToken() (string, error) {
+	b := make([]byte, 48)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+// sendPasswordResetEmail envía el correo de recuperación via Resend API
+func sendPasswordResetEmail(toEmail, toName, resetLink string) error {
+	resendKey := os.Getenv("RESEND_API_KEY")
+	if resendKey == "" {
+		log.Printf("[WARN] RESEND_API_KEY no configurado, simulando envío a %s", toEmail)
+		log.Printf("[RESET LINK] %s", resetLink)
+		return nil
+	}
+
+	htmlBody := fmt.Sprintf(`
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background:#0f172a; margin:0; padding:40px 20px;">
+  <div style="max-width:520px; margin:0 auto; background:#1e293b; border-radius:12px; overflow:hidden; border:1px solid #334155;">
+    <div style="background:linear-gradient(135deg,#1d4ed8,#0ea5e9); padding:32px; text-align:center;">
+      <h1 style="color:#fff; margin:0; font-size:24px; font-weight:700;">SKIA DCIM</h1>
+      <p style="color:#bfdbfe; margin:8px 0 0; font-size:13px;">Plataforma de Infraestructura Física</p>
+    </div>
+    <div style="padding:40px 32px;">
+      <h2 style="color:#f1f5f9; font-size:20px; margin:0 0 16px;">Recupera tu contraseña</h2>
+      <p style="color:#94a3b8; font-size:15px; line-height:1.6; margin:0 0 24px;">Hola <strong style="color:#e2e8f0;">%s</strong>, recibimos una solicitud para restablecer la contraseña de tu cuenta SKIA DCIM.</p>
+      <div style="text-align:center; margin:32px 0;">
+        <a href="%s" style="display:inline-block; background:linear-gradient(135deg,#1d4ed8,#0ea5e9); color:#fff; text-decoration:none; padding:14px 32px; border-radius:8px; font-size:15px; font-weight:600;">Restablecer contraseña</a>
+      </div>
+      <p style="color:#64748b; font-size:13px; line-height:1.6; margin:24px 0 0;">Este enlace expirará en <strong>1 hora</strong>. Si no solicitaste este cambio, puedes ignorar este correo.</p>
+      <hr style="border:none; border-top:1px solid #334155; margin:24px 0;">
+      <p style="color:#475569; font-size:12px; margin:0;">Si el botón no funciona, copia y pega este enlace en tu navegador:<br><span style="color:#60a5fa; word-break:break-all;">%s</span></p>
+    </div>
+    <div style="background:#0f172a; padding:20px 32px; text-align:center;">
+      <p style="color:#475569; font-size:12px; margin:0;">© 2025 SKIA DCIM · <a href="https://skia.iamet.mx" style="color:#60a5fa; text-decoration:none;">skia.iamet.mx</a></p>
+    </div>
+  </div>
+</body>
+</html>`, toName, resetLink, resetLink)
+
+	payload := map[string]interface{}{
+		"from":    "SKIA DCIM <noreply@iamet.mx>",
+		"to":      []string{toEmail},
+		"subject": "Recupera tu contraseña — SKIA DCIM",
+		"html":    htmlBody,
+	}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest("POST", "https://api.resend.com/emails", strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+resendKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("resend error %d: %s", resp.StatusCode, string(respBody))
+	}
+	log.Printf("✅ Correo de reset enviado a %s via Resend", toEmail)
+	return nil
+}
+
 func handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	var req ForgotPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -899,13 +981,126 @@ func handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": "El correo es obligatorio"})
 		return
 	}
-	// Siempre responder OK (seguridad: no revelar si el email existe)
-	// En producción aquí se enviaría el correo con el enlace de reset
-	log.Printf("Password reset requested for: %s", req.Email)
+
+	// Buscar usuario (respuesta genérica por seguridad)
+	var userID, userName string
+	err := db.QueryRow(
+		"SELECT id, name FROM users WHERE email = $1 AND status = 'active' LIMIT 1",
+		req.Email,
+	).Scan(&userID, &userName)
+
+	if err == nil {
+		// Usuario existe: generar token y guardarlo
+		token, tokenErr := generateResetToken()
+		if tokenErr == nil {
+			expiresAt := time.Now().Add(1 * time.Hour)
+			_, dbErr := db.Exec(
+				`INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)`,
+				userID, token, expiresAt,
+			)
+			if dbErr == nil {
+				baseURL := os.Getenv("APP_BASE_URL")
+				if baseURL == "" {
+					baseURL = "https://skia.iamet.mx"
+				}
+				resetLink := fmt.Sprintf("%s/reset-password?token=%s", baseURL, token)
+				if sendErr := sendPasswordResetEmail(req.Email, userName, resetLink); sendErr != nil {
+					log.Printf("[ERROR] Error enviando correo de reset a %s: %v", req.Email, sendErr)
+				}
+			} else {
+				log.Printf("[ERROR] Error guardando token de reset: %v", dbErr)
+			}
+		}
+	}
+
+	// Siempre responder OK (no revelar si el email existe)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "ok",
 		"message": "Si el correo está registrado, recibirás las instrucciones en breve.",
+	})
+}
+
+func handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	var req ResetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Token == "" || req.Password == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Token y contraseña son obligatorios"})
+		return
+	}
+	if len(req.Password) < 6 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "La contraseña debe tener al menos 6 caracteres"})
+		return
+	}
+
+	// Buscar token válido
+	var tokenID, userID string
+	var expiresAt time.Time
+	var used bool
+	err := db.QueryRow(
+		`SELECT id, user_id, expires_at, used FROM password_reset_tokens WHERE token = $1 LIMIT 1`,
+		req.Token,
+	).Scan(&tokenID, &userID, &expiresAt, &used)
+
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Token inválido o expirado"})
+		return
+	}
+	if used {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Este enlace ya fue utilizado"})
+		return
+	}
+	if time.Now().After(expiresAt) {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "El enlace ha expirado. Solicita uno nuevo."})
+		return
+	}
+
+	// Hashear nueva contraseña
+	newHash := hashPassword(req.Password)
+
+	// Actualizar contraseña y marcar token como usado en transacción
+	tx, err := db.Begin()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Error interno"})
+		return
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("UPDATE users SET password_hash = $1 WHERE id = $2", newHash, userID); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Error actualizando contraseña"})
+		return
+	}
+	if _, err := tx.Exec("UPDATE password_reset_tokens SET used = TRUE WHERE id = $1", tokenID); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Error interno"})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Error interno"})
+		return
+	}
+
+	log.Printf("✅ Contraseña restablecida para usuario %s", userID)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"message": "Contraseña actualizada correctamente. Ya puedes iniciar sesión.",
 	})
 }
 

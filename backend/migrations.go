@@ -244,6 +244,22 @@ CREATE INDEX IF NOT EXISTS idx_capex_items_capex ON capex_line_items(capex_id);
 CREATE INDEX IF NOT EXISTS idx_capex_items_tenant ON capex_line_items(tenant_id);
 `,
 		},
+		{
+			version: "011_password_reset_tokens",
+			sql: `
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token       VARCHAR(128) NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    used        BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+`,
+		},
 	}
 
 	for _, m := range migrations {
