@@ -91,6 +91,11 @@ services:
       UPLOADS_DIR: /app/uploads
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      # Google OAuth2
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-402857908300-k0no4a68lhgu8f3r03kcq89hetg4mnsa.apps.googleusercontent.com}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-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}
+      GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-https://skia.iamet.mx/api/auth/google/callback}
+      FRONTEND_URL: ${FRONTEND_URL:-https://skia.iamet.mx}
       # DATABASE_URL — NUNCA usar localhost; siempre el nombre del contenedor
       DATABASE_URL: postgres://skia_user:skia_dev_pass@skia_postgres_staging:5432/skia_db?sslmode=disable
     volumes:

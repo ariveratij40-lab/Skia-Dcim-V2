@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import Image from 'next/image';
 import axios from 'axios';
@@ -36,12 +36,39 @@ export default function LoginPage() {
   const [forgotError, setForgotError] = useState('');
   const [forgotSuccess, setForgotSuccess] = useState('');
 
+  // Google OAuth loading
+  const [googleLoading, setGoogleLoading] = useState(false);
+
   // Slide animation
   const [slide, setSlide] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setSlide(s => (s + 1) % 4), 5000);
     return () => clearInterval(t);
   }, []);
+
+  // Leer errores OAuth de la URL (ej: ?error=google_denied)
+  useEffect(() => {
+    const errorParam = router.query.error as string;
+    if (errorParam) {
+      const errorMessages: Record<string, string> = {
+        google_denied: 'Cancelaste el acceso con Google.',
+        state_mismatch: 'Error de seguridad. Intenta de nuevo.',
+        token_exchange: 'Error al conectar con Google. Intenta de nuevo.',
+        user_info: 'No se pudo obtener tu información de Google.',
+        email_not_verified: 'Tu cuenta de Google no tiene el correo verificado.',
+        server_error: 'Error interno del servidor. Intenta de nuevo.',
+        no_code: 'No se recibió código de autorización de Google.',
+      };
+      setLoginError(errorMessages[errorParam] ?? 'Error al iniciar sesión con Google.');
+      // Limpiar el parámetro de la URL
+      router.replace('/login', undefined, { shallow: true });
+    }
+  }, [router.query.error]);
+
+  const handleGoogleLogin = () => {
+    setGoogleLoading(true);
+    window.location.href = '/api/auth/google';
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -165,7 +192,7 @@ export default function LoginPage() {
               <Divider />
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 18 }}>
-                <SBtn icon={<GoogleIcon />} label="Google" />
+                <SBtn icon={googleLoading ? <Spin /> : <GoogleIcon />} label={googleLoading ? 'Redirigiendo...' : 'Google'} onClick={handleGoogleLogin} />
                 <SBtn icon={<AppleIcon />} label="Apple" />
               </div>
 
@@ -469,10 +496,10 @@ function Divider() {
   );
 }
 
-function SBtn({ icon, label }: { icon: React.ReactNode; label: string }) {
+function SBtn({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick?: () => void }) {
   const [h, setH] = useState(false);
   return (
-    <button type="button" onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+    <button type="button" onClick={onClick} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 14px', border: '1.5px solid #E2E8F0', borderRadius: 11, background: h ? '#F8FAFF' : '#fff', fontSize: '0.83rem', fontWeight: 600, color: '#374151', cursor: 'pointer', transition: 'all 150ms' }}>
       {icon}{label}
     </button>

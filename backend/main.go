@@ -153,6 +153,10 @@ func main() {
 	http.HandleFunc("/api/navigation/sidebar", handleGetSidebar)
 	http.HandleFunc("/api/auth/logout", handleLogout)
 
+	// Rutas Google OAuth2
+	http.HandleFunc("/api/auth/google", handleGoogleLogin)
+	http.HandleFunc("/api/auth/google/callback", handleGoogleCallback)
+
 	// Rutas DCIM
 	dcim := NewDCIMHandler(db)
 	http.HandleFunc("/api/dcim/assets", dcim.HandleAssets)
