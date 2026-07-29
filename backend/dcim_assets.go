@@ -308,12 +308,14 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		assets = append(assets, a)
 	}
 	
-	// Agregar activos importados
+	// Agregar activos importados — filtrado por tenant_id y branch_id de la sesión activa
+	// INVARIANTE INV-DCM-0012: toda fuente de datos agregada a un listado debe pasar
+	// por el mismo filtro de tenant que la fuente primaria (corrige F-AST-01)
 	importedQuery := `
 		SELECT 
 			CAST(id AS TEXT) as id,
-			'default' as tenant_id,
-			'default' as branch_id,
+			tenant_id,
+			branch_id,
 			asset_type as asset_type_id,
 			asset_type as asset_type_code,
 			asset_type as asset_type_name,
@@ -331,9 +333,10 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 			created_at,
 			updated_at
 		FROM imported_assets
+		WHERE tenant_id = $1 AND branch_id = $2
 	`
 	
-	importedRows, err := h.DB.Query(importedQuery)
+	importedRows, err := h.DB.Query(importedQuery, tenantID, branchID)
 	if err == nil {
 		defer importedRows.Close()
 		for importedRows.Next() {
