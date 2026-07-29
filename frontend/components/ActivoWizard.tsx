@@ -64,7 +64,7 @@ interface WizardForm {
 
 interface Props {
   onClose: () => void;
-  onSave: (internalCode: string) => void;
+  onSave: (internalCode: string, assetTypeCode?: string) => void;
   initial?: Partial<WizardForm>;
 }
 
@@ -226,7 +226,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
       };
       const res = await axios.post('/api/dcim/assets', payload);
       const internalCode: string = res.data?.internal_code ?? '';
-      onSave(internalCode);                                                  // devuelve el código generado por el backend
+      onSave(internalCode, form.asset_type_code);  // devuelve código + tipo para activar filtro (fix F-AST-BUG-01)
     } catch (err: unknown) {
       const axErr = err as { response?: { data?: { error?: string } } };
       setSaveError(axErr.response?.data?.error ?? 'Error al guardar el activo');

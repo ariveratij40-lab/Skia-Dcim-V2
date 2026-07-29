@@ -314,7 +314,7 @@ function AssetCard({ asset, onEdit, onDelete }: AssetCardProps) {
 // ============================================================
 interface AssetModalProps {
   asset: Asset | null; assetTypes: AssetType[]; locations: Location[];
-  onClose: () => void; onSave: () => void;
+  onClose: () => void; onSave: (assetTypeCode?: string) => void;
 }
 
 function AssetModal({ asset, assetTypes, locations, onClose, onSave }: AssetModalProps) {
@@ -342,9 +342,15 @@ function AssetModal({ asset, assetTypes, locations, onClose, onSave }: AssetModa
         install_year: form.install_year ? parseInt(form.install_year) : null,
         observations: form.observations || null,
       };
-      if (isEdit) await axios.put(`/api/dcim/assets/${asset.id}`, payload);
-      else await axios.post('/api/dcim/assets', payload);
-      onSave();
+      if (isEdit) {
+        await axios.put(`/api/dcim/assets/${asset.id}`, payload);
+        onSave();
+      } else {
+        await axios.post('/api/dcim/assets', payload);
+        // Devolver el código de tipo para activar el filtro correcto en la vista
+        const typeCode = assetTypes.find(t => t.id === form.asset_type_id)?.code;
+        onSave(typeCode);
+      }
     } catch (err: any) {
       setFormError(err.response?.data?.error ?? 'Error al guardar el activo');
     } finally { setSaving(false); }
@@ -817,19 +823,30 @@ function AssetsContent() {
         <AssetModal
           asset={editingAsset} assetTypes={assetTypes} locations={locations}
           onClose={() => { setShowModal(false); setEditingAsset(null); }}
-          onSave={() => { setShowModal(false); setEditingAsset(null); loadCounts(); if (isFilterActive) loadAssets(); }}
+          onSave={(assetTypeCode?: string) => {
+            setShowModal(false); setEditingAsset(null); loadCounts();
+            // Fix bug visibilidad: si es creación nueva, activar filtro por tipo
+            if (assetTypeCode && !editingAsset) {
+              setActiveCategory(assetTypeCode);
+            } else if (isFilterActive) {
+              loadAssets();
+            }
+          }}
         />
       )}
       {showActivoWizard && (
         <ActivoWizard
           onClose={() => setShowActivoWizard(false)}
-          onSave={(internalCode: string) => {
+          onSave={(internalCode: string, assetTypeCode?: string) => {
             setShowActivoWizard(false);
             loadCounts();
-            loadAssets();
-            if (internalCode) {
-              // Mostrar brevemente el código generado por el backend (INV-DCM-0015)
-              console.info('[DCIM] Activo creado con código:', internalCode);
+            // Fix bug visibilidad (F-AST-BUG-01): activar filtro por tipo para mostrar el activo recién creado
+            // Si el wizard devuelve el código de tipo, activar la categoría correspondiente
+            if (assetTypeCode) {
+              setActiveCategory(assetTypeCode);
+            } else if (internalCode) {
+              // Fallback: buscar por código interno generado
+              setSearch(internalCode);
             }
           }}
         />

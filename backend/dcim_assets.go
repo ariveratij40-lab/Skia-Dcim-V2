@@ -1393,3 +1393,327 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 		"logs":      logs,
 	})
 }
+
+// ==========================================
+// CATÁLOGOS MAESTROS — CRUD completo
+// ==========================================
+
+// HandleManufacturers — /api/dcim/catalogs/manufacturers y /api/dcim/catalogs/manufacturers/{id}
+func (h *DCIMHandler) HandleManufacturers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, tenantID, _, err := h.getSessionContext(r)
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	path := r.URL.Path
+	mfID := ""
+	pfx := "/api/dcim/catalogs/manufacturers/"
+	if len(path) > len(pfx) {
+		mfID = path[len(pfx):]
+	}
+	switch r.Method {
+	case http.MethodGet:
+		rows, err := h.DB.Query(
+			`SELECT id, name, COALESCE(logo_url,''), COALESCE(website,''), COALESCE(country,''),
+			        COALESCE(contact,''), status, COALESCE(notes,''), created_at
+			 FROM catalogs_manufacturers WHERE tenant_id=$1 ORDER BY name`, tenantID)
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return
+		}
+		defer rows.Close()
+		type MF struct {
+			ID string `json:"id"`; Name string `json:"name"`; LogoURL string `json:"logo_url"`
+			Website string `json:"website"`; Country string `json:"country"`; Contact string `json:"contact"`
+			Status string `json:"status"`; Notes string `json:"notes"`; CreatedAt string `json:"created_at"`
+		}
+		list := []MF{}
+		for rows.Next() {
+			var m MF; var ca interface{}
+			if err := rows.Scan(&m.ID, &m.Name, &m.LogoURL, &m.Website, &m.Country, &m.Contact, &m.Status, &m.Notes, &ca); err == nil {
+				m.CreatedAt = fmt.Sprintf("%v", ca); list = append(list, m)
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"manufacturers": list})
+	case http.MethodPost:
+		var b struct {
+			Name string `json:"name"`; LogoURL string `json:"logo_url"`; Website string `json:"website"`
+			Country string `json:"country"`; Contact string `json:"contact"`; Notes string `json:"notes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Name == "" {
+			http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest); return
+		}
+		newID := uuid.New().String()
+		_, err := h.DB.Exec(
+			`INSERT INTO catalogs_manufacturers (id,tenant_id,name,logo_url,website,country,contact,notes)
+			 VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))`,
+			newID, tenantID, b.Name, b.LogoURL, b.Website, b.Country, b.Contact, b.Notes)
+		if err != nil {
+			if strings.Contains(err.Error(), "unique") {
+				http.Error(w, `{"error":"manufacturer already exists"}`, http.StatusConflict); return
+			}
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"id": newID, "name": b.Name})
+	case http.MethodPut:
+		if mfID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		var b struct {
+			Name string `json:"name"`; LogoURL string `json:"logo_url"`; Website string `json:"website"`
+			Country string `json:"country"`; Contact string `json:"contact"`; Notes string `json:"notes"`
+			Status string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+		}
+		_, err := h.DB.Exec(
+			`UPDATE catalogs_manufacturers SET name=$1,logo_url=NULLIF($2,''),website=NULLIF($3,''),
+			 country=NULLIF($4,''),contact=NULLIF($5,''),notes=NULLIF($6,''),
+			 status=COALESCE(NULLIF($7,''),'active'),updated_at=now() WHERE id=$8 AND tenant_id=$9`,
+			b.Name, b.LogoURL, b.Website, b.Country, b.Contact, b.Notes, b.Status, mfID, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		json.NewEncoder(w).Encode(map[string]string{"id": mfID, "status": "updated"})
+	case http.MethodDelete:
+		if mfID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		_, err := h.DB.Exec(`UPDATE catalogs_manufacturers SET status='inactive',updated_at=now() WHERE id=$1 AND tenant_id=$2`, mfID, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		json.NewEncoder(w).Encode(map[string]string{"id": mfID, "status": "deactivated"})
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// HandleProviders — /api/dcim/catalogs/providers y /api/dcim/catalogs/providers/{id}
+func (h *DCIMHandler) HandleProviders(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, tenantID, _, err := h.getSessionContext(r)
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized); return
+	}
+	path := r.URL.Path
+	pvID := ""
+	pfx := "/api/dcim/catalogs/providers/"
+	if len(path) > len(pfx) { pvID = path[len(pfx):] }
+	switch r.Method {
+	case http.MethodGet:
+		rows, err := h.DB.Query(
+			`SELECT id,provider_type,legal_name,COALESCE(trade_name,''),COALESCE(tax_id,''),
+			        COALESCE(contact_name,''),COALESCE(email,''),COALESCE(phone,''),
+			        COALESCE(website,''),status,COALESCE(notes,''),created_at
+			 FROM catalogs_providers WHERE tenant_id=$1 ORDER BY legal_name`, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		defer rows.Close()
+		type PV struct {
+			ID string `json:"id"`; ProviderType string `json:"provider_type"`; LegalName string `json:"legal_name"`
+			TradeName string `json:"trade_name"`; TaxID string `json:"tax_id"`; ContactName string `json:"contact_name"`
+			Email string `json:"email"`; Phone string `json:"phone"`; Website string `json:"website"`
+			Status string `json:"status"`; Notes string `json:"notes"`; CreatedAt string `json:"created_at"`
+		}
+		list := []PV{}
+		for rows.Next() {
+			var p PV; var ca interface{}
+			if err := rows.Scan(&p.ID, &p.ProviderType, &p.LegalName, &p.TradeName, &p.TaxID,
+				&p.ContactName, &p.Email, &p.Phone, &p.Website, &p.Status, &p.Notes, &ca); err == nil {
+				p.CreatedAt = fmt.Sprintf("%v", ca); list = append(list, p)
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"providers": list})
+	case http.MethodPost:
+		var b struct {
+			ProviderType string `json:"provider_type"`; LegalName string `json:"legal_name"`
+			TradeName string `json:"trade_name"`; TaxID string `json:"tax_id"`
+			ContactName string `json:"contact_name"`; Email string `json:"email"`
+			Phone string `json:"phone"`; Website string `json:"website"`; Notes string `json:"notes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.LegalName == "" {
+			http.Error(w, `{"error":"legal_name is required"}`, http.StatusBadRequest); return
+		}
+		if b.ProviderType == "" { b.ProviderType = "integrator" }
+		newID := uuid.New().String()
+		_, err := h.DB.Exec(
+			`INSERT INTO catalogs_providers (id,tenant_id,provider_type,legal_name,trade_name,tax_id,contact_name,email,phone,website,notes)
+			 VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),NULLIF($11,''))`,
+			newID, tenantID, b.ProviderType, b.LegalName, b.TradeName, b.TaxID, b.ContactName, b.Email, b.Phone, b.Website, b.Notes)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"id": newID, "legal_name": b.LegalName})
+	case http.MethodPut:
+		if pvID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		var b struct {
+			ProviderType string `json:"provider_type"`; LegalName string `json:"legal_name"`
+			TradeName string `json:"trade_name"`; TaxID string `json:"tax_id"`
+			ContactName string `json:"contact_name"`; Email string `json:"email"`
+			Phone string `json:"phone"`; Website string `json:"website"`; Notes string `json:"notes"`; Status string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+		}
+		_, err := h.DB.Exec(
+			`UPDATE catalogs_providers SET provider_type=COALESCE(NULLIF($1,''),'integrator'),legal_name=$2,
+			 trade_name=NULLIF($3,''),tax_id=NULLIF($4,''),contact_name=NULLIF($5,''),
+			 email=NULLIF($6,''),phone=NULLIF($7,''),website=NULLIF($8,''),
+			 notes=NULLIF($9,''),status=COALESCE(NULLIF($10,''),'active'),updated_at=now()
+			 WHERE id=$11 AND tenant_id=$12`,
+			b.ProviderType, b.LegalName, b.TradeName, b.TaxID, b.ContactName, b.Email, b.Phone, b.Website, b.Notes, b.Status, pvID, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		json.NewEncoder(w).Encode(map[string]string{"id": pvID, "status": "updated"})
+	case http.MethodDelete:
+		if pvID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		_, err := h.DB.Exec(`UPDATE catalogs_providers SET status='inactive',updated_at=now() WHERE id=$1 AND tenant_id=$2`, pvID, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		json.NewEncoder(w).Encode(map[string]string{"id": pvID, "status": "deactivated"})
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// HandleNamingRules — /api/dcim/catalogs/naming-rules y /api/dcim/catalogs/naming-rules/{id}
+func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, tenantID, _, err := h.getSessionContext(r)
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized); return
+	}
+	path := r.URL.Path
+	ruleID := ""
+	pfx := "/api/dcim/catalogs/naming-rules/"
+	if len(path) > len(pfx) { ruleID = path[len(pfx):] }
+	switch r.Method {
+	case http.MethodGet:
+		rows, err := h.DB.Query(
+			`SELECT nr.id, nr.asset_type_code, at.name,
+			        nr.prefix, nr.separator, nr.include_branch, nr.include_location,
+			        nr.seq_digits, nr.reset_per_location, nr.last_seq, nr.updated_at
+			 FROM naming_rules nr
+			 JOIN asset_types at ON at.code = nr.asset_type_code
+			 WHERE nr.tenant_id=$1 ORDER BY at.name`, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		defer rows.Close()
+		type Rule struct {
+			ID string `json:"id"`; AssetTypeCode string `json:"asset_type_code"`; AssetTypeName string `json:"asset_type_name"`
+			Prefix string `json:"prefix"`; Separator string `json:"separator"`
+			IncludeBranch bool `json:"include_branch"`; IncludeLocation bool `json:"include_location"`
+			SeqDigits int `json:"seq_digits"`; ResetPerLocation bool `json:"reset_per_location"`
+			LastSeq int `json:"last_seq"`; UpdatedAt string `json:"updated_at"`; NextCode string `json:"next_code_preview"`
+		}
+		list := []Rule{}
+		for rows.Next() {
+			var rule Rule; var ua interface{}
+			if err := rows.Scan(&rule.ID, &rule.AssetTypeCode, &rule.AssetTypeName,
+				&rule.Prefix, &rule.Separator, &rule.IncludeBranch, &rule.IncludeLocation,
+				&rule.SeqDigits, &rule.ResetPerLocation, &rule.LastSeq, &ua); err == nil {
+				rule.UpdatedAt = fmt.Sprintf("%v", ua)
+				rule.NextCode = rule.Prefix + rule.Separator + fmt.Sprintf("%0*d", rule.SeqDigits, rule.LastSeq+1)
+				list = append(list, rule)
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"naming_rules": list})
+	case http.MethodPut:
+		if ruleID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		var b struct {
+			Prefix string `json:"prefix"`; Separator string `json:"separator"`
+			IncludeBranch *bool `json:"include_branch"`; IncludeLocation *bool `json:"include_location"`
+			SeqDigits *int `json:"seq_digits"`; ResetPerLocation *bool `json:"reset_per_location"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+		}
+		_, err := h.DB.Exec(
+			`UPDATE naming_rules
+			 SET prefix=CASE WHEN $1!='' THEN $1 ELSE prefix END,
+			     separator=CASE WHEN $2!='' THEN $2 ELSE separator END,
+			     include_branch=COALESCE($3,include_branch),
+			     include_location=COALESCE($4,include_location),
+			     seq_digits=COALESCE($5,seq_digits),
+			     reset_per_location=COALESCE($6,reset_per_location),
+			     updated_at=now()
+			 WHERE id=$7 AND tenant_id=$8`,
+			b.Prefix, b.Separator, b.IncludeBranch, b.IncludeLocation, b.SeqDigits, b.ResetPerLocation, ruleID, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		json.NewEncoder(w).Encode(map[string]string{"id": ruleID, "status": "updated"})
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// HandleLocationsManage — /api/dcim/catalogs/locations y /api/dcim/catalogs/locations/{id}
+func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, tenantID, branchID, err := h.getSessionContext(r)
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized); return
+	}
+	path := r.URL.Path
+	locID := ""
+	pfx := "/api/dcim/catalogs/locations/"
+	if len(path) > len(pfx) { locID = path[len(pfx):] }
+	switch r.Method {
+	case http.MethodGet:
+		rows, err := h.DB.Query(
+			`SELECT l.id, l.name, COALESCE(l.floor,''), COALESCE(l.room,''), COALESCE(l.zone,''),
+			        COALESCE(l.description,''), l.created_at, COUNT(a.id) as asset_count
+			 FROM locations l
+			 LEFT JOIN assets a ON a.location_id=l.id AND a.tenant_id=l.tenant_id
+			 WHERE l.tenant_id=$1 AND l.branch_id=$2
+			 GROUP BY l.id,l.name,l.floor,l.room,l.zone,l.description,l.created_at
+			 ORDER BY l.name`, tenantID, branchID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		defer rows.Close()
+		type Loc struct {
+			ID string `json:"id"`; Name string `json:"name"`; Floor string `json:"floor"`
+			Room string `json:"room"`; Zone string `json:"zone"`; Description string `json:"description"`
+			CreatedAt string `json:"created_at"`; AssetCount int `json:"asset_count"`
+		}
+		list := []Loc{}
+		for rows.Next() {
+			var l Loc; var ca interface{}
+			if err := rows.Scan(&l.ID, &l.Name, &l.Floor, &l.Room, &l.Zone, &l.Description, &ca, &l.AssetCount); err == nil {
+				l.CreatedAt = fmt.Sprintf("%v", ca); list = append(list, l)
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"locations": list})
+	case http.MethodPost:
+		var b struct {
+			Name string `json:"name"`; Floor string `json:"floor"`; Room string `json:"room"`
+			Zone string `json:"zone"`; Description string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Name == "" {
+			http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest); return
+		}
+		newID := uuid.New().String()
+		_, err := h.DB.Exec(
+			`INSERT INTO locations (id,tenant_id,branch_id,name,floor,room,zone,description)
+			 VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))`,
+			newID, tenantID, branchID, b.Name, b.Floor, b.Room, b.Zone, b.Description)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"id": newID, "name": b.Name})
+	case http.MethodPut:
+		if locID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		var b struct {
+			Name string `json:"name"`; Floor string `json:"floor"`; Room string `json:"room"`
+			Zone string `json:"zone"`; Description string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+		}
+		_, err := h.DB.Exec(
+			`UPDATE locations SET name=$1,floor=NULLIF($2,''),room=NULLIF($3,''),zone=NULLIF($4,''),
+			 description=NULLIF($5,''),updated_at=now() WHERE id=$6 AND tenant_id=$7`,
+			b.Name, b.Floor, b.Room, b.Zone, b.Description, locID, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		json.NewEncoder(w).Encode(map[string]string{"id": locID, "status": "updated"})
+	case http.MethodDelete:
+		if locID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		var count int
+		h.DB.QueryRow(`SELECT COUNT(*) FROM assets WHERE location_id=$1 AND tenant_id=$2`, locID, tenantID).Scan(&count)
+		if count > 0 {
+			http.Error(w, fmt.Sprintf(`{"error":"cannot delete: location has %d assets assigned"}`, count), http.StatusConflict); return
+		}
+		_, err := h.DB.Exec(`DELETE FROM locations WHERE id=$1 AND tenant_id=$2`, locID, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		json.NewEncoder(w).Encode(map[string]string{"id": locID, "status": "deleted"})
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}

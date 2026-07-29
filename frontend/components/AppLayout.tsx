@@ -33,6 +33,10 @@ const NAVIGATION: NavItem[] = [
       { id:'etiquetas-rfid', label:'Etiquetas RFID', icon:Tag,       path:'/infraestructura/etiquetas-rfid' },
       { id:'import-inventory', label:'Importar Inventario', icon:Upload, path:'/infraestructura/import-inventory' },
       { id:'import-dashboard', label:'Dashboard Importación', icon:BarChart3, path:'/infraestructura/import-dashboard' },
+      { id:'fabricantes',   label:'Fabricantes',   icon:BookOpen, path:'/infraestructura/catalogs/fabricantes' },
+      { id:'proveedores',   label:'Proveedores',   icon:Puzzle,   path:'/infraestructura/catalogs/proveedores' },
+      { id:'ubicaciones',   label:'Ubicaciones',   icon:Map,      path:'/infraestructura/catalogs/ubicaciones' },
+      { id:'nomenclaturas', label:'Nomenclaturas', icon:Tag,      path:'/infraestructura/catalogs/nomenclaturas' },
     ],
   },
   {

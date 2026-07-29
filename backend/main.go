@@ -170,6 +170,16 @@ func main() {
 	// Fase 2: módulo RFID real (INV-TRK-0001)
 	http.HandleFunc("/api/dcim/rfid/", dcim.HandleRFID)
 
+	// Catálogos maestros CRUD (Fase 2 — INV-DCM-0014)
+	http.HandleFunc("/api/dcim/catalogs/manufacturers", dcim.HandleManufacturers)
+	http.HandleFunc("/api/dcim/catalogs/manufacturers/", dcim.HandleManufacturers)
+	http.HandleFunc("/api/dcim/catalogs/providers", dcim.HandleProviders)
+	http.HandleFunc("/api/dcim/catalogs/providers/", dcim.HandleProviders)
+	http.HandleFunc("/api/dcim/catalogs/naming-rules", dcim.HandleNamingRules)
+	http.HandleFunc("/api/dcim/catalogs/naming-rules/", dcim.HandleNamingRules)
+	http.HandleFunc("/api/dcim/catalogs/locations", dcim.HandleLocationsManage)
+	http.HandleFunc("/api/dcim/catalogs/locations/", dcim.HandleLocationsManage)
+
 	// Infraestructura DCIM — endpoints por módulo
 	http.HandleFunc("/api/infra/mdf-idf", handleMdfIdf)
 	http.HandleFunc("/api/infra/racks", handleRacks)
@@ -758,6 +768,15 @@ func buildSidebar(role string) []SidebarItem {
 				Children: []SidebarItem{
 					{ID: "assets", Label: "Activos", Icon: "Package", Path: "/infrastructure/assets"},
 					{ID: "racks", Label: "Racks", Icon: "Grid3x3", Path: "/infrastructure/racks"},
+					{
+						ID: "catalogs", Label: "Catálogos", Icon: "BookOpen", Path: "/infrastructure/catalogs",
+						Children: []SidebarItem{
+							{ID: "manufacturers", Label: "Fabricantes", Icon: "Factory", Path: "/infrastructure/catalogs/fabricantes"},
+							{ID: "providers", Label: "Proveedores", Icon: "Truck", Path: "/infrastructure/catalogs/proveedores"},
+							{ID: "locations", Label: "Ubicaciones", Icon: "MapPin", Path: "/infrastructure/catalogs/ubicaciones"},
+							{ID: "naming-rules", Label: "Nomenclaturas", Icon: "Tag", Path: "/infrastructure/catalogs/nomenclaturas"},
+						},
+					},
 				},
 			},
 			{
