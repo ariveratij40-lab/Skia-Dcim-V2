@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -36,53 +37,109 @@ type Location struct {
 }
 
 type Asset struct {
-	ID             string      `json:"id"`
-	TenantID       string      `json:"tenant_id"`
-	BranchID       string      `json:"branch_id"`
-	AssetTypeID    string      `json:"asset_type_id"`
-	AssetTypeCode  string      `json:"asset_type_code"`
-	AssetTypeName  string      `json:"asset_type_name"`
-	LocationID     *string     `json:"location_id"`
-	LocationName   *string     `json:"location_name"`
-	InternalCode   string      `json:"internal_code"`
-	Name           string      `json:"name"`
-	SerialNumber   *string     `json:"serial_number"`
-	Model          *string     `json:"model"`
-	Manufacturer   *string     `json:"manufacturer"`
-	Status         string      `json:"status"`
-	RFIDTag        *string     `json:"rfid_tag"`
-	InstallYear    *int        `json:"install_year"`
-	Observations   *string     `json:"observations"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
+	ID              string     `json:"id"`
+	TenantID        string     `json:"tenant_id"`
+	BranchID        string     `json:"branch_id"`
+	AssetTypeID     string     `json:"asset_type_id"`
+	AssetTypeCode   string     `json:"asset_type_code"`
+	AssetTypeName   string     `json:"asset_type_name"`
+	LocationID      *string    `json:"location_id"`
+	LocationName    *string    `json:"location_name"`
+	InternalCode    string     `json:"internal_code"`
+	Name            string     `json:"name"`
+	SerialNumber    *string    `json:"serial_number"`
+	Model           *string    `json:"model"`
+	Manufacturer    *string    `json:"manufacturer"`
+	ManufacturerID  *string    `json:"manufacturer_id"`
+	ModelID         *string    `json:"model_id"`
+	ProviderID      *string    `json:"provider_id"`
+	Status          string     `json:"status"`
+	InventoryStatus *string    `json:"inventory_status"`
+	RFIDTag         *string    `json:"rfid_tag"`
+	QRCode          *string    `json:"qr_code"`
+	InstallYear     *int       `json:"install_year"`
+	PurchaseDate    *string    `json:"purchase_date"`
+	WarrantyExpiry  *string    `json:"warranty_expiry"`
+	CostUSD         *float64   `json:"cost_usd"`
+	Observations    *string    `json:"observations"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// TechnicalData contiene los campos específicos de la tabla satélite según el tipo de activo.
+// Solo se usan los campos relevantes al tipo; el resto se ignora.
+type TechnicalData struct {
+	// RACK
+	TotalU    *int     `json:"total_u"`
+	HeightMM  *int     `json:"height_mm"`
+	WidthMM   *int     `json:"width_mm"`
+	DepthMM   *int     `json:"depth_mm"`
+	PowerKW   *float64 `json:"power_kw"`
+	// SWITCH
+	PortCount    *int    `json:"port_count"`
+	UplinkCount  *int    `json:"uplink_count"`
+	ManagementIP *string `json:"management_ip"`
+	RackID       *string `json:"rack_id"`
+	RackUnit     *int    `json:"rack_unit"`
+	// UPS
+	CapacityKVA       *float64 `json:"capacity_kva"`
+	BatteryRuntimeMin *int     `json:"battery_runtime_min"`
+	// PDU
+	OutletCount *int     `json:"outlet_count"`
+	Amperage    *float64 `json:"amperage"`
+	// PATCH_PANEL
+	PortType *string `json:"port_type"`
+	// MDF/IDF
+	MDFType         *string `json:"mdf_type"`
+	RackCount        *int    `json:"rack_count"`
+	PatchPanelCount  *int    `json:"patch_panel_count"`
+	SwitchCount      *int    `json:"switch_count"`
+	UPSCount         *int    `json:"ups_count"`
 }
 
 type CreateAssetRequest struct {
-	AssetTypeID  string  `json:"asset_type_id"`
-	LocationID   *string `json:"location_id"`
-	InternalCode string  `json:"internal_code"`
-	Name         string  `json:"name"`
-	SerialNumber *string `json:"serial_number"`
-	Model        *string `json:"model"`
-	Manufacturer *string `json:"manufacturer"`
-	Status       string  `json:"status"`
-	RFIDTag      *string `json:"rfid_tag"`
-	InstallYear  *int    `json:"install_year"`
-	Observations *string `json:"observations"`
+	AssetTypeID     string         `json:"asset_type_id"`
+	LocationID      *string        `json:"location_id"`
+	TechnicalRoomID *string        `json:"technical_room_id"`
+	Name            string         `json:"name"`
+	SerialNumber    *string        `json:"serial_number"`
+	Model           *string        `json:"model"`
+	Manufacturer    *string        `json:"manufacturer"`
+	ManufacturerID  *string        `json:"manufacturer_id"`
+	ModelID         *string        `json:"model_id"`
+	ProviderID      *string        `json:"provider_id"`
+	Status          string         `json:"status"`
+	InventoryStatus *string        `json:"inventory_status"`
+	RFIDTag         *string        `json:"rfid_tag"`
+	QRCode          *string        `json:"qr_code"`
+	InstallYear     *int           `json:"install_year"`
+	PurchaseDate    *string        `json:"purchase_date"`
+	WarrantyExpiry  *string        `json:"warranty_expiry"`
+	CostUSD         *float64       `json:"cost_usd"`
+	Observations    *string        `json:"observations"`
+	TechnicalData   *TechnicalData `json:"technical_data"`
 }
 
 type UpdateAssetRequest struct {
-	AssetTypeID  *string `json:"asset_type_id"`
-	LocationID   *string `json:"location_id"`
-	InternalCode *string `json:"internal_code"`
-	Name         *string `json:"name"`
-	SerialNumber *string `json:"serial_number"`
-	Model        *string `json:"model"`
-	Manufacturer *string `json:"manufacturer"`
-	Status       *string `json:"status"`
-	RFIDTag      *string `json:"rfid_tag"`
-	InstallYear  *int    `json:"install_year"`
-	Observations *string `json:"observations"`
+	AssetTypeID     *string  `json:"asset_type_id"`
+	LocationID      *string  `json:"location_id"`
+	InternalCode    *string  `json:"internal_code"`
+	Name            *string  `json:"name"`
+	SerialNumber    *string  `json:"serial_number"`
+	Model           *string  `json:"model"`
+	Manufacturer    *string  `json:"manufacturer"`
+	ManufacturerID  *string  `json:"manufacturer_id"`
+	ModelID         *string  `json:"model_id"`
+	ProviderID      *string  `json:"provider_id"`
+	Status          *string  `json:"status"`
+	InventoryStatus *string  `json:"inventory_status"`
+	RFIDTag         *string  `json:"rfid_tag"`
+	QRCode          *string  `json:"qr_code"`
+	InstallYear     *int     `json:"install_year"`
+	PurchaseDate    *string  `json:"purchase_date"`
+	WarrantyExpiry  *string  `json:"warranty_expiry"`
+	CostUSD         *float64 `json:"cost_usd"`
+	Observations    *string  `json:"observations"`
 }
 
 type AssetsListResponse struct {
@@ -105,9 +162,7 @@ func NewDCIMHandler(db *sql.DB) *DCIMHandler {
 }
 
 // getSessionContext extrae tenant_id y branch_id de la sesión activa
-// Usa sql.NullString para manejar tenant_id/branch_id NULL sin error de Scan
 func (h *DCIMHandler) getSessionContext(r *http.Request) (userID, tenantID, branchID string, err error) {
-	// Leer session_token desde cookie HttpOnly
 	cookie, err := r.Cookie("session_token")
 	if err != nil {
 		return "", "", "", err
@@ -130,7 +185,9 @@ func (h *DCIMHandler) getSessionContext(r *http.Request) (userID, tenantID, bran
 	return
 }
 
-// HandleAssets enruta GET (list) y POST (create)
+// ==========================================
+// HandleAssets — GET (list) y POST (create)
+// ==========================================
 func (h *DCIMHandler) HandleAssets(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.Method {
@@ -143,10 +200,9 @@ func (h *DCIMHandler) HandleAssets(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleAssetByID enruta GET, PUT, DELETE para /api/dcim/assets/{id}
+// HandleAssetByID — GET, PUT, DELETE para /api/dcim/assets/{id}
 func (h *DCIMHandler) HandleAssetByID(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	// Extraer ID del path: /api/dcim/assets/{id}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/dcim/assets/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
 		http.Error(w, `{"error":"missing asset id"}`, http.StatusBadRequest)
@@ -166,7 +222,8 @@ func (h *DCIMHandler) HandleAssetByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleAssetTypes devuelve el catálogo de tipos de activo
+// HandleAssetTypes — GET /api/dcim/asset-types
+// Devuelve los 13 tipos canónicos desde la BD (INV-DCM-0014: Single Source of Truth)
 func (h *DCIMHandler) HandleAssetTypes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
@@ -194,7 +251,7 @@ func (h *DCIMHandler) HandleAssetTypes(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"asset_types": types})
 }
 
-// HandleLocations devuelve ubicaciones del tenant+branch
+// HandleLocations — GET /api/dcim/locations
 func (h *DCIMHandler) HandleLocations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
@@ -233,6 +290,288 @@ func (h *DCIMHandler) HandleLocations(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"locations": locations})
 }
 
+// HandleCatalogs — GET /api/dcim/catalogs
+// Single Source of Truth para el frontend (INV-DCM-0014).
+// Devuelve en una sola llamada: asset_types, manufacturers, models, providers, statuses.
+func (h *DCIMHandler) HandleCatalogs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	_, tenantID, _, err := h.getSessionContext(r)
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Asset Types (globales)
+	atRows, err := h.DB.Query(`SELECT id, code, name, COALESCE(description,''), COALESCE(icon,'') FROM asset_types ORDER BY name`)
+	if err != nil {
+		http.Error(w, `{"error":"database error fetching asset_types"}`, http.StatusInternalServerError)
+		return
+	}
+	defer atRows.Close()
+	assetTypes := []AssetType{}
+	for atRows.Next() {
+		var at AssetType
+		if err := atRows.Scan(&at.ID, &at.Code, &at.Name, &at.Description, &at.Icon); err == nil {
+			assetTypes = append(assetTypes, at)
+		}
+	}
+
+	// Manufacturers (por tenant)
+	type Manufacturer struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	mfRows, err := h.DB.Query(
+		`SELECT id, name, status FROM catalogs_manufacturers WHERE tenant_id = $1 AND status = 'active' ORDER BY name`,
+		tenantID,
+	)
+	manufacturers := []Manufacturer{}
+	if err == nil {
+		defer mfRows.Close()
+		for mfRows.Next() {
+			var m Manufacturer
+			if err := mfRows.Scan(&m.ID, &m.Name, &m.Status); err == nil {
+				manufacturers = append(manufacturers, m)
+			}
+		}
+	}
+
+	// Providers (por tenant)
+	type Provider struct {
+		ID           string `json:"id"`
+		ProviderType string `json:"provider_type"`
+		LegalName    string `json:"legal_name"`
+		TradeName    string `json:"trade_name"`
+		Status       string `json:"status"`
+	}
+	pvRows, err := h.DB.Query(
+		`SELECT id, provider_type, legal_name, COALESCE(trade_name,''), status FROM catalogs_providers WHERE tenant_id = $1 AND status = 'active' ORDER BY legal_name`,
+		tenantID,
+	)
+	providers := []Provider{}
+	if err == nil {
+		defer pvRows.Close()
+		for pvRows.Next() {
+			var p Provider
+			if err := pvRows.Scan(&p.ID, &p.ProviderType, &p.LegalName, &p.TradeName, &p.Status); err == nil {
+				providers = append(providers, p)
+			}
+		}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"asset_types":   assetTypes,
+		"manufacturers": manufacturers,
+		"providers":     providers,
+		// Estados canónicos del sistema (INV-DCM-0014: no hardcodeados en el frontend)
+		"operational_statuses": []string{"active", "inactive", "maintenance", "decommissioned", "unknown"},
+		"inventory_statuses":   []string{"planned", "ordered", "received", "inventory", "installed", "retired"},
+	})
+}
+
+// HandleHierarchy — GET /api/dcim/hierarchy
+// Devuelve la jerarquía física completa del tenant: buildings → floors → zones → technical_rooms
+func (h *DCIMHandler) HandleHierarchy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	_, tenantID, branchID, err := h.getSessionContext(r)
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	type TechnicalRoom struct {
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		RoomType string `json:"room_type"`
+		Status   string `json:"status"`
+	}
+	type Zone struct {
+		ID             string          `json:"id"`
+		Name           string          `json:"name"`
+		Status         string          `json:"status"`
+		TechnicalRooms []TechnicalRoom `json:"technical_rooms"`
+	}
+	type Floor struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		FloorNumber *int   `json:"floor_number"`
+		Status      string `json:"status"`
+		Zones       []Zone `json:"zones"`
+	}
+	type Building struct {
+		ID       string  `json:"id"`
+		Name     string  `json:"name"`
+		Status   string  `json:"status"`
+		Floors   []Floor `json:"floors"`
+	}
+
+	// Obtener buildings del branch
+	bRows, err := h.DB.Query(
+		`SELECT id, name, status FROM buildings WHERE tenant_id = $1 AND branch_id = $2 AND status = 'active' ORDER BY name`,
+		tenantID, branchID,
+	)
+	if err != nil {
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer bRows.Close()
+
+	buildings := []Building{}
+	for bRows.Next() {
+		var b Building
+		if err := bRows.Scan(&b.ID, &b.Name, &b.Status); err != nil {
+			continue
+		}
+		// Floors de este building
+		fRows, _ := h.DB.Query(
+			`SELECT id, name, floor_number, status FROM floors WHERE tenant_id = $1 AND building_id = $2 AND status = 'active' ORDER BY floor_number NULLS LAST, name`,
+			tenantID, b.ID,
+		)
+		b.Floors = []Floor{}
+		if fRows != nil {
+			defer fRows.Close()
+			for fRows.Next() {
+				var f Floor
+				if err := fRows.Scan(&f.ID, &f.Name, &f.FloorNumber, &f.Status); err != nil {
+					continue
+				}
+				// Zones de este floor
+				zRows, _ := h.DB.Query(
+					`SELECT id, name, status FROM zones WHERE tenant_id = $1 AND floor_id = $2 AND status = 'active' ORDER BY name`,
+					tenantID, f.ID,
+				)
+				f.Zones = []Zone{}
+				if zRows != nil {
+					defer zRows.Close()
+					for zRows.Next() {
+						var z Zone
+						if err := zRows.Scan(&z.ID, &z.Name, &z.Status); err != nil {
+							continue
+						}
+						// Technical rooms de esta zone
+						trRows, _ := h.DB.Query(
+							`SELECT id, name, room_type, status FROM technical_rooms WHERE tenant_id = $1 AND zone_id = $2 AND status = 'active' ORDER BY name`,
+							tenantID, z.ID,
+						)
+						z.TechnicalRooms = []TechnicalRoom{}
+						if trRows != nil {
+							defer trRows.Close()
+							for trRows.Next() {
+								var tr TechnicalRoom
+								if err := trRows.Scan(&tr.ID, &tr.Name, &tr.RoomType, &tr.Status); err == nil {
+									z.TechnicalRooms = append(z.TechnicalRooms, tr)
+								}
+							}
+						}
+						f.Zones = append(f.Zones, z)
+					}
+				}
+				b.Floors = append(b.Floors, f)
+			}
+		}
+		buildings = append(buildings, b)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{"buildings": buildings})
+}
+
+// ==========================================
+// generateInternalCode — Motor de Nomenclaturas (INV-DCM-0015)
+// Genera el internal_code de forma transaccional usando SELECT FOR UPDATE
+// para prevenir colisiones en entornos concurrentes.
+// Formato: [PREFIX][SEP][BRANCH_CODE][SEP][SEQ_PADDED]
+// Ejemplo: SW-TIJ-0001
+// ==========================================
+func (h *DCIMHandler) generateInternalCode(tx *sql.Tx, tenantID, branchID, assetTypeCode string) (string, error) {
+	// Obtener la regla de nomenclatura con bloqueo exclusivo (FOR UPDATE)
+	var prefix, separator string
+	var seqDigits, lastSeq int
+	var includeBranch bool
+
+	err := tx.QueryRow(
+		`SELECT prefix, separator, seq_digits, last_seq, include_branch
+		 FROM naming_rules
+		 WHERE tenant_id = $1 AND asset_type_code = $2
+		 FOR UPDATE`,
+		tenantID, assetTypeCode,
+	).Scan(&prefix, &separator, &seqDigits, &lastSeq, &includeBranch)
+
+	if err == sql.ErrNoRows {
+		// Sin regla configurada: usar prefijo genérico basado en el tipo
+		prefix = strings.ToUpper(assetTypeCode[:minInt(3, len(assetTypeCode))])
+		separator = "-"
+		seqDigits = 4
+		lastSeq = 0
+		includeBranch = false
+	} else if err != nil {
+		return "", fmt.Errorf("error leyendo naming_rule: %w", err)
+	}
+
+	// Incrementar secuencia
+	newSeq := lastSeq + 1
+
+	// Actualizar la secuencia en la BD (dentro de la misma transacción)
+	if err == nil { // Solo actualizar si la regla existe
+		_, err = tx.Exec(
+			`UPDATE naming_rules SET last_seq = $1, updated_at = NOW()
+			 WHERE tenant_id = $2 AND asset_type_code = $3`,
+			newSeq, tenantID, assetTypeCode,
+		)
+		if err != nil {
+			return "", fmt.Errorf("error actualizando naming_rule seq: %w", err)
+		}
+	}
+
+	// Obtener código corto de la sucursal (primeras 3 letras de city o name)
+	branchCode := ""
+	if includeBranch {
+		var city, name sql.NullString
+		_ = tx.QueryRow(`SELECT city, name FROM branches WHERE id = $1`, branchID).Scan(&city, &name)
+		if city.Valid && city.String != "" {
+			branchCode = strings.ToUpper(strings.ReplaceAll(city.String, " ", ""))
+			if len(branchCode) > 3 {
+				branchCode = branchCode[:3]
+			}
+		} else if name.Valid && name.String != "" {
+			branchCode = strings.ToUpper(strings.ReplaceAll(name.String, " ", ""))
+			if len(branchCode) > 3 {
+				branchCode = branchCode[:3]
+			}
+		}
+	}
+
+	// Formatear secuencial con padding
+	seqStr := fmt.Sprintf("%0*d", seqDigits, newSeq)
+
+	// Construir el código
+	parts := []string{prefix}
+	if branchCode != "" {
+		parts = append(parts, branchCode)
+	}
+	parts = append(parts, seqStr)
+
+	return strings.Join(parts, separator), nil
+}
+
+// minInt helper para longitud de string (evita conflicto con builtin min de Go 1.21+)
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // ==========================================
 // listAssets — GET /api/dcim/assets
 // ==========================================
@@ -243,7 +582,6 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query params opcionales
 	q := r.URL.Query()
 	statusFilter := q.Get("status")
 	typeFilter := q.Get("type")
@@ -255,7 +593,10 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		       a.location_id, l.name AS location_name,
 		       a.internal_code, a.name,
 		       a.serial_number, a.model, a.manufacturer,
-		       a.status, a.rfid_tag, a.install_year, a.observations,
+		       a.manufacturer_id, a.model_id, a.provider_id,
+		       a.status, a.inventory_status,
+		       a.rfid_tag, a.qr_code,
+		       a.install_year, a.observations,
 		       a.created_at, a.updated_at
 		FROM assets a
 		JOIN asset_types at ON a.asset_type_id = at.id
@@ -290,31 +631,34 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-		assets := []Asset{}
+	assets := []Asset{}
 	for rows.Next() {
 		var a Asset
+		var purchaseDate, warrantyExpiry sql.NullString
 		err := rows.Scan(
 			&a.ID, &a.TenantID, &a.BranchID,
 			&a.AssetTypeID, &a.AssetTypeCode, &a.AssetTypeName,
 			&a.LocationID, &a.LocationName,
 			&a.InternalCode, &a.Name,
 			&a.SerialNumber, &a.Model, &a.Manufacturer,
-			&a.Status, &a.RFIDTag, &a.InstallYear, &a.Observations,
+			&a.ManufacturerID, &a.ModelID, &a.ProviderID,
+			&a.Status, &a.InventoryStatus,
+			&a.RFIDTag, &a.QRCode,
+			&a.InstallYear, &a.Observations,
 			&a.CreatedAt, &a.UpdatedAt,
 		)
+		_ = purchaseDate
+		_ = warrantyExpiry
 		if err != nil {
+			log.Printf("Error scanning asset: %v", err)
 			continue
 		}
 		assets = append(assets, a)
 	}
-	
-	// Agregar activos importados — filtrado por tenant_id de la sesión activa
-	// INVARIANTE INV-DCM-0012: toda fuente de datos agregada a un listado debe pasar
-	// por el mismo filtro de tenant que la fuente primaria (corrige F-AST-01)
-	// NOTA: imported_assets no tiene columna branch_id en el esquema actual;
-	//       el filtro por tenant_id es suficiente para garantizar aislamiento multi-tenant.
+
+	// Agregar activos importados — filtrado por tenant_id (INV-CORE-0002 / corrige F-AST-01)
 	importedQuery := `
-		SELECT 
+		SELECT
 			CAST(id AS TEXT) as id,
 			tenant_id::TEXT as tenant_id,
 			$2::TEXT as branch_id,
@@ -328,16 +672,20 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 			metadata->>'serial_number' as serial_number,
 			metadata->>'modelo' as model,
 			'' as manufacturer,
-			metadata->>'estado' as status,
+			NULL::UUID as manufacturer_id,
+			NULL::UUID as model_id,
+			NULL::UUID as provider_id,
+			COALESCE(metadata->>'estado','active') as status,
+			NULL::VARCHAR as inventory_status,
 			'' as rfid_tag,
-			NULL as install_year,
+			NULL::VARCHAR as qr_code,
+			NULL::INT as install_year,
 			'Importado automáticamente' as observations,
 			created_at,
 			updated_at
 		FROM imported_assets
-		WHERE tenant_id::TEXT = $1
+		WHERE tenant_id = $1
 	`
-	
 	importedRows, err := h.DB.Query(importedQuery, tenantID, branchID)
 	if err == nil {
 		defer importedRows.Close()
@@ -349,7 +697,10 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 				&a.LocationID, &a.LocationName,
 				&a.InternalCode, &a.Name,
 				&a.SerialNumber, &a.Model, &a.Manufacturer,
-				&a.Status, &a.RFIDTag, &a.InstallYear, &a.Observations,
+				&a.ManufacturerID, &a.ModelID, &a.ProviderID,
+				&a.Status, &a.InventoryStatus,
+				&a.RFIDTag, &a.QRCode,
+				&a.InstallYear, &a.Observations,
 				&a.CreatedAt, &a.UpdatedAt,
 			)
 			if err != nil {
@@ -361,7 +712,7 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Printf("Error querying imported_assets: %v", err)
 	}
-	
+
 	json.NewEncoder(w).Encode(AssetsListResponse{
 		Assets: assets,
 		Total:  len(assets),
@@ -387,7 +738,10 @@ func (h *DCIMHandler) getAsset(w http.ResponseWriter, r *http.Request, assetID s
 		       a.location_id, l.name AS location_name,
 		       a.internal_code, a.name,
 		       a.serial_number, a.model, a.manufacturer,
-		       a.status, a.rfid_tag, a.install_year, a.observations,
+		       a.manufacturer_id, a.model_id, a.provider_id,
+		       a.status, a.inventory_status,
+		       a.rfid_tag, a.qr_code,
+		       a.install_year, a.observations,
 		       a.created_at, a.updated_at
 		FROM assets a
 		JOIN asset_types at ON a.asset_type_id = at.id
@@ -400,7 +754,10 @@ func (h *DCIMHandler) getAsset(w http.ResponseWriter, r *http.Request, assetID s
 		&a.LocationID, &a.LocationName,
 		&a.InternalCode, &a.Name,
 		&a.SerialNumber, &a.Model, &a.Manufacturer,
-		&a.Status, &a.RFIDTag, &a.InstallYear, &a.Observations,
+		&a.ManufacturerID, &a.ModelID, &a.ProviderID,
+		&a.Status, &a.InventoryStatus,
+		&a.RFIDTag, &a.QRCode,
+		&a.InstallYear, &a.Observations,
 		&a.CreatedAt, &a.UpdatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -417,6 +774,8 @@ func (h *DCIMHandler) getAsset(w http.ResponseWriter, r *http.Request, assetID s
 
 // ==========================================
 // createAsset — POST /api/dcim/assets
+// INV-DCM-0013: Transacción polimórfica atómica.
+// INV-DCM-0015: internal_code generado por el backend, nunca por el frontend.
 // ==========================================
 func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 	userID, tenantID, branchID, err := h.getSessionContext(r)
@@ -432,37 +791,256 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validaciones básicas
-	if req.InternalCode == "" || req.Name == "" || req.AssetTypeID == "" {
-		http.Error(w, `{"error":"internal_code, name and asset_type_id are required"}`, http.StatusBadRequest)
+	if req.Name == "" || req.AssetTypeID == "" {
+		http.Error(w, `{"error":"name and asset_type_id are required"}`, http.StatusBadRequest)
 		return
 	}
 	if req.Status == "" {
 		req.Status = "active"
 	}
 
-	newID := uuid.New().String()
-
-	_, err = h.DB.Exec(`
-		INSERT INTO assets (id, tenant_id, branch_id, asset_type_id, location_id,
-		                    internal_code, name, serial_number, model, manufacturer,
-		                    status, rfid_tag, install_year, observations, created_by, updated_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-		newID, tenantID, branchID, req.AssetTypeID, req.LocationID,
-		req.InternalCode, req.Name, req.SerialNumber, req.Model, req.Manufacturer,
-		req.Status, req.RFIDTag, req.InstallYear, req.Observations, userID, userID,
-	)
+	// Obtener el código del tipo de activo para el motor de nomenclaturas
+	var assetTypeCode string
+	err = h.DB.QueryRow(`SELECT code FROM asset_types WHERE id = $1`, req.AssetTypeID).Scan(&assetTypeCode)
 	if err != nil {
-		log.Printf("ERROR creating asset: %v", err)
-		if strings.Contains(err.Error(), "unique") {
-			http.Error(w, `{"error":"internal_code already exists for this branch"}`, http.StatusConflict)
-			return
-		}
-		http.Error(w, `{"error":"database error: `+err.Error()+`"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error":"asset_type_id not found"}`, http.StatusBadRequest)
 		return
 	}
 
+	// ─── INICIO DE TRANSACCIÓN POLIMÓRFICA (INV-DCM-0013) ───────────────────────
+	tx, err := h.DB.Begin()
+	if err != nil {
+		http.Error(w, `{"error":"could not begin transaction"}`, http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Generar internal_code transaccional (INV-DCM-0015)
+	internalCode, err := h.generateInternalCode(tx, tenantID, branchID, assetTypeCode)
+	if err != nil {
+		log.Printf("ERROR generating internal_code: %v", err)
+		http.Error(w, `{"error":"could not generate internal code"}`, http.StatusInternalServerError)
+		return
+	}
+
+	newID := uuid.New().String()
+
+	// Insertar en tabla principal assets
+	_, err = tx.Exec(`
+		INSERT INTO assets (
+			id, tenant_id, branch_id, asset_type_id, location_id,
+			internal_code, name, serial_number, model, manufacturer,
+			manufacturer_id, model_id, provider_id,
+			status, inventory_status,
+			rfid_tag, qr_code, install_year, observations,
+			purchase_date, warranty_expiry, cost_usd,
+			created_by, updated_by
+		) VALUES (
+			$1,$2,$3,$4,$5,
+			$6,$7,$8,$9,$10,
+			$11,$12,$13,
+			$14,$15,
+			$16,$17,$18,$19,
+			$20,$21,$22,
+			$23,$24
+		)`,
+		newID, tenantID, branchID, req.AssetTypeID, req.LocationID,
+		internalCode, req.Name, req.SerialNumber, req.Model, req.Manufacturer,
+		req.ManufacturerID, req.ModelID, req.ProviderID,
+		req.Status, req.InventoryStatus,
+		req.RFIDTag, req.QRCode, req.InstallYear, req.Observations,
+		req.PurchaseDate, req.WarrantyExpiry, req.CostUSD,
+		userID, userID,
+	)
+	if err != nil {
+		log.Printf("ERROR inserting asset: %v", err)
+		if strings.Contains(err.Error(), "uq_assets_tenant_branch_code") || strings.Contains(err.Error(), "unique") {
+			http.Error(w, `{"error":"internal_code already exists for this branch"}`, http.StatusConflict)
+		} else {
+			http.Error(w, `{"error":"database error creating asset"}`, http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// ─── Insertar en tabla satélite según tipo (INV-DCM-0013) ────────────────────
+	td := req.TechnicalData
+	satID := uuid.New().String()
+
+	switch assetTypeCode {
+	case "RACK":
+		totalU := 42
+		if td != nil && td.TotalU != nil {
+			totalU = *td.TotalU
+		}
+		heightMM := (*int)(nil)
+		widthMM := (*int)(nil)
+		depthMM := (*int)(nil)
+		powerKW := (*float64)(nil)
+		if td != nil {
+			heightMM = td.HeightMM
+			widthMM = td.WidthMM
+			depthMM = td.DepthMM
+			powerKW = td.PowerKW
+		}
+		_, err = tx.Exec(`
+			INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u, height_mm, width_mm, depth_mm, power_kw)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			satID, newID, tenantID, branchID, totalU, heightMM, widthMM, depthMM, powerKW,
+		)
+
+	case "SWITCH":
+		portCount := 24
+		uplinkCount := 2
+		var managementIP *string
+		var rackID *string
+		var rackUnit *int
+		if td != nil {
+			if td.PortCount != nil {
+				portCount = *td.PortCount
+			}
+			if td.UplinkCount != nil {
+				uplinkCount = *td.UplinkCount
+			}
+			managementIP = td.ManagementIP
+			rackID = td.RackID
+			rackUnit = td.RackUnit
+		}
+		_, err = tx.Exec(`
+			INSERT INTO switches (id, asset_id, tenant_id, branch_id, port_count, uplink_count, management_ip, rack_id, rack_unit)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			satID, newID, tenantID, branchID, portCount, uplinkCount, managementIP, rackID, rackUnit,
+		)
+
+	case "UPS":
+		var capacityKVA *float64
+		var batteryRuntime *int
+		var managementIP *string
+		if td != nil {
+			capacityKVA = td.CapacityKVA
+			batteryRuntime = td.BatteryRuntimeMin
+			managementIP = td.ManagementIP
+		}
+		_, err = tx.Exec(`
+			INSERT INTO ups (id, asset_id, tenant_id, branch_id, capacity_kva, battery_runtime_min, management_ip)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			satID, newID, tenantID, branchID, capacityKVA, batteryRuntime, managementIP,
+		)
+
+	case "PDU":
+		outletCount := 8
+		var amperage *float64
+		var managementIP *string
+		var rackID *string
+		if td != nil {
+			if td.OutletCount != nil {
+				outletCount = *td.OutletCount
+			}
+			amperage = td.Amperage
+			managementIP = td.ManagementIP
+			rackID = td.RackID
+		}
+		_, err = tx.Exec(`
+			INSERT INTO pdus (id, asset_id, tenant_id, branch_id, outlet_count, amperage, management_ip, rack_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+			satID, newID, tenantID, branchID, outletCount, amperage, managementIP, rackID,
+		)
+
+	case "PATCH_PANEL":
+		portCount := 24
+		portType := "RJ45"
+		var rackID *string
+		var rackUnit *int
+		if td != nil {
+			if td.PortCount != nil {
+				portCount = *td.PortCount
+			}
+			if td.PortType != nil {
+				portType = *td.PortType
+			}
+			rackID = td.RackID
+			rackUnit = td.RackUnit
+		}
+		_, err = tx.Exec(`
+			INSERT INTO patch_panels (id, asset_id, tenant_id, branch_id, port_count, port_type, rack_id, rack_unit)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+			satID, newID, tenantID, branchID, portCount, portType, rackID, rackUnit,
+		)
+
+	case "MDF", "IDF":
+		mdfType := assetTypeCode
+		rackCount := 0
+		ppCount := 0
+		swCount := 0
+		upsCount := 0
+		if td != nil {
+			if td.MDFType != nil {
+				mdfType = *td.MDFType
+			}
+			if td.RackCount != nil {
+				rackCount = *td.RackCount
+			}
+			if td.PatchPanelCount != nil {
+				ppCount = *td.PatchPanelCount
+			}
+			if td.SwitchCount != nil {
+				swCount = *td.SwitchCount
+			}
+			if td.UPSCount != nil {
+				upsCount = *td.UPSCount
+			}
+		}
+		_, err = tx.Exec(`
+			INSERT INTO mdf_idf (id, asset_id, tenant_id, branch_id, type, rack_count, patch_panel_count, switch_count, ups_count)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			satID, newID, tenantID, branchID, mdfType, rackCount, ppCount, swCount, upsCount,
+		)
+
+	default:
+		// Tipos sin tabla satélite (NODE, BACKBONE, FIREWALL, SERVER, CCTV, AC_UNIT):
+		// solo se insertan en assets. No es un error.
+		satID = ""
+	}
+
+	if err != nil {
+		log.Printf("ERROR inserting satellite table for type %s: %v", assetTypeCode, err)
+		http.Error(w, `{"error":"database error creating satellite record"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// ─── Registrar en asset_logs (INV-DCM-0016: Auditoría Obligatoria) ───────────
+	logID := uuid.New().String()
+	_, logErr := tx.Exec(`
+		INSERT INTO asset_logs (id, tenant_id, asset_id, event_type, new_value, notes, performed_by)
+		VALUES ($1,$2,$3,'created',$4,'Activo creado vía ActivoWizard',$5)`,
+		logID, tenantID, newID, internalCode, userID,
+	)
+	if logErr != nil {
+		log.Printf("WARN: error registrando asset_log: %v", logErr)
+		// No es fatal — no abortamos la transacción por un log fallido
+	}
+
+	// ─── COMMIT ──────────────────────────────────────────────────────────────────
+	if err = tx.Commit(); err != nil {
+		log.Printf("ERROR committing transaction: %v", err)
+		http.Error(w, `{"error":"transaction commit failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]string{
+		"id":            newID,
+		"internal_code": internalCode,
+		"status":        "created",
+	}
+	if satID != "" {
+		resp["satellite_id"] = satID
+	}
+
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": newID, "status": "created"})
+	json.NewEncoder(w).Encode(resp)
 }
 
 // ==========================================
@@ -502,11 +1080,6 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 		args = append(args, *req.Name)
 		idx++
 	}
-	if req.InternalCode != nil {
-		setClauses = append(setClauses, "internal_code = $"+itoa(idx))
-		args = append(args, *req.InternalCode)
-		idx++
-	}
 	if req.AssetTypeID != nil {
 		setClauses = append(setClauses, "asset_type_id = $"+itoa(idx))
 		args = append(args, *req.AssetTypeID)
@@ -520,6 +1093,11 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 	if req.Status != nil {
 		setClauses = append(setClauses, "status = $"+itoa(idx))
 		args = append(args, *req.Status)
+		idx++
+	}
+	if req.InventoryStatus != nil {
+		setClauses = append(setClauses, "inventory_status = $"+itoa(idx))
+		args = append(args, *req.InventoryStatus)
 		idx++
 	}
 	if req.SerialNumber != nil {
@@ -537,14 +1115,49 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 		args = append(args, *req.Manufacturer)
 		idx++
 	}
+	if req.ManufacturerID != nil {
+		setClauses = append(setClauses, "manufacturer_id = $"+itoa(idx))
+		args = append(args, *req.ManufacturerID)
+		idx++
+	}
+	if req.ModelID != nil {
+		setClauses = append(setClauses, "model_id = $"+itoa(idx))
+		args = append(args, *req.ModelID)
+		idx++
+	}
+	if req.ProviderID != nil {
+		setClauses = append(setClauses, "provider_id = $"+itoa(idx))
+		args = append(args, *req.ProviderID)
+		idx++
+	}
 	if req.RFIDTag != nil {
 		setClauses = append(setClauses, "rfid_tag = $"+itoa(idx))
 		args = append(args, *req.RFIDTag)
 		idx++
 	}
+	if req.QRCode != nil {
+		setClauses = append(setClauses, "qr_code = $"+itoa(idx))
+		args = append(args, *req.QRCode)
+		idx++
+	}
 	if req.InstallYear != nil {
 		setClauses = append(setClauses, "install_year = $"+itoa(idx))
 		args = append(args, *req.InstallYear)
+		idx++
+	}
+	if req.PurchaseDate != nil {
+		setClauses = append(setClauses, "purchase_date = $"+itoa(idx))
+		args = append(args, *req.PurchaseDate)
+		idx++
+	}
+	if req.WarrantyExpiry != nil {
+		setClauses = append(setClauses, "warranty_expiry = $"+itoa(idx))
+		args = append(args, *req.WarrantyExpiry)
+		idx++
+	}
+	if req.CostUSD != nil {
+		setClauses = append(setClauses, "cost_usd = $"+itoa(idx))
+		args = append(args, *req.CostUSD)
 		idx++
 	}
 	if req.Observations != nil {

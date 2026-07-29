@@ -164,6 +164,9 @@ func main() {
 	http.HandleFunc("/api/dcim/assets/", dcim.HandleAssetByID)
 	http.HandleFunc("/api/dcim/asset-types", dcim.HandleAssetTypes)
 	http.HandleFunc("/api/dcim/locations", dcim.HandleLocations)
+	// Fase 1: catálogos maestros (INV-DCM-0014) y jerarquía física (§15)
+	http.HandleFunc("/api/dcim/catalogs", dcim.HandleCatalogs)
+	http.HandleFunc("/api/dcim/hierarchy", dcim.HandleHierarchy)
 
 	// Infraestructura DCIM — endpoints por módulo
 	http.HandleFunc("/api/infra/mdf-idf", handleMdfIdf)
