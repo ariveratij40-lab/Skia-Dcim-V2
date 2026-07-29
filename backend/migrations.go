@@ -308,8 +308,8 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_imported_assets_tenant
   ON imported_assets(tenant_id);
 
--- Limpiar tabla legacy huérfana
-TRUNCATE TABLE inventory_imports_legacy;
+-- Limpiar tabla legacy huérfana (CASCADE para limpiar imported_assets que tiene FK hacia ella)
+TRUNCATE TABLE inventory_imports_legacy CASCADE;
 `,
 		},
 	}
