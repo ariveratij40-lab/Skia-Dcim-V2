@@ -261,6 +261,8 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_t
 		},
 		// 012: Corrige tipo de imported_assets.tenant_id de VARCHAR a UUID con FK real
 		// Elimina registros legacy con tenant_id placeholder '1' (F-AST-01 / INV-DCM-0012)
+		// Esquema real de imported_assets: id, import_id, tenant_id, asset_type, nombre, metadata,
+		//   created_by, updated_by, created_at, updated_at (NO tiene branch_id)
 		{
 			version: "012_fix_imported_assets_tenant_type",
 			sql: `
@@ -268,48 +270,43 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_t
 DELETE FROM imported_assets
 WHERE tenant_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
--- Agregar columnas UUID temporales
+-- Agregar columna UUID temporal para tenant_id
 ALTER TABLE imported_assets
-  ADD COLUMN IF NOT EXISTS tenant_id_new UUID,
-  ADD COLUMN IF NOT EXISTS branch_id_new UUID,
-  ADD COLUMN IF NOT EXISTS created_by_new UUID,
-  ADD COLUMN IF NOT EXISTS updated_by_new UUID;
+  ADD COLUMN IF NOT EXISTS tenant_id_new UUID;
 
 -- Copiar datos UUID válidos
 UPDATE imported_assets
-SET
-  tenant_id_new  = tenant_id::UUID,
-  branch_id_new  = CASE WHEN branch_id  ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN branch_id::UUID  ELSE NULL END,
-  created_by_new = CASE WHEN created_by ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN created_by::UUID ELSE NULL END,
-  updated_by_new = CASE WHEN updated_by ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN updated_by::UUID ELSE NULL END
-WHERE tenant_id IS NOT NULL;
+SET tenant_id_new = tenant_id::UUID
+WHERE tenant_id IS NOT NULL
+  AND tenant_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
--- Eliminar columnas VARCHAR antiguas
-ALTER TABLE imported_assets
-  DROP COLUMN IF EXISTS tenant_id,
-  DROP COLUMN IF EXISTS branch_id,
-  DROP COLUMN IF EXISTS created_by,
-  DROP COLUMN IF EXISTS updated_by;
+-- Eliminar columna VARCHAR antigua
+ALTER TABLE imported_assets DROP COLUMN IF EXISTS tenant_id;
 
--- Renombrar columnas nuevas
-ALTER TABLE imported_assets RENAME COLUMN tenant_id_new  TO tenant_id;
-ALTER TABLE imported_assets RENAME COLUMN branch_id_new  TO branch_id;
-ALTER TABLE imported_assets RENAME COLUMN created_by_new TO created_by;
-ALTER TABLE imported_assets RENAME COLUMN updated_by_new TO updated_by;
+-- Renombrar columna nueva
+ALTER TABLE imported_assets RENAME COLUMN tenant_id_new TO tenant_id;
 
 -- NOT NULL en tenant_id
 ALTER TABLE imported_assets ALTER COLUMN tenant_id SET NOT NULL;
 
 -- FK real hacia tenants(id)
-ALTER TABLE imported_assets
-  ADD CONSTRAINT fk_imported_assets_tenant
-    FOREIGN KEY (tenant_id)
-    REFERENCES tenants(id)
-    ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'fk_imported_assets_tenant'
+    AND table_name = 'imported_assets'
+  ) THEN
+    ALTER TABLE imported_assets
+      ADD CONSTRAINT fk_imported_assets_tenant
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE CASCADE;
+  END IF;
+END $$;
 
 -- Índice para consultas filtradas por tenant (cierra F-AST-01)
-CREATE INDEX IF NOT EXISTS idx_imported_assets_tenant_branch
-  ON imported_assets(tenant_id, branch_id);
+CREATE INDEX IF NOT EXISTS idx_imported_assets_tenant
+  ON imported_assets(tenant_id);
 
 -- Limpiar tabla legacy huérfana
 TRUNCATE TABLE inventory_imports_legacy;

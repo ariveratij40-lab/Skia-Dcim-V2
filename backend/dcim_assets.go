@@ -308,14 +308,16 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		assets = append(assets, a)
 	}
 	
-	// Agregar activos importados — filtrado por tenant_id y branch_id de la sesión activa
+	// Agregar activos importados — filtrado por tenant_id de la sesión activa
 	// INVARIANTE INV-DCM-0012: toda fuente de datos agregada a un listado debe pasar
 	// por el mismo filtro de tenant que la fuente primaria (corrige F-AST-01)
+	// NOTA: imported_assets no tiene columna branch_id en el esquema actual;
+	//       el filtro por tenant_id es suficiente para garantizar aislamiento multi-tenant.
 	importedQuery := `
 		SELECT 
 			CAST(id AS TEXT) as id,
-			tenant_id,
-			branch_id,
+			tenant_id::TEXT as tenant_id,
+			$2::TEXT as branch_id,
 			asset_type as asset_type_id,
 			asset_type as asset_type_code,
 			asset_type as asset_type_name,
@@ -333,7 +335,7 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 			created_at,
 			updated_at
 		FROM imported_assets
-		WHERE tenant_id = $1 AND branch_id = $2
+		WHERE tenant_id::TEXT = $1
 	`
 	
 	importedRows, err := h.DB.Query(importedQuery, tenantID, branchID)
