@@ -1,5 +1,6 @@
 import Head from 'next/head';
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import axios from 'axios';
 import {
   Tag, Plus, Printer, RefreshCw, Search, Trash2, Edit2,
   Smartphone, QrCode, X, Download, Eye, CheckCircle2,
@@ -52,13 +53,35 @@ const STATUS_COLORS: Record<RfidStatus, string> = {
   lost:     'bg-red-100 text-red-700 border-red-200',
 };
 
-const MOCK_TAGS: RfidTag[] = [
-  { id:'rfid-1', code:'SKIA-MDF-000001', category:'MDF/IDF', equipment:'MDF Torre A', brand_model:'Panduit / FlexFusion', ubicacion:'Torre A Piso 1', status:'active', generated:'2026-05-15', qr_url:'' },
-  { id:'rfid-2', code:'SKIA-RCK-000001', category:'Rack', equipment:'Rack Cableado IDF2', brand_model:'Panduit / RP40', ubicacion:'IDF2 Producción', status:'active', generated:'2026-05-15', qr_url:'' },
-  { id:'rfid-3', code:'SKIA-PP-000001', category:'Patch Panel', equipment:'PP-IDF2-A001', brand_model:'Panduit / CP24WSBLY', ubicacion:'IDF2 Producción', status:'active', generated:'2026-05-16', qr_url:'' },
-  { id:'rfid-4', code:'SKIA-SW-000001', category:'Switch', equipment:'SW-CORE-A001', brand_model:'Cisco / Catalyst 9300', ubicacion:'MDF Torre A', status:'active', generated:'2026-05-16', qr_url:'' },
-  { id:'rfid-5', code:'SKIA-UPS-000001', category:'UPS/PDU', equipment:'UPS-MDF-A001', brand_model:'APC / Smart-UPS 3000', ubicacion:'MDF Torre A', status:'inactive', generated:'2026-05-17', qr_url:'' },
-];
+// MOCK_TAGS eliminado en Fase 2 (INV-TRK-0001). Los datos se cargan desde /api/dcim/assets.
+// La función mapAssetToRfidTag convierte el formato del backend al tipo local RfidTag.
+function mapAssetToRfidTag(a: {
+  id: string; internal_code: string; name: string;
+  asset_type_code: string; asset_type_name: string;
+  manufacturer: string | null; model: string | null;
+  location_name: string | null; rfid_tag: string | null;
+  qr_code: string | null; status: string; created_at: string;
+}): RfidTag {
+  // Mapear asset_type_code al tipo de categoría local
+  const catMap: Record<string, RfidCategory> = {
+    MDF: 'MDF/IDF', IDF: 'MDF/IDF', RACK: 'Rack', PATCH_PANEL: 'Patch Panel',
+    SWITCH: 'Switch', UPS: 'UPS/PDU', PDU: 'UPS/PDU',
+    CCTV: 'Cámara', SERVER: 'Servidor',
+  };
+  const rfidStatus: RfidStatus = a.status === 'active' ? 'active' : a.status === 'inactive' ? 'inactive' : 'inactive';
+  const code = a.rfid_tag ?? a.qr_code ?? a.internal_code;
+  return {
+    id: a.id,
+    code,
+    category: catMap[a.asset_type_code] ?? 'Activo',
+    equipment: a.name,
+    brand_model: [a.manufacturer, a.model].filter(Boolean).join(' / ') || '—',
+    ubicacion: a.location_name ?? '—',
+    status: rfidStatus,
+    generated: a.created_at ? a.created_at.slice(0, 10) : '—',
+    qr_url: buildQrUrl(code),
+  };
+}
 
 const ALL_CATS: RfidCategory[] = ['MDF/IDF','Rack','Patch Panel','Switch','UPS/PDU','Activo','Cámara','Servidor'];
 
@@ -376,11 +399,24 @@ function NewTagModal({ onClose, onSave }: { onClose:()=>void; onSave:(t:RfidTag)
 
 export default function EtiquetasRfidPage() {
   const [tags, setTags] = useState<RfidTag[]>([]);
+  const [loadingTags, setLoadingTags] = useState(true);
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState('');
   const [designerTag, setDesignerTag] = useState<RfidTag|null>(null);
   const [newTagOpen, setNewTagOpen] = useState(false);
   const [mobileQr, setMobileQr] = useState<RfidTag|null>(null);
+
+  // Carga real desde el backend (INV-TRK-0001 — elimina MOCK_TAGS)
+  useEffect(() => {
+    setLoadingTags(true);
+    axios.get('/api/dcim/assets?limit=200')
+      .then(res => {
+        const assets = res.data?.assets ?? res.data ?? [];
+        setTags(Array.isArray(assets) ? assets.map(mapAssetToRfidTag) : []);
+      })
+      .catch(() => setTags([]))
+      .finally(() => setLoadingTags(false));
+  }, []);
 
   const filtered = useMemo(() => tags.filter(t => {
     const q = search.toLowerCase();

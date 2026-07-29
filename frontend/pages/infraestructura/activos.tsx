@@ -1,4 +1,5 @@
-import ActivoWizard, { ActivoWizardData } from '../../components/ActivoWizard';
+import ActivoWizard from '../../components/ActivoWizard';
+import { useCatalogs, OPERATIONAL_STATUS_UI, ASSET_TYPE_UI } from '../../hooks/useCatalogs';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
@@ -123,14 +124,9 @@ const CATEGORIES: CategoryDef[] = [
 // ============================================================
 // ESTADOS — colores discretos enterprise
 // ============================================================
-const STATUS_CONFIG: Record<string, { label: string; pill: string; dot: string; bar: string }> = {
-  active:         { label: 'Activo',        pill: 'text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200',  dot: 'bg-emerald-400', bar: 'bg-emerald-400' },
-  inactive:       { label: 'Inactivo',      pill: 'text-slate-500 bg-slate-50 ring-1 ring-[#E8EBF4]',        dot: 'bg-slate-400',   bar: 'bg-slate-300' },
-  maintenance:    { label: 'Mantenimiento', pill: 'text-amber-700 bg-amber-50 ring-1 ring-amber-200',        dot: 'bg-amber-400',   bar: 'bg-amber-400' },
-  retired:        { label: 'Retirado',      pill: 'text-red-600 bg-red-50 ring-1 ring-red-200',              dot: 'bg-red-400',     bar: 'bg-red-400' },
-  obsolete:       { label: 'Obsoleto',      pill: 'text-orange-700 bg-orange-50 ring-1 ring-orange-200',     dot: 'bg-orange-400',  bar: 'bg-orange-400' },
-  decommissioned: { label: 'Dado de baja',  pill: 'text-slate-500 bg-slate-50 ring-1 ring-[#E8EBF4]',        dot: 'bg-slate-300',   bar: 'bg-slate-300' },
-};
+// STATUS_CONFIG ahora es un alias de OPERATIONAL_STATUS_UI (INV-DCM-0014 — Single Source of Truth)
+// Se mantiene el nombre local para no romper las referencias existentes en este archivo.
+const STATUS_CONFIG = OPERATIONAL_STATUS_UI;
 
 const ICON_SMALL: Record<string, React.ReactNode> = {
   MDF: <Building2 size={12} />, IDF: <Building size={12} />, RACK: <Grid3X3 size={12} />,
@@ -827,10 +823,14 @@ function AssetsContent() {
       {showActivoWizard && (
         <ActivoWizard
           onClose={() => setShowActivoWizard(false)}
-          onSave={(_data: ActivoWizardData) => {
+          onSave={(internalCode: string) => {
             setShowActivoWizard(false);
             loadCounts();
-            if (isFilterActive) loadAssets();
+            loadAssets();
+            if (internalCode) {
+              // Mostrar brevemente el código generado por el backend (INV-DCM-0015)
+              console.info('[DCIM] Activo creado con código:', internalCode);
+            }
           }}
         />
       )}

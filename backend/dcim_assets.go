@@ -1215,3 +1215,181 @@ func (h *DCIMHandler) deleteAsset(w http.ResponseWriter, r *http.Request, assetI
 func itoa(i int) string {
 	return strconv.Itoa(i)
 }
+
+// ==========================================
+// HandleRFID — GET /api/dcim/rfid/{code}
+// Resuelve un código RFID o QR a su activo, tabla satélite y últimos 5 logs.
+// Implementa INV-TRK-0001: un código resuelve a un único activo dentro del tenant.
+// ==========================================
+func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	_, tenantID, _, err := h.getSessionContext(r)
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	// Extraer el código del path: /api/dcim/rfid/{code}
+	code := strings.TrimPrefix(r.URL.Path, "/api/dcim/rfid/")
+	code = strings.TrimSpace(code)
+	if code == "" {
+		http.Error(w, `{"error":"code is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Buscar el activo por rfid_tag o qr_code (INV-TRK-0001: único por tenant)
+	type RFIDAsset struct {
+		ID             string  `json:"id"`
+		InternalCode   string  `json:"internal_code"`
+		Name           string  `json:"name"`
+		AssetTypeCode  string  `json:"asset_type_code"`
+		AssetTypeName  string  `json:"asset_type_name"`
+		Status         string  `json:"status"`
+		Manufacturer   *string `json:"manufacturer"`
+		Model          *string `json:"model"`
+		SerialNumber   *string `json:"serial_number"`
+		LocationName   *string `json:"location_name"`
+		RFIDTag        *string `json:"rfid_tag"`
+		QRCode         *string `json:"qr_code"`
+		InstallYear    *int    `json:"install_year"`
+		Observations   *string `json:"observations"`
+	}
+
+	var asset RFIDAsset
+	err = h.DB.QueryRow(`
+		SELECT a.id, a.internal_code, a.name,
+		       at.code, at.name,
+		       a.status, a.manufacturer, a.model, a.serial_number,
+		       l.name, a.rfid_tag, a.qr_code, a.install_year, a.observations
+		FROM assets a
+		JOIN asset_types at ON at.id = a.asset_type_id
+		LEFT JOIN locations l ON l.id = a.location_id
+		WHERE a.tenant_id = $1
+		  AND (a.rfid_tag = $2 OR a.qr_code = $2)
+		LIMIT 1`,
+		tenantID, code,
+	).Scan(
+		&asset.ID, &asset.InternalCode, &asset.Name,
+		&asset.AssetTypeCode, &asset.AssetTypeName,
+		&asset.Status, &asset.Manufacturer, &asset.Model, &asset.SerialNumber,
+		&asset.LocationName, &asset.RFIDTag, &asset.QRCode, &asset.InstallYear, &asset.Observations,
+	)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error":"asset not found for this code"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Obtener datos de la tabla satélite según el tipo
+	satellite := map[string]interface{}{}
+	switch asset.AssetTypeCode {
+	case "SWITCH":
+		var portCount, uplinkCount int
+		var managementIP *string
+		var rackUnit *int
+		err = h.DB.QueryRow(
+			`SELECT port_count, COALESCE(uplink_count,0), management_ip, rack_unit FROM switches WHERE asset_id = $1`,
+			asset.ID,
+		).Scan(&portCount, &uplinkCount, &managementIP, &rackUnit)
+		if err == nil {
+			satellite["port_count"] = portCount
+			satellite["uplink_count"] = uplinkCount
+			satellite["management_ip"] = managementIP
+			satellite["rack_unit"] = rackUnit
+		}
+	case "RACK":
+		var totalU, usedU int
+		var heightMM, widthMM, depthMM *int
+		var powerKW *float64
+		err = h.DB.QueryRow(
+			`SELECT total_u, used_u, height_mm, width_mm, depth_mm, power_kw FROM racks WHERE asset_id = $1`,
+			asset.ID,
+		).Scan(&totalU, &usedU, &heightMM, &widthMM, &depthMM, &powerKW)
+		if err == nil {
+			satellite["total_u"] = totalU
+			satellite["used_u"] = usedU
+			satellite["height_mm"] = heightMM
+			satellite["width_mm"] = widthMM
+			satellite["depth_mm"] = depthMM
+			satellite["power_kw"] = powerKW
+		}
+	case "MDF", "IDF":
+		var mdfType string
+		var rackCount, ppCount, swCount, upsCount int
+		err = h.DB.QueryRow(
+			`SELECT type, COALESCE(rack_count,0), COALESCE(patch_panel_count,0), COALESCE(switch_count,0), COALESCE(ups_count,0) FROM mdf_idf WHERE asset_id = $1`,
+			asset.ID,
+		).Scan(&mdfType, &rackCount, &ppCount, &swCount, &upsCount)
+		if err == nil {
+			satellite["type"] = mdfType
+			satellite["rack_count"] = rackCount
+			satellite["patch_panel_count"] = ppCount
+			satellite["switch_count"] = swCount
+			satellite["ups_count"] = upsCount
+		}
+	case "UPS":
+		var capacityKVA *float64
+		var batteryMin *int
+		var mgmtIP *string
+		err = h.DB.QueryRow(
+			`SELECT capacity_kva, battery_runtime_min, management_ip FROM ups WHERE asset_id = $1`,
+			asset.ID,
+		).Scan(&capacityKVA, &batteryMin, &mgmtIP)
+		if err == nil {
+			satellite["capacity_kva"] = capacityKVA
+			satellite["battery_runtime_min"] = batteryMin
+			satellite["management_ip"] = mgmtIP
+		}
+	}
+
+	// Últimos 5 logs del activo (INV-TRK-0001: auditoría inmutable)
+	type AssetLog struct {
+		ID          string  `json:"id"`
+		EventType   string  `json:"event_type"`
+		Notes       *string `json:"notes"`
+		PerformedAt string  `json:"performed_at"`
+		PerformedBy *string `json:"performed_by_name"`
+	}
+	logRows, err := h.DB.Query(`
+		SELECT al.id, al.event_type, al.notes, al.performed_at,
+		       u.full_name
+		FROM asset_logs al
+		LEFT JOIN users u ON u.id = al.performed_by
+		WHERE al.asset_id = $1
+		ORDER BY al.performed_at DESC
+		LIMIT 5`,
+		asset.ID,
+	)
+	logs := []AssetLog{}
+	if err == nil {
+		defer logRows.Close()
+		for logRows.Next() {
+			var l AssetLog
+			var performedAt interface{}
+			if err := logRows.Scan(&l.ID, &l.EventType, &l.Notes, &performedAt, &l.PerformedBy); err == nil {
+				l.PerformedAt = fmt.Sprintf("%v", performedAt)
+				logs = append(logs, l)
+			}
+		}
+	}
+
+	// Registrar el escaneo en asset_logs (INV-TRK-0001: toda reasignación queda registrada)
+	scanID := uuid.New().String()
+	_, _ = h.DB.Exec(`
+		INSERT INTO asset_logs (id, tenant_id, asset_id, event_type, new_value, notes)
+		VALUES ($1, $2, $3, 'rfid_scan', $4, 'Escaneo vía portal web')`,
+		scanID, tenantID, asset.ID, code,
+	)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"asset":     asset,
+		"satellite": satellite,
+		"logs":      logs,
+	})
+}

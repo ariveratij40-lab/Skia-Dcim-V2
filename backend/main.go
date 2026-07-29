@@ -167,6 +167,8 @@ func main() {
 	// Fase 1: catálogos maestros (INV-DCM-0014) y jerarquía física (§15)
 	http.HandleFunc("/api/dcim/catalogs", dcim.HandleCatalogs)
 	http.HandleFunc("/api/dcim/hierarchy", dcim.HandleHierarchy)
+	// Fase 2: módulo RFID real (INV-TRK-0001)
+	http.HandleFunc("/api/dcim/rfid/", dcim.HandleRFID)
 
 	// Infraestructura DCIM — endpoints por módulo
 	http.HandleFunc("/api/infra/mdf-idf", handleMdfIdf)
