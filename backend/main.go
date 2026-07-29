@@ -691,9 +691,10 @@ func hashPassword(password string) string {
 	salt := make([]byte, 16)
 	rand.Read(salt)
 	hash := argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, 32)
+	// Usar RawURLEncoding para evitar '/' en el salt/hash que rompe la decodificación en verifyPassword
 	return fmt.Sprintf("$argon2id$v=19$m=65536,t=1,p=4$%s$%s",
-		base64.RawStdEncoding.EncodeToString(salt),
-		base64.RawStdEncoding.EncodeToString(hash),
+		base64.RawURLEncoding.EncodeToString(salt),
+		base64.RawURLEncoding.EncodeToString(hash),
 	)
 }
 
@@ -705,13 +706,20 @@ func verifyPassword(password, encodedHash string) bool {
 	if len(parts) != 6 || parts[1] != "argon2id" {
 		return false
 	}
-	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	// Intentar primero RawURLEncoding (hashes nuevos), luego RawStdEncoding (hashes legacy con '/')
+	salt, err := base64.RawURLEncoding.DecodeString(parts[4])
 	if err != nil {
-		return false
+		salt, err = base64.RawStdEncoding.DecodeString(parts[4])
+		if err != nil {
+			return false
+		}
 	}
-	expectedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
+	expectedHash, err := base64.RawURLEncoding.DecodeString(parts[5])
 	if err != nil {
-		return false
+		expectedHash, err = base64.RawStdEncoding.DecodeString(parts[5])
+		if err != nil {
+			return false
+		}
 	}
 	computedHash := argon2.IDKey([]byte(password), salt, 1, 64*1024, 4, uint32(len(expectedHash)))
 	// Comparación en tiempo constante para prevenir timing attacks
