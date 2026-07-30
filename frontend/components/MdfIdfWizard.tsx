@@ -65,10 +65,14 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     id: string; asset_type_code: string; prefix: string;
     separator: string; seq_digits: number; last_seq: number;
     next_code_preview: string;
+    custom_segment_1?: string; custom_segment_2?: string;
   }
   const [namingRules, setNamingRules] = useState<NamingRule[]>([]);
   const [codeSuggestions, setCodeSuggestions] = useState<string[]>([]);
   const [showCodeSuggestions, setShowCodeSuggestions] = useState(false);
+  // Patrón de nomenclatura para mostrar como etiqueta de referencia
+  const [codePattern, setCodePattern] = useState<string | null>(null);
+  const [codePatternUrl, setCodePatternUrl] = useState<string>('/infraestructura/catalogs/nomenclaturas');
 
   // Mapa de tipo MDF/IDF → asset_type_code para buscar la regla
   const TYPE_TO_CODE: Record<MdfIdfType, string> = {
@@ -82,6 +86,20 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
       const data = await res.json();
       setNamingRules(data.rules ?? []);
     } catch { /* silencioso */ }
+  };
+
+  // Construir el patrón legible para mostrar como etiqueta (ej: MDF-001, IDF-A-001)
+  const buildCodePattern = (type: MdfIdfType, rules: NamingRule[]): string | null => {
+    const typeCode = TYPE_TO_CODE[type];
+    const rule = rules.find(r => r.asset_type_code === typeCode);
+    if (!rule) return null;
+    const sep = rule.separator || '-';
+    const digits = rule.seq_digits || 3;
+    const parts: string[] = [rule.prefix];
+    if (rule.custom_segment_1) parts.push(rule.custom_segment_1.toUpperCase());
+    if (rule.custom_segment_2) parts.push(rule.custom_segment_2.toUpperCase());
+    parts.push('0'.repeat(digits)); // placeholder de secuencia
+    return parts.join(sep);
   };
 
   const buildCodeSuggestions = (type: MdfIdfType, rules: NamingRule[]): string[] => {
@@ -243,7 +261,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     });
   }, []);
 
-  // Actualizar sugerencias de código cuando cambia el tipo o se cargan las reglas
+  // Actualizar sugerencias y patrón cuando cambia el tipo o se cargan las reglas
   useEffect(() => {
     const suggestions = buildCodeSuggestions(form.type, namingRules);
     setCodeSuggestions(suggestions);
@@ -251,6 +269,12 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     if (!form.code && suggestions.length > 0) {
       setForm(f => ({ ...f, code: suggestions[0] }));
     }
+    // Calcular el patrón de referencia (ej: MDF-000)
+    const pattern = buildCodePattern(form.type, namingRules);
+    setCodePattern(pattern);
+    // URL de nomenclaturas con el tipo del activo como parámetro
+    const typeCode = TYPE_TO_CODE[form.type];
+    setCodePatternUrl(`/infraestructura/catalogs/nomenclaturas?type=${typeCode}`);
   }, [form.type, namingRules]);
 
   // Cargar ubicaciones cuando se llega al paso 2
@@ -444,6 +468,52 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
                       {i === 0 && <span style={{ fontSize: '0.65rem', background: '#4361EE', color: '#fff', padding: '1px 6px', borderRadius: 6, fontWeight: 600 }}>Siguiente</span>}
                     </button>
                   ))}
+                </div>
+              )}
+              {/* Etiqueta de patrón de nomenclatura + botón de ayuda */}
+              {codePattern ? (
+                <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#64748B' }}>Formato configurado:</span>
+                  <code style={{
+                    background: '#EEF2FF', color: TYPE_COLORS[form.type],
+                    padding: '2px 8px', borderRadius: 6, fontWeight: 700,
+                    fontSize: '0.75rem', letterSpacing: '0.04em',
+                  }}>{codePattern}</code>
+                  <a
+                    href={codePatternUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 3,
+                      fontSize: '0.72rem', color: '#4361EE', fontWeight: 600,
+                      textDecoration: 'none', padding: '2px 8px',
+                      background: '#EEF2FF', borderRadius: 6,
+                      border: '1px solid #C7D2FE',
+                      transition: 'background 120ms',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#E0E7FF')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '#EEF2FF')}
+                  >
+                    📋 Ver regla de nomenclatura →
+                  </a>
+                </div>
+              ) : (
+                <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: '0.72rem', color: '#94A3B8' }}>Sin regla configurada para {form.type}.</span>
+                  <a
+                    href={codePatternUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 3,
+                      fontSize: '0.72rem', color: '#64748B', fontWeight: 600,
+                      textDecoration: 'none', padding: '2px 8px',
+                      background: '#F8FAFF', borderRadius: 6,
+                      border: '1px solid #E8EBF4',
+                    }}
+                  >
+                    ➕ Configurar nomenclatura
+                  </a>
                 </div>
               )}
             </div>
