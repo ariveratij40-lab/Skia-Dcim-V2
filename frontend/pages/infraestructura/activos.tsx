@@ -16,6 +16,7 @@ import {
 import AppLayout from '../../components/AppLayout';
 import ModuleEmptyState from '../../components/ModuleEmptyState';
 import { ClearInventoryButton } from '../../components/clear-inventory-button';
+import { ImportModal } from '../../components/ImportModal';
 
 // ============================================================
 // TIPOS
@@ -633,6 +634,7 @@ function AssetsContent() {
   const [showActivoWizard, setShowActivoWizard] = useState(false);
   const [deletingId, setDeletingId]     = useState<string | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
   // Cerrar dropdown exportar
@@ -731,25 +733,47 @@ function AssetsContent() {
   const totalAssets = allAssets.length;
 
   // Exportar CSV
+  const getExportData = () => {
+    // Si estamos en Dashboard, exportar todos los activos; si no, los del tab activo
+    return activeTab === 'dashboard' ? allAssets : assets;
+  };
+
+  const getExportFilename = (ext: string) => {
+    const tabSuffix = activeTab === 'dashboard' ? 'todos' : activeTab.toLowerCase();
+    return `skia_activos_${tabSuffix}_${new Date().toISOString().slice(0,10)}.${ext}`;
+  };
+
   const handleExportCSV = () => {
-    if (!assets.length) { alert('No hay activos para exportar.'); return; }
-    const hdr = ['Código','Nombre','Tipo','Ubicación','Fabricante','Modelo','Serie','Estado','RFID','Año'];
-    const rows = assets.map(a => [a.internal_code, a.name, a.asset_type_name, a.location_name??'', a.manufacturer??'', a.model??'', a.serial_number??'', STATUS_CONFIG[a.status]?.label??a.status, a.rfid_tag??'', a.install_year??'']);
+    const data = getExportData();
+    if (!data.length) { alert('No hay activos para exportar en la vista actual.'); return; }
+    const hdr = ['Código','Nombre','Tipo','Ubicación','Fabricante','Modelo','Serie','Estado','RFID','Año','Observaciones'];
+    const rows = data.map(a => [
+      a.internal_code, a.name, a.asset_type_name,
+      a.location_name??'', a.manufacturer??'', a.model??'',
+      a.serial_number??'', STATUS_CONFIG[a.status]?.label??a.status,
+      a.rfid_tag??'', a.install_year??'', a.observations??''
+    ]);
     const csv = [hdr,...rows].map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv],{type:'text/csv;charset=utf-8;'});
+    const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download=`skia_activos_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    const a = document.createElement('a'); a.href=url; a.download=getExportFilename('csv'); a.click();
     URL.revokeObjectURL(url); setExportMenuOpen(false);
   };
 
   const handleExportExcel = () => {
-    if (!assets.length) { alert('No hay activos para exportar.'); return; }
-    const hdr = ['Código','Nombre','Tipo','Ubicación','Fabricante','Modelo','Serie','Estado','RFID','Año'];
-    const rows = assets.map(a => [a.internal_code, a.name, a.asset_type_name, a.location_name??'', a.manufacturer??'', a.model??'', a.serial_number??'', STATUS_CONFIG[a.status]?.label??a.status, a.rfid_tag??'', a.install_year??'']);
+    const data = getExportData();
+    if (!data.length) { alert('No hay activos para exportar en la vista actual.'); return; }
+    const hdr = ['Código','Nombre','Tipo','Ubicación','Fabricante','Modelo','Serie','Estado','RFID','Año','Observaciones'];
+    const rows = data.map(a => [
+      a.internal_code, a.name, a.asset_type_name,
+      a.location_name??'', a.manufacturer??'', a.model??'',
+      a.serial_number??'', STATUS_CONFIG[a.status]?.label??a.status,
+      a.rfid_tag??'', a.install_year??'', a.observations??''
+    ]);
     const tsv = [hdr,...rows].map(r=>r.join('\t')).join('\n');
     const blob = new Blob([tsv],{type:'application/vnd.ms-excel;charset=utf-8;'});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download=`skia_activos_${new Date().toISOString().slice(0,10)}.xls`; a.click();
+    const a = document.createElement('a'); a.href=url; a.download=getExportFilename('xls'); a.click();
     URL.revokeObjectURL(url); setExportMenuOpen(false);
   };
 
@@ -793,7 +817,9 @@ function AssetsContent() {
           </div>
           <div className="flex items-center gap-2">
             {/* Importar */}
-            <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 bg-slate-100/80 border border-[#E8EBF4] rounded-xl hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm">
+            <button
+              onClick={() => setShowImportModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 bg-slate-100/80 border border-[#E8EBF4] rounded-xl hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm">
               <Upload size={12} /> Importar
             </button>
 
@@ -1139,6 +1165,14 @@ function AssetsContent() {
       )}
 
       {/* ── MODAL CONFIRMAR BORRADO ────────────────────────────────────────── */}
+      {/* ── MODAL IMPORTAR ────────────────────────────────────────────────── */}
+      {showImportModal && (
+        <ImportModal
+          onClose={() => setShowImportModal(false)}
+          onSuccess={() => { loadAssets(); }}
+        />
+      )}
+
       {deletingId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white backdrop-blur rounded-2xl shadow-2xl p-6 max-w-sm mx-4 border border-[#E8EBF4]">
