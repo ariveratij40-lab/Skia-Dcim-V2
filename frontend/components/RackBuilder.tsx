@@ -116,10 +116,13 @@ export default function RackBuilder({ rackId, rackCode, totalU, mdfIdfId, onClos
         color: TYPE_COLORS[(a.asset_type_code as string)] || TYPE_COLORS.DEFAULT,
       }));
 
-      // 2. Activos ya en ESTE rack
-      const inThisRack = allAssets.filter(a => a.rack_id === rackId);
-      // 3. Activos disponibles (sin rack asignado)
-      const freeAssets = allAssets.filter(a => !a.rack_id);
+      // Tipos que NO son montables en rack (son cuartos técnicos o infraestructura física)
+      const NON_RACK_TYPES = new Set(['MDF', 'IDF', 'SITE', 'SALA_TECNICA', 'MDF_IDF']);
+
+      // 2. Activos ya en ESTE rack (solo tipos montables)
+      const inThisRack = allAssets.filter(a => a.rack_id === rackId && !NON_RACK_TYPES.has(a.asset_type_code));
+      // 3. Activos disponibles (sin rack asignado y solo tipos montables)
+      const freeAssets = allAssets.filter(a => !a.rack_id && !NON_RACK_TYPES.has(a.asset_type_code));
 
       setAvailable(freeAssets);
 
