@@ -64,6 +64,9 @@ type Asset struct {
 	Observations    *string    `json:"observations"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	// Asignación de rack (se rellena en el listado vía LEFT JOIN)
+	RackID          *string    `json:"rack_id"`
+	RackUnit        *int       `json:"rack_unit"`
 }
 
 // TechnicalData contiene los campos específicos de la tabla satélite según el tipo de activo.
@@ -631,10 +634,15 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		       a.status, a.inventory_status,
 		       a.rfid_tag, a.qr_code,
 		       a.install_year, a.observations,
-		       a.created_at, a.updated_at
+		       a.created_at, a.updated_at,
+		       COALESCE(sw.rack_id::TEXT, pp.rack_id::TEXT, pdu.rack_id::TEXT) AS rack_id,
+		       COALESCE(sw.rack_unit, pp.rack_unit) AS rack_unit
 		FROM assets a
 		JOIN asset_types at ON a.asset_type_id = at.id
 		LEFT JOIN locations l ON a.location_id = l.id
+		LEFT JOIN switches sw ON sw.asset_id = a.id
+		LEFT JOIN patch_panels pp ON pp.asset_id = a.id
+		LEFT JOIN pdus pdu ON pdu.asset_id = a.id
 		WHERE a.tenant_id = $1 AND a.branch_id = $2`
 
 	args := []interface{}{tenantID, branchID}
@@ -669,6 +677,8 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var a Asset
 		var purchaseDate, warrantyExpiry sql.NullString
+		var rackIDNull sql.NullString
+		var rackUnitNull sql.NullInt64
 		err := rows.Scan(
 			&a.ID, &a.TenantID, &a.BranchID,
 			&a.AssetTypeID, &a.AssetTypeCode, &a.AssetTypeName,
@@ -680,9 +690,17 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 			&a.RFIDTag, &a.QRCode,
 			&a.InstallYear, &a.Observations,
 			&a.CreatedAt, &a.UpdatedAt,
+			&rackIDNull, &rackUnitNull,
 		)
 		_ = purchaseDate
 		_ = warrantyExpiry
+		if rackIDNull.Valid {
+			a.RackID = &rackIDNull.String
+		}
+		if rackUnitNull.Valid {
+			v := int(rackUnitNull.Int64)
+			a.RackUnit = &v
+		}
 		if err != nil {
 			log.Printf("Error scanning asset: %v", err)
 			continue

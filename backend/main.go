@@ -185,6 +185,7 @@ func main() {
 	// Infraestructura DCIM — endpoints por módulo
 	http.HandleFunc("/api/infra/mdf-idf", handleMdfIdf)
 	http.HandleFunc("/api/infra/racks", handleRacks)
+	http.HandleFunc("/api/infra/racks/", handleRackLayout) // /api/infra/racks/{id}/layout
 	http.HandleFunc("/api/infra/switches", handleSwitches)
 	http.HandleFunc("/api/infra/patch-panels", handlePatchPanels)
 	http.HandleFunc("/api/infra/ups-pdus", handleUpsPdus)

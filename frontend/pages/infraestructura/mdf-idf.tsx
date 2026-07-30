@@ -1,4 +1,5 @@
 import MdfIdfWizard, { MdfIdfWizardData } from '../../components/MdfIdfWizard';
+import RackBuilder from '../../components/RackBuilder';
 import axios from 'axios';
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/router';
@@ -847,9 +848,10 @@ interface MdfCardProps {
   record: MdfIdfRecord;
   onView: (r: MdfIdfRecord) => void;
   onEdit: (r: MdfIdfRecord) => void;
+  onRackBuilder?: (r: MdfIdfRecord) => void;
 }
 
-function MdfCard({ record, onView, onEdit }: MdfCardProps) {
+function MdfCard({ record, onView, onEdit, onRackBuilder }: MdfCardProps) {
   const tc = TYPE_CONFIG[record.type];
   const sc = STATUS_CONFIG[record.status];
   const capacityPct = record.capacity_u > 0 ? Math.round((record.used_u / record.capacity_u) * 100) : 0;
@@ -1021,6 +1023,12 @@ function MdfCard({ record, onView, onEdit }: MdfCardProps) {
               className="p-1.5 rounded-lg hover:bg-slate-100/80 text-slate-500 transition-colors" title="Editar">
               <Edit2 size={12} />
             </button>
+            {onRackBuilder && (
+              <button onClick={() => onRackBuilder(record)}
+                className="p-1.5 rounded-lg hover:bg-violet-100/80 text-violet-500 transition-colors" title="Rack Builder — armar rack">
+                <Layers size={12} />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1806,6 +1814,9 @@ function TabInventario({ data, setData, highlightCode }: { data: MdfIdfRecord[];
   const [exportOpen, setExportOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('list');
   const exportRef = useRef<HTMLDivElement>(null);
+  // Rack Builder
+  const [showRackBuilder, setShowRackBuilder] = useState(false);
+  const [rackBuilderRecord, setRackBuilderRecord] = useState<MdfIdfRecord | null>(null);
 
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -1990,7 +2001,8 @@ function TabInventario({ data, setData, highlightCode }: { data: MdfIdfRecord[];
             <div key={r.id} ref={el=>{ mdfRowRefs.current[r.id]=el as HTMLDivElement|null; }} className={highlightedId===r.id?'skia-highlight-row rounded-2xl':''} style={highlightedId===r.id?{borderRadius:'16px'}:{}}>
               <MdfCard record={r}
                 onView={setViewRecord}
-                onEdit={r => { setEditRecord(r); setShowModal(true); }} />
+                onEdit={r => { setEditRecord(r); setShowModal(true); }}
+                onRackBuilder={r => { setRackBuilderRecord(r); setShowRackBuilder(true); }} />
             </div>
           ))}
         </div>
@@ -2014,6 +2026,17 @@ function TabInventario({ data, setData, highlightCode }: { data: MdfIdfRecord[];
       {/* Modal */}
       {showModal && (
         <MdfModal record={editRecord} onClose={() => { setShowModal(false); setEditRecord(null); }} onSave={handleSave} />
+      )}
+      {/* Rack Builder Modal */}
+      {showRackBuilder && rackBuilderRecord && (
+        <RackBuilder
+          rackId={rackBuilderRecord.id}
+          rackCode={rackBuilderRecord.code}
+          totalU={rackBuilderRecord.capacity_u || 42}
+          mdfIdfId={rackBuilderRecord.id}
+          onClose={() => { setShowRackBuilder(false); setRackBuilderRecord(null); }}
+          onSaved={() => { setShowRackBuilder(false); setRackBuilderRecord(null); }}
+        />
       )}
       {showMdfWizard && (
         <MdfIdfWizard
