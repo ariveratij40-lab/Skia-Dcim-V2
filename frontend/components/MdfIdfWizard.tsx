@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { X, ChevronRight, ChevronLeft, Check, Building2, Server, MapPin, Users, Shield } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, ChevronRight, ChevronLeft, Check, Building2, Server, MapPin, Users, Shield, RefreshCw, AlertCircle, Package } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
 
 export type MdfIdfType = 'MDF' | 'IDF' | 'Site' | 'Sala Técnica';
@@ -14,6 +14,12 @@ export interface MdfIdfWizardData {
   capacity_u: number; used_u: number;
   cooling: string; power_kva: number;
   floor_plan_ref: string; photo_url: string; notes: string; tags: string[];
+}
+
+interface AssetSummary {
+  RACK: number; SWITCH: number; UPS: number; NODE: number;
+  PDU: number; PATCH_PANEL: number; BACKBONE: number;
+  total: number;
 }
 
 interface Props {
@@ -54,8 +60,55 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const [form, setForm] = useState<MdfIdfWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
 
+  // ── Estado del paso 3: activos del inventario ──────────────────────────────
+  const [assetSummary, setAssetSummary] = useState<AssetSummary | null>(null);
+  const [loadingAssets, setLoadingAssets] = useState(false);
+  const [assetsError, setAssetsError] = useState('');
+
   const set = (field: keyof MdfIdfWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
+
+  // Cargar activos cuando se llega al paso 3
+  useEffect(() => {
+    if (stage === 3) loadAssetSummary();
+  }, [stage]);
+
+  const loadAssetSummary = async () => {
+    setLoadingAssets(true);
+    setAssetsError('');
+    try {
+      const res = await fetch('/api/dcim/assets');
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json();
+      const assets: any[] = data.assets ?? [];
+
+      // Contar por tipo de activo
+      const counts: AssetSummary = {
+        RACK: 0, SWITCH: 0, UPS: 0, NODE: 0,
+        PDU: 0, PATCH_PANEL: 0, BACKBONE: 0, total: assets.length,
+      };
+      for (const a of assets) {
+        const code = (a.asset_type_code ?? '').toUpperCase();
+        if (code in counts) (counts as any)[code]++;
+      }
+
+      setAssetSummary(counts);
+
+      // Pre-poblar los campos del formulario con los conteos reales
+      setForm(f => ({
+        ...f,
+        racks_count:    counts.RACK,
+        switches_count: counts.SWITCH,
+        ups_count:      counts.UPS,
+        nodes_count:    counts.NODE + counts.PDU + counts.PATCH_PANEL,
+        servers_count:  0, // los servidores no tienen tipo propio aún
+      }));
+    } catch (err: any) {
+      setAssetsError(err.message ?? 'No se pudo cargar el inventario');
+    } finally {
+      setLoadingAssets(false);
+    }
+  };
 
   const completedStages = (): number[] => {
     const c: number[] = [];
@@ -111,6 +164,50 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     </div>
   );
 
+  // ── Tarjeta de activo con conteo real ──────────────────────────────────────
+  const AssetCountCard = ({
+    label, count, icon, color, fieldKey,
+  }: {
+    label: string; count: number; icon: string; color: string;
+    fieldKey: keyof MdfIdfWizardData;
+  }) => (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12,
+      padding: '10px 14px', borderRadius: 12,
+      border: `1.5px solid ${color}30`,
+      background: `${color}08`,
+    }}>
+      <div style={{
+        width: 36, height: 36, borderRadius: 10,
+        background: `${color}18`, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0,
+      }}>{icon}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '0.72rem', color: '#64748B', fontWeight: 600, marginBottom: 2 }}>
+          {label}
+        </div>
+        <div style={{ fontSize: '1.1rem', fontWeight: 800, color: color }}>
+          {count}
+          <span style={{ fontSize: '0.7rem', fontWeight: 500, color: '#94A3B8', marginLeft: 4 }}>
+            registrados
+          </span>
+        </div>
+      </div>
+      {/* Ajuste manual con +/- */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+        <button
+          onClick={() => set(fieldKey, Math.max(0, (form[fieldKey] as number) - 1))}
+          style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid #E8EBF4', background: '#F8FAFF', cursor: 'pointer', fontSize: '0.9rem', color: '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', minWidth: 20, textAlign: 'center' }}>
+          {form[fieldKey] as number}
+        </span>
+        <button
+          onClick={() => set(fieldKey, (form[fieldKey] as number) + 1)}
+          style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid #E8EBF4', background: '#F8FAFF', cursor: 'pointer', fontSize: '0.9rem', color: '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+      </div>
+    </div>
+  );
+
   const renderStage = () => {
     switch (stage) {
       case 1: return (
@@ -140,22 +237,67 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
       );
       case 3: return (
         <div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          {/* Capacidad física — campos editables */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 18 }}>
             <div>{fld('Capacidad total (U)', inp('capacity_u', '42', 'number'))}</div>
             <div>{fld('Unidades usadas (U)', inp('used_u', '0', 'number'))}</div>
-            <div>{fld('Racks', inp('racks_count', '0', 'number'))}</div>
-            <div>{fld('Switches', inp('switches_count', '0', 'number'))}</div>
-            <div>{fld('UPS', inp('ups_count', '0', 'number'))}</div>
-            <div>{fld('Nodos/Puntos', inp('nodes_count', '0', 'number'))}</div>
-            <div>{fld('Servidores', inp('servers_count', '0', 'number'))}</div>
             <div>{fld('Potencia (kVA)', inp('power_kva', '0', 'number'))}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Sistema de enfriamiento', (
+            <div>{fld('Sistema de enfriamiento', (
               <select value={form.cooling} onChange={e => set('cooling', e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}>
                 <option value="">Sin especificar</option>
                 {['Aire acondicionado dedicado','Aire acondicionado de precisión','Ventilación natural','Ventilación forzada','Enfriamiento líquido','Sin enfriamiento'].map(c => <option key={c}>{c}</option>)}
               </select>
             ))}</div>
           </div>
+
+          {/* Equipos del inventario — jalados automáticamente */}
+          <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Package size={13} color="#4361EE" />
+              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>
+                Equipos registrados en el inventario
+              </span>
+            </div>
+            <button
+              onClick={loadAssetSummary}
+              disabled={loadingAssets}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 8, border: '1px solid #E8EBF4', background: '#F8FAFF', cursor: loadingAssets ? 'wait' : 'pointer', fontSize: '0.72rem', color: '#4361EE', fontWeight: 600 }}>
+              <RefreshCw size={11} style={{ animation: loadingAssets ? 'spin 1s linear infinite' : 'none' }} />
+              {loadingAssets ? 'Cargando...' : 'Actualizar'}
+            </button>
+          </div>
+
+          {assetsError && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', background: '#FFF1F2', border: '1px solid #FECDD3', borderRadius: 10, marginBottom: 10, fontSize: '0.78rem', color: '#BE123C' }}>
+              <AlertCircle size={13} />
+              {assetsError} — los conteos se pueden ajustar manualmente.
+            </div>
+          )}
+
+          {loadingAssets ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[1,2,3,4,5].map(i => (
+                <div key={i} style={{ height: 58, borderRadius: 12, background: '#F1F5F9', animation: 'pulse 1.5s ease-in-out infinite' }} />
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <AssetCountCard label="Racks"         count={assetSummary?.RACK ?? 0}    icon="🗄️" color="#6366F1" fieldKey="racks_count" />
+              <AssetCountCard label="Switches"      count={assetSummary?.SWITCH ?? 0}  icon="🔀" color="#0891B2" fieldKey="switches_count" />
+              <AssetCountCard label="UPS"           count={assetSummary?.UPS ?? 0}     icon="⚡" color="#F59E0B" fieldKey="ups_count" />
+              <AssetCountCard label="Nodos / Puntos" count={assetSummary ? assetSummary.NODE + assetSummary.PDU + assetSummary.PATCH_PANEL : 0} icon="🖥️" color="#059669" fieldKey="nodes_count" />
+              <AssetCountCard label="Servidores"    count={assetSummary?.NODE ?? 0}    icon="💾" color="#7C3AED" fieldKey="servers_count" />
+            </div>
+          )}
+
+          {assetSummary && (
+            <div style={{ marginTop: 12, padding: '8px 12px', background: '#EEF2FF', borderRadius: 10, fontSize: '0.75rem', color: '#4361EE', fontWeight: 600 }}>
+              📦 Total de activos en el inventario: <strong>{assetSummary.total}</strong>
+              <span style={{ fontWeight: 400, color: '#6366F1', marginLeft: 6 }}>
+                — Puedes ajustar los conteos con +/− si este MDF/IDF solo alberga un subconjunto.
+              </span>
+            </div>
+          )}
         </div>
       );
       case 4: return (
@@ -184,6 +326,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
               ['Capacidad', form.capacity_u ? `${form.capacity_u}U` : '—'],
               ['Responsable', form.responsible || '—'],
               ['Racks / Switches', `${form.racks_count} / ${form.switches_count}`],
+              ['UPS / Nodos', `${form.ups_count} / ${form.nodes_count}`],
             ].map(([k, v]) => (
               <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #E8EBF4', fontSize: '0.82rem' }}>
                 <span style={{ color: '#64748B' }}>{k}</span>
