@@ -60,6 +60,46 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const [form, setForm] = useState<MdfIdfWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
 
+  // ── Estado del paso 1: nomenclaturas para sugerencias de código ──────────────
+  interface NamingRule {
+    id: string; asset_type_code: string; prefix: string;
+    separator: string; seq_digits: number; last_seq: number;
+    next_code_preview: string;
+  }
+  const [namingRules, setNamingRules] = useState<NamingRule[]>([]);
+  const [codeSuggestions, setCodeSuggestions] = useState<string[]>([]);
+  const [showCodeSuggestions, setShowCodeSuggestions] = useState(false);
+
+  // Mapa de tipo MDF/IDF → asset_type_code para buscar la regla
+  const TYPE_TO_CODE: Record<MdfIdfType, string> = {
+    'MDF': 'MDF', 'IDF': 'IDF', 'Site': 'MDF', 'Sala Técnica': 'IDF',
+  };
+
+  const loadNamingRules = async () => {
+    try {
+      const res = await fetch('/api/dcim/catalogs/naming-rules');
+      if (!res.ok) return;
+      const data = await res.json();
+      setNamingRules(data.rules ?? []);
+    } catch { /* silencioso */ }
+  };
+
+  const buildCodeSuggestions = (type: MdfIdfType, rules: NamingRule[]): string[] => {
+    const code = TYPE_TO_CODE[type];
+    const rule = rules.find(r => r.asset_type_code === code);
+    if (!rule) {
+      // Fallback genérico si no hay regla configurada
+      const prefix = type === 'MDF' ? 'MDF' : type === 'IDF' ? 'IDF' : type === 'Site' ? 'SITE' : 'ST';
+      return Array.from({ length: 5 }, (_, i) =>
+        `${prefix}-${String(i + 1).padStart(3, '0')}`);
+    }
+    const sep = rule.separator || '-';
+    const digits = rule.seq_digits || 3;
+    // Generar los próximos 5 códigos desde last_seq+1
+    return Array.from({ length: 5 }, (_, i) =>
+      `${rule.prefix}${sep}${String(rule.last_seq + 1 + i).padStart(digits, '0')}`);
+  };
+
   // ── Estado del paso 3: activos del inventario ──────────────────────────────
   const [assetSummary, setAssetSummary] = useState<AssetSummary | null>(null);
   const [loadingAssets, setLoadingAssets] = useState(false);
@@ -195,6 +235,23 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     set('name', s);
     setShowSuggestions(false);
   };
+
+  // Cargar nomenclaturas al montar el wizard
+  useEffect(() => {
+    loadNamingRules().then(() => {
+      // Generar sugerencias iniciales para el tipo por defecto
+    });
+  }, []);
+
+  // Actualizar sugerencias de código cuando cambia el tipo o se cargan las reglas
+  useEffect(() => {
+    const suggestions = buildCodeSuggestions(form.type, namingRules);
+    setCodeSuggestions(suggestions);
+    // Si el campo código está vacío, pre-llenar con el primer código sugerido
+    if (!form.code && suggestions.length > 0) {
+      setForm(f => ({ ...f, code: suggestions[0] }));
+    }
+  }, [form.type, namingRules]);
 
   // Cargar ubicaciones cuando se llega al paso 2
   useEffect(() => {
@@ -346,18 +403,50 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
       case 1: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {/* Campo Código con handler propio */}
-            <div>{fld('Código', (
+            {/* Campo Código con dropdown de nomenclatura */}
+            <div style={{ position: 'relative' }}>
+              {lbl('Código', true)}
               <input
                 type="text"
-                placeholder="MDF-001"
+                placeholder={codeSuggestions[0] ?? 'MDF-001'}
                 value={form.code}
                 onChange={e => handleCodeChange(e.target.value)}
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', outline: 'none', background: '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms' }}
-                onFocus={e => e.target.style.borderColor = '#4361EE'}
-                onBlur={e => e.target.style.borderColor = '#E8EBF4'}
+                onFocus={() => setShowCodeSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowCodeSuggestions(false), 150)}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: `1.5px solid ${form.code ? '#4361EE' : '#E8EBF4'}`, fontSize: '0.875rem', outline: 'none', background: '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms', boxSizing: 'border-box' }}
               />
-            ), true)}</div>
+              {/* Dropdown de sugerencias de código */}
+              {showCodeSuggestions && codeSuggestions.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 60,
+                  background: '#fff', border: '1.5px solid #E8EBF4', borderRadius: 12,
+                  boxShadow: '0 8px 24px rgba(15,23,42,0.12)', marginTop: 4, overflow: 'hidden',
+                }}>
+                  <div style={{ padding: '5px 12px', borderBottom: '1px solid #F1F5F9', fontSize: '0.68rem', color: '#94A3B8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ color: TYPE_COLORS[form.type] }}>■</span> Nomenclatura {form.type}
+                  </div>
+                  {codeSuggestions.map((s, i) => (
+                    <button key={i}
+                      onMouseDown={() => { set('code', s); setShowCodeSuggestions(false); }}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        width: '100%', textAlign: 'left', padding: '8px 14px',
+                        border: 'none', background: i === 0 ? '#F0F4FF' : 'transparent',
+                        fontSize: '0.85rem', color: '#1E293B', cursor: 'pointer',
+                        borderBottom: i < codeSuggestions.length - 1 ? '1px solid #F8FAFF' : 'none',
+                        fontWeight: i === 0 ? 700 : 400,
+                        transition: 'background 100ms',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#EEF2FF')}
+                      onMouseLeave={e => (e.currentTarget.style.background = i === 0 ? '#F0F4FF' : 'transparent')}
+                    >
+                      <span style={{ color: i === 0 ? TYPE_COLORS[form.type] : '#1E293B' }}>{s}</span>
+                      {i === 0 && <span style={{ fontSize: '0.65rem', background: '#4361EE', color: '#fff', padding: '1px 6px', borderRadius: 6, fontWeight: 600 }}>Siguiente</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             {/* Chips de Tipo con handler propio */}
             <div>{fld('Tipo', (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>

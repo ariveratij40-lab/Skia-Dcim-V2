@@ -2089,11 +2089,17 @@ function MdfIdfContent() {
     <div className="p-6 min-h-screen" style={{ background: '#EEF0F8' }}>
 
       {/* Encabezado */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-black text-[#1A1D2E] tracking-tight">MDF / IDF</h1>
-        <p className="text-sm text-[#5C6194] mt-1 font-medium">
-          Gestión de cuartos técnicos, salas de telecomunicaciones y puntos de distribución.
-        </p>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-black text-[#1A1D2E] tracking-tight">MDF / IDF</h1>
+          <p className="text-sm text-[#5C6194] mt-1 font-medium">
+            Gestión de cuartos técnicos, salas de telecomunicaciones y puntos de distribución.
+          </p>
+        </div>
+        <button onClick={() => setShowMdfWizard(true)}
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-colors shadow-sm whitespace-nowrap">
+          <Plus size={13} /> Nuevo MDF / IDF
+        </button>
       </div>
 
       {/* Pestañas */}
