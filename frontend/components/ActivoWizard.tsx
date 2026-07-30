@@ -1,40 +1,35 @@
 /**
- * ActivoWizard — Wizard de 5 pasos para crear activos polimórficos (Fase 2)
+ * ActivoWizard — Wizard de 5 pasos para crear activos polimórficos (Fase 2 rev.2)
  *
- * Cambios respecto a la versión legacy:
- *   - Consume /api/dcim/catalogs vía useCatalogs (INV-DCM-0014)
- *   - El Paso 2 (Técnico) es dinámico según el asset_type seleccionado
- *   - El internal_code es generado por el backend (INV-DCM-0015); no se pide al usuario
- *   - handleSave hace POST real a /api/dcim/assets con payload polimórfico
- *   - Los estados se envían en inglés (active, inactive...) — corrige F-AST-04
- *   - Modelo: select dinámico filtrado por fabricante con alta inline
- *   - Nombre descriptivo: placeholder con ejemplo de nomenclatura estándar + enlace a reglas
- *   - Proveedor: select desde catálogo real (no hardcodeado)
+ * Correcciones respecto a rev.1:
+ *   - Bug 1: Los enlaces "Dar de alta fabricantes/proveedores" ya NO navegan fuera.
+ *     Ahora abren un mini-modal inline (QuickCreateModal) dentro del propio Wizard,
+ *     sin perder el estado del formulario. Al guardar, refresca el catálogo y
+ *     selecciona automáticamente el nuevo registro.
+ *   - Bug 2: El campo Nombre descriptivo ahora valida contra la nomenclatura estándar.
+ *     Si el usuario escribe algo que no coincide con el patrón esperado, muestra
+ *     un aviso amarillo no bloqueante. El campo sigue siendo editable libremente.
  */
 
-import { useState, useEffect } from 'react';
-import { X, ChevronRight, ChevronLeft, Check, Package, Tag, MapPin, DollarSign, Shield } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { X, ChevronRight, ChevronLeft, Check, Package, Tag, MapPin, DollarSign, Shield, Plus, AlertTriangle } from 'lucide-react';
 import axios from 'axios';
 import { useCatalogs, ASSET_TYPE_UI, OPERATIONAL_STATUS_UI } from '../hooks/useCatalogs';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
 interface TechnicalData {
-  // RACK
   total_u?: number;
   height_mm?: number;
   width_mm?: number;
   depth_mm?: number;
   power_kw?: number;
-  // SWITCH
   port_count?: number;
   uplink_count?: number;
   management_ip?: string;
   rack_unit?: number;
-  // UPS
   capacity_kva?: number;
   battery_runtime_min?: number;
-  // MDF/IDF
   mdf_type?: string;
   rack_count?: number;
   patch_panel_count?: number;
@@ -70,6 +65,122 @@ interface Props {
   initial?: Partial<WizardForm>;
 }
 
+// ── Mini-modal de alta rápida (fabricante o proveedor) ───────────────────────
+
+interface QuickCreateField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+  type?: string;
+  options?: { value: string; label: string }[];
+}
+
+interface QuickCreateModalProps {
+  title: string;
+  fields: QuickCreateField[];
+  onSave: (data: Record<string, string>) => Promise<void>;
+  onClose: () => void;
+}
+
+function QuickCreateModal({ title, fields, onSave, onClose }: QuickCreateModalProps) {
+  const [data, setData] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const firstRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { firstRef.current?.focus(); }, []);
+
+  const handleSubmit = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(data);
+    } catch (err: unknown) {
+      const axErr = err as { response?: { data?: { error?: string } } };
+      setError(axErr.response?.data?.error ?? 'Error al guardar');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const requiredFilled = fields.filter(f => f.required).every(f => (data[f.key] ?? '').trim() !== '');
+
+  return (
+    /* Overlay sobre el Wizard — z-index mayor */
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.65)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ background: '#fff', borderRadius: 16, width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(15,23,42,0.22)', padding: 24 }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#1E293B' }}>{title}</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 4 }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Campos */}
+        {fields.map((f, i) => (
+          <div key={f.key} style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748B', marginBottom: 4, display: 'block' }}>
+              {f.label}{f.required && <span style={{ color: '#EF4444', marginLeft: 2 }}>*</span>}
+            </label>
+            {f.options ? (
+              <select
+                value={data[f.key] ?? ''}
+                onChange={e => setData(d => ({ ...d, [f.key]: e.target.value }))}
+                style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1.5px solid #E8EBF4', fontSize: '0.85rem', background: '#FAFBFF', color: '#1E293B' }}
+              >
+                <option value="">Seleccionar...</option>
+                {f.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            ) : (
+              <input
+                ref={i === 0 ? firstRef : undefined}
+                type={f.type ?? 'text'}
+                placeholder={f.placeholder}
+                value={data[f.key] ?? ''}
+                onChange={e => setData(d => ({ ...d, [f.key]: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter' && requiredFilled) handleSubmit(); }}
+                style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1.5px solid #E8EBF4', fontSize: '0.85rem', background: '#FAFBFF', color: '#1E293B', boxSizing: 'border-box', outline: 'none' }}
+                onFocus={e => (e.target.style.borderColor = '#4361EE')}
+                onBlur={e => (e.target.style.borderColor = '#E8EBF4')}
+              />
+            )}
+          </div>
+        ))}
+
+        {error && (
+          <div style={{ padding: '8px 12px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, fontSize: '0.78rem', color: '#DC2626', marginBottom: 12 }}>
+            ⚠ {error}
+          </div>
+        )}
+
+        {/* Botones */}
+        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+          <button
+            onClick={onClose}
+            style={{ flex: 1, padding: '9px 0', borderRadius: 9, border: '1.5px solid #E8EBF4', background: '#F8FAFF', color: '#64748B', fontSize: '0.85rem', cursor: 'pointer', fontWeight: 500 }}
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!requiredFilled || saving}
+            style={{ flex: 2, padding: '9px 0', borderRadius: 9, border: 'none', background: requiredFilled && !saving ? '#4361EE' : '#CBD5E1', color: '#fff', fontSize: '0.85rem', cursor: requiredFilled && !saving ? 'pointer' : 'not-allowed', fontWeight: 600 }}
+          >
+            {saving ? 'Guardando...' : 'Guardar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Constantes ───────────────────────────────────────────────────────────────
+
 const STAGES = [
   { id: 1, label: 'Alta rápida', icon: Package,    desc: 'Tipo y estado' },
   { id: 2, label: 'Técnico',     icon: Tag,        desc: 'Especificaciones' },
@@ -90,10 +201,19 @@ const EMPTY: WizardForm = {
   technical: {},
 };
 
-// ── Componente ───────────────────────────────────────────────────────────────
+const PROVIDER_TYPES = [
+  { value: 'integrator',   label: 'Integrador' },
+  { value: 'distributor',  label: 'Distribuidor' },
+  { value: 'contractor',   label: 'Contratista' },
+  { value: 'consultant',   label: 'Consultor' },
+  { value: 'manufacturer', label: 'Fabricante directo' },
+  { value: 'other',        label: 'Otro' },
+];
+
+// ── Componente principal ─────────────────────────────────────────────────────
 
 export default function ActivoWizard({ onClose, onSave, initial }: Props) {
-  const { assetTypes, manufacturers, providers, loading: catalogsLoading } = useCatalogs();
+  const { assetTypes, manufacturers, providers, loading: catalogsLoading, reload: reloadCatalogs } = useCatalogs();
   const [stage, setStage] = useState(1);
   const [form, setForm] = useState<WizardForm>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
@@ -109,6 +229,12 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
 
   // ── Estado para nomenclatura de ejemplo ──────────────────────────────────
   const [namingExample, setNamingExample] = useState<string | null>(null);
+  const [namingPattern, setNamingPattern] = useState<RegExp | null>(null);
+  const [nameWarning, setNameWarning] = useState(false);
+
+  // ── Estado para mini-modales de alta rápida ───────────────────────────────
+  type QuickCreateType = 'manufacturer' | 'provider' | null;
+  const [quickCreate, setQuickCreate] = useState<QuickCreateType>(null);
 
   const set = (field: keyof WizardForm, value: unknown) =>
     setForm(f => ({ ...f, [field]: value }));
@@ -128,7 +254,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
 
   // Cargar ejemplo de nomenclatura cuando cambia el tipo de activo
   useEffect(() => {
-    if (!form.asset_type_code) { setNamingExample(null); return; }
+    if (!form.asset_type_code) { setNamingExample(null); setNamingPattern(null); return; }
     axios.get('/api/dcim/catalogs/naming-rules')
       .then(r => {
         const rules: {
@@ -140,16 +266,30 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
           custom_segment_2?: string;
         }[] = r.data?.naming_rules ?? [];
         const rule = rules.find(nr => nr.asset_type_code === form.asset_type_code);
-        if (!rule) { setNamingExample(null); return; }
+        if (!rule) { setNamingExample(null); setNamingPattern(null); return; }
         const sep = rule.separator || '-';
+        const escapedSep = sep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const parts = [rule.prefix];
         if (rule.custom_segment_1) parts.push(rule.custom_segment_1);
         if (rule.custom_segment_2) parts.push(rule.custom_segment_2);
-        parts.push('0001'.padStart(rule.sequential_digits || 4, '0'));
+        const digits = rule.sequential_digits || 4;
+        parts.push('0001'.padStart(digits, '0'));
         setNamingExample(parts.join(sep));
+        // Construir patrón de validación: PREFIX[-SEG1][-SEG2]-NNNN
+        const patternParts = [rule.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')];
+        if (rule.custom_segment_1) patternParts.push(rule.custom_segment_1.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        if (rule.custom_segment_2) patternParts.push(rule.custom_segment_2.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        patternParts.push(`\\d{${digits}}`);
+        setNamingPattern(new RegExp(`^${patternParts.join(escapedSep)}`, 'i'));
       })
-      .catch(() => setNamingExample(null));
+      .catch(() => { setNamingExample(null); setNamingPattern(null); });
   }, [form.asset_type_code]);
+
+  // Validar nombre contra patrón de nomenclatura
+  useEffect(() => {
+    if (!namingPattern || !form.name) { setNameWarning(false); return; }
+    setNameWarning(!namingPattern.test(form.name));
+  }, [form.name, namingPattern]);
 
   // Alta inline de modelo
   const handleAddModel = async () => {
@@ -171,7 +311,38 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
     finally { setAddingModel(false); }
   };
 
-  // Etapas completadas (para el indicador visual)
+  // Alta rápida de fabricante (desde mini-modal inline)
+  const handleQuickCreateManufacturer = async (data: Record<string, string>) => {
+    const res = await axios.post('/api/dcim/catalogs/manufacturers', {
+      name: data.name,
+      country: data.country || null,
+      contact: data.contact || null,
+      website: data.website || null,
+    });
+    const newId: string = res.data.id;
+    await reloadCatalogs();
+    set('manufacturer_id', newId);
+    set('model', '');
+    setQuickCreate(null);
+  };
+
+  // Alta rápida de proveedor (desde mini-modal inline)
+  const handleQuickCreateProvider = async (data: Record<string, string>) => {
+    const res = await axios.post('/api/dcim/catalogs/providers', {
+      provider_type: data.provider_type || 'integrator',
+      legal_name: data.legal_name,
+      trade_name: data.trade_name || null,
+      contact_name: data.contact_name || null,
+      email: data.email || null,
+      phone: data.phone || null,
+    });
+    const newId: string = res.data.id;
+    await reloadCatalogs();
+    set('supplier', newId);
+    setQuickCreate(null);
+  };
+
+  // Etapas completadas
   const completedStages = (): number[] => {
     const c: number[] = [];
     if (form.asset_type_id && form.name && form.status) c.push(1);
@@ -269,7 +440,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
     }
   };
 
-  // ── handleSave — POST real al backend (INV-DCM-0013, INV-DCM-0015) ────────
+  // ── handleSave ────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
     if (!form.asset_type_id || !form.name) return;
@@ -327,6 +498,24 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
     <div style={{ marginBottom: 14 }}>{lbl(label, req)}{children}</div>
   );
 
+  // Botón de alta rápida inline (no navega, abre mini-modal)
+  const quickAddBtn = (type: QuickCreateType, label: string) => (
+    <button
+      type="button"
+      onClick={() => setQuickCreate(type)}
+      title={label}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        padding: '0 10px', borderRadius: 9, height: 40,
+        border: '1.5px solid #4361EE', background: '#EEF2FF',
+        color: '#4361EE', fontSize: '0.78rem', fontWeight: 700,
+        cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+      }}
+    >
+      <Plus size={13} /> Nuevo
+    </button>
+  );
+
   const selectedType = assetTypes.find(t => t.id === form.asset_type_id);
   const typeUI = selectedType ? ASSET_TYPE_UI[selectedType.code] : null;
   const completed = completedStages();
@@ -365,8 +554,9 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
                   })}
                 </div>
               </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                {/* Nombre descriptivo con ejemplo de nomenclatura */}
+                {/* Nombre descriptivo con validación de nomenclatura */}
                 <div style={{ gridColumn: '1/-1', marginBottom: 14 }}>
                   {lbl('Nombre descriptivo', true)}
                   <input
@@ -376,10 +566,17 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
                       : 'Switch Core MDF Principal'}
                     value={form.name}
                     onChange={e => set('name', e.target.value)}
-                    style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', outline: 'none', background: '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms', boxSizing: 'border-box' }}
-                    onFocus={e => (e.target.style.borderColor = '#4361EE')}
-                    onBlur={e => (e.target.style.borderColor = '#E8EBF4')}
+                    style={{
+                      width: '100%', padding: '10px 14px', borderRadius: 10,
+                      border: `1.5px solid ${nameWarning && form.name ? '#F59E0B' : '#E8EBF4'}`,
+                      fontSize: '0.875rem', outline: 'none', background: '#FAFBFF',
+                      color: '#1E293B', transition: 'border-color 150ms', boxSizing: 'border-box',
+                    }}
+                    onFocus={e => (e.target.style.borderColor = nameWarning && form.name ? '#F59E0B' : '#4361EE')}
+                    onBlur={e => (e.target.style.borderColor = nameWarning && form.name ? '#F59E0B' : '#E8EBF4')}
                   />
+
+                  {/* Ejemplo de nomenclatura */}
                   {namingExample && (
                     <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: '#64748B', flexWrap: 'wrap' }}>
                       <span>Nomenclatura estándar:</span>
@@ -396,7 +593,18 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
                       </a>
                     </div>
                   )}
+
+                  {/* Aviso de nomenclatura no estándar */}
+                  {nameWarning && form.name && (
+                    <div style={{ marginTop: 6, display: 'flex', alignItems: 'flex-start', gap: 6, padding: '7px 10px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, fontSize: '0.75rem', color: '#92400E' }}>
+                      <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span>
+                        El nombre no sigue la nomenclatura estándar{namingExample ? ` (${namingExample})` : ''}. Puedes continuar, pero se recomienda usar el formato definido para mantener la consistencia del inventario.
+                      </span>
+                    </div>
+                  )}
                 </div>
+
                 <div>
                   {lbl('Estado', true)}
                   <select
@@ -421,7 +629,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
       case 2: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
-            {/* Fabricante */}
+            {/* Fabricante — select + botón inline (NO navega fuera) */}
             <div>
               {lbl('Fabricante')}
               <div style={{ display: 'flex', gap: 6 }}>
@@ -433,23 +641,11 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
                   <option value="">Sin fabricante</option>
                   {manufacturers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                 </select>
-                {manufacturers.length === 0 && (
-                  <a
-                    href="/infraestructura/catalogs/fabricantes"
-                    target="_blank"
-                    rel="noreferrer"
-                    title="Dar de alta fabricantes"
-                    style={{ display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 10, border: '1.5px solid #4361EE', background: '#EEF2FF', color: '#4361EE', fontSize: '0.8rem', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}
-                  >
-                    + Agregar
-                  </a>
-                )}
+                {quickAddBtn('manufacturer', 'Dar de alta fabricante')}
               </div>
               {manufacturers.length === 0 && (
                 <div style={{ marginTop: 4, fontSize: '0.75rem', color: '#94A3B8' }}>
-                  <a href="/infraestructura/catalogs/fabricantes" target="_blank" rel="noreferrer" style={{ color: '#4361EE', textDecoration: 'underline' }}>
-                    Dar de alta fabricantes →
-                  </a>
+                  No hay fabricantes registrados — haz clic en <strong>+ Nuevo</strong>
                 </div>
               )}
             </div>
@@ -565,27 +761,25 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
       case 4: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {/* Proveedor desde catálogo real */}
+            {/* Proveedor — select + botón inline (NO navega fuera) */}
             <div style={{ gridColumn: '1/-1' }}>
               {lbl('Proveedor / Integrador')}
-              <select
-                value={form.supplier}
-                onChange={e => set('supplier', e.target.value)}
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}
-              >
-                <option value="">Seleccionar proveedor</option>
-                {providers.length > 0
-                  ? providers.map((p: { id: string; legal_name: string; trade_name?: string }) => (
-                      <option key={p.id} value={p.id}>{p.trade_name || p.legal_name}</option>
-                    ))
-                  : null
-                }
-              </select>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select
+                  value={form.supplier}
+                  onChange={e => set('supplier', e.target.value)}
+                  style={{ flex: 1, padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}
+                >
+                  <option value="">Seleccionar proveedor</option>
+                  {providers.map((p: { id: string; legal_name: string; trade_name?: string }) => (
+                    <option key={p.id} value={p.id}>{p.trade_name || p.legal_name}</option>
+                  ))}
+                </select>
+                {quickAddBtn('provider', 'Dar de alta proveedor')}
+              </div>
               {providers.length === 0 && (
                 <div style={{ marginTop: 4, fontSize: '0.75rem', color: '#94A3B8' }}>
-                  <a href="/infraestructura/catalogs/proveedores" target="_blank" rel="noreferrer" style={{ color: '#4361EE', textDecoration: 'underline' }}>
-                    Dar de alta proveedores →
-                  </a>
+                  No hay proveedores registrados — haz clic en <strong>+ Nuevo</strong>
                 </div>
               )}
             </div>
@@ -646,78 +840,112 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
   // ── Layout principal ──────────────────────────────────────────────────────
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-      <div style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 640, maxHeight: '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 64px rgba(15,23,42,0.18)' }}>
+    <>
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <div style={{ background: '#fff', borderRadius: 20, width: '100%', maxWidth: 640, maxHeight: '92vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 64px rgba(15,23,42,0.18)' }}>
 
-        {/* Header */}
-        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1E293B' }}>Nuevo Activo</div>
-            <div style={{ fontSize: '0.78rem', color: '#94A3B8', marginTop: 2 }}>
-              Etapa {stage} de {STAGES.length} — {STAGES[stage - 1].desc}
+          {/* Header */}
+          <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#1E293B' }}>Nuevo Activo</div>
+              <div style={{ fontSize: '0.78rem', color: '#94A3B8', marginTop: 2 }}>
+                Etapa {stage} de {STAGES.length} — {STAGES[stage - 1].desc}
+              </div>
             </div>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 4 }}>
+              <X size={20} />
+            </button>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 4 }}>
-            <X size={20} />
-          </button>
-        </div>
 
-        {/* Indicador de etapas */}
-        <div style={{ padding: '14px 24px', borderBottom: '1px solid #F1F5F9', display: 'flex', gap: 6 }}>
-          {STAGES.map(s => {
-            const isActive = stage === s.id;
-            const isDone = completed.includes(s.id);
-            const Icon = s.icon;
-            return (
+          {/* Indicador de etapas */}
+          <div style={{ padding: '14px 24px', borderBottom: '1px solid #F1F5F9', display: 'flex', gap: 6 }}>
+            {STAGES.map(s => {
+              const isActive = stage === s.id;
+              const isDone = completed.includes(s.id);
+              const Icon = s.icon;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setStage(s.id)}
+                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}
+                >
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isActive ? '#4361EE' : isDone ? '#22C55E' : '#E2E8F0' }}>
+                    {isDone && !isActive ? <Check size={14} color="#fff" /> : <Icon size={13} color={isActive ? '#fff' : '#94A3B8'} />}
+                  </div>
+                  <span style={{ fontSize: '0.65rem', fontWeight: isActive ? 700 : 500, color: isActive ? '#4361EE' : isDone ? '#16A34A' : '#94A3B8', whiteSpace: 'nowrap' }}>
+                    {s.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Contenido */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+            {renderStage()}
+          </div>
+
+          {/* Footer de navegación */}
+          <div style={{ padding: '14px 24px', borderTop: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <button
+              onClick={() => setStage(s => Math.max(1, s - 1))}
+              disabled={stage === 1}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px', borderRadius: 10, border: '1.5px solid #E8EBF4', background: '#F8FAFF', color: stage === 1 ? '#CBD5E1' : '#475569', cursor: stage === 1 ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 500 }}
+            >
+              <ChevronLeft size={16} /> Anterior
+            </button>
+
+            {stage < STAGES.length ? (
               <button
-                key={s.id}
-                onClick={() => setStage(s.id)}
-                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}
+                onClick={() => setStage(s => Math.min(STAGES.length, s + 1))}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: '#4361EE', color: '#fff', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
               >
-                <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isActive ? '#4361EE' : isDone ? '#22C55E' : '#E2E8F0' }}>
-                  {isDone && !isActive ? <Check size={14} color="#fff" /> : <Icon size={13} color={isActive ? '#fff' : '#94A3B8'} />}
-                </div>
-                <span style={{ fontSize: '0.65rem', fontWeight: isActive ? 700 : 500, color: isActive ? '#4361EE' : isDone ? '#16A34A' : '#94A3B8', whiteSpace: 'nowrap' }}>
-                  {s.label}
-                </span>
+                Siguiente <ChevronRight size={16} />
               </button>
-            );
-          })}
-        </div>
-
-        {/* Contenido */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
-          {renderStage()}
-        </div>
-
-        {/* Footer de navegación */}
-        <div style={{ padding: '14px 24px', borderTop: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <button
-            onClick={() => setStage(s => Math.max(1, s - 1))}
-            disabled={stage === 1}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px', borderRadius: 10, border: '1.5px solid #E8EBF4', background: '#F8FAFF', color: stage === 1 ? '#CBD5E1' : '#475569', cursor: stage === 1 ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 500 }}
-          >
-            <ChevronLeft size={16} /> Anterior
-          </button>
-
-          {stage < STAGES.length ? (
-            <button
-              onClick={() => setStage(s => Math.min(STAGES.length, s + 1))}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: '#4361EE', color: '#fff', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
-            >
-              Siguiente <ChevronRight size={16} />
-            </button>
-          ) : (
-            <button
-              onClick={handleSave}
-              disabled={saving || !form.asset_type_id || !form.name}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.asset_type_id || !form.name) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.asset_type_id || !form.name) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
-            >
-              {saving ? '⏳ Guardando...' : '✓ Guardar Activo'}
-            </button>
-          )}
+            ) : (
+              <button
+                onClick={handleSave}
+                disabled={saving || !form.asset_type_id || !form.name}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.asset_type_id || !form.name) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.asset_type_id || !form.name) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+              >
+                {saving ? '⏳ Guardando...' : '✓ Guardar Activo'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* Mini-modal de alta rápida de fabricante */}
+      {quickCreate === 'manufacturer' && (
+        <QuickCreateModal
+          title="Nuevo Fabricante / Marca"
+          fields={[
+            { key: 'name',    label: 'Nombre *',  placeholder: 'Cisco Systems',  required: true },
+            { key: 'country', label: 'País',       placeholder: 'EE.UU.' },
+            { key: 'contact', label: 'Contacto',   placeholder: 'soporte@cisco.com' },
+            { key: 'website', label: 'Sitio web',  placeholder: 'https://cisco.com', type: 'url' },
+          ]}
+          onSave={handleQuickCreateManufacturer}
+          onClose={() => setQuickCreate(null)}
+        />
+      )}
+
+      {/* Mini-modal de alta rápida de proveedor */}
+      {quickCreate === 'provider' && (
+        <QuickCreateModal
+          title="Nuevo Proveedor / Integrador"
+          fields={[
+            { key: 'provider_type', label: 'Tipo *', required: true, options: PROVIDER_TYPES },
+            { key: 'legal_name',    label: 'Razón social *', placeholder: 'Redes y Sistemas S.A. de C.V.', required: true },
+            { key: 'trade_name',    label: 'Nombre comercial', placeholder: 'RedSys' },
+            { key: 'contact_name',  label: 'Contacto', placeholder: 'Ing. Juan Pérez' },
+            { key: 'email',         label: 'Correo', placeholder: 'ventas@redsys.mx', type: 'email' },
+            { key: 'phone',         label: 'Teléfono', placeholder: '+52 55 1234 5678', type: 'tel' },
+          ]}
+          onSave={handleQuickCreateProvider}
+          onClose={() => setQuickCreate(null)}
+        />
+      )}
+    </>
   );
 }
