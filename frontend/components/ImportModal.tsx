@@ -64,6 +64,25 @@ const TEMPLATE_COLUMNS = [
   'estado', 'ubicacion', 'rfid', 'año_instalacion', 'observaciones',
 ];
 
+// Valores válidos para el campo tipo_activo
+const ASSET_TYPE_VALUES = [
+  'MDF', 'IDF', 'RACK', 'SWITCH', 'BACKBONE',
+  'UPS', 'PDU', 'PATCH_PANEL', 'NODE',
+];
+
+// Una fila de ejemplo por cada tipo de activo
+const TEMPLATE_ROWS: string[][] = [
+  ['MDF Principal Piso 1',      'MDF',         'Panduit',  'WMPH2',          'MDF-001', 'active', 'Edificio A Piso 1', '',         '2023', 'Gabinete principal de distribución'],
+  ['IDF Piso 3 Ala Norte',      'IDF',         'Panduit',  'WMPH1',          'IDF-003', 'active', 'Edificio A Piso 3', '',         '2023', 'Distribución intermedia norte'],
+  ['Rack 42U Sala Servidores',  'RACK',        'APC',      'AR3100',         'RK-001',  'active', 'Sala Servidores',   '',         '2022', 'Rack principal de servidores'],
+  ['Switch Core MDF',           'SWITCH',      'Cisco',    'Catalyst 9300',  'SW-001',  'active', 'MDF Piso 1',        '',         '2024', 'Switch core de distribución'],
+  ['Backbone Fibra Piso 1-3',   'BACKBONE',    'Panduit',  'OPTICOM',        'BB-001',  'active', 'Canaleta vertical', '',        '2023', 'Cableado troncal multimodo'],
+  ['UPS Sala Servidores 10kVA', 'UPS',         'APC',      'Smart-UPS 10000','UPS-001', 'active', 'Sala Servidores',   '',         '2021', 'UPS principal sala de servidores'],
+  ['PDU Rack 01',               'PDU',         'APC',      'AP7930',         'PDU-001', 'active', 'Sala Servidores',   '',         '2022', 'Distribución de energía rack 01'],
+  ['Patch Panel 24p Cat6A',     'PATCH_PANEL', 'Panduit',  'CPPL24WBLY',     'PP-001',  'active', 'MDF Piso 1',        '',         '2023', 'Panel de parcheo 24 puertos'],
+  ['Servidor Blade HP',         'NODE',        'HP',       'ProLiant BL460c','SRV-001', 'active', 'Sala Servidores',   'RFID-001', '2022', 'Servidor de aplicaciones'],
+];
+
 type Step = 'select' | 'uploading' | 'result';
 
 export function ImportModal({ onClose, onSuccess }: ImportModalProps) {
@@ -132,12 +151,21 @@ export function ImportModal({ onClose, onSuccess }: ImportModalProps) {
   };
 
   const downloadTemplate = () => {
+    // Encabezado con los nombres de columna
     const header = TEMPLATE_COLUMNS.join(',');
-    const example = [
-      'Switch Core MDF', 'SWITCH', 'Cisco', 'Catalyst 9300', 'SN-001',
-      'active', 'MDF Piso 1', '', '2024', 'Switch principal',
-    ].join(',');
-    const csv = `${header}\n${example}\n`;
+    // Una fila de ejemplo por cada tipo de activo, con valores entre comillas para soportar comas
+    const rows = TEMPLATE_ROWS.map(row =>
+      row.map(v => `"${v.replace(/"/g, '""')}"`).join(',')
+    ).join('\n');
+    // Comentario informativo al inicio del archivo
+    const info = [
+      '# PLANTILLA DE IMPORTACIÓN — SKIA DCIM',
+      `# Tipos de activo válidos: ${ASSET_TYPE_VALUES.join(' | ')}`,
+      `# Estados válidos: active | maintenance | inactive | obsolete`,
+      '# Elimina estas líneas de comentario antes de importar',
+    ].map(l => `"${l}"`).join(',') + '\n';
+    // No incluir comentarios en el CSV final (algunos parsers los rechazan)
+    const csv = `\uFEFF${header}\n${rows}\n`;
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -279,11 +307,48 @@ export function ImportModal({ onClose, onSuccess }: ImportModalProps) {
                     </span>
                   ))}
                 </div>
+
+                {/* Tipos de activo válidos */}
+                <div className="mt-3 pt-3 border-t border-[#E8EBF4]">
+                  <p className="text-[10px] font-bold text-[#5C6194] uppercase tracking-wider mb-1.5">
+                    Valores válidos para <span className="font-mono normal-case">tipo_activo</span>
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ASSET_TYPE_VALUES.map(t => (
+                      <span key={t}
+                        className="px-2 py-0.5 bg-blue-50 border border-blue-200 rounded-md text-[10px] font-mono text-blue-700">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Estados válidos */}
+                <div className="mt-2">
+                  <p className="text-[10px] font-bold text-[#5C6194] uppercase tracking-wider mb-1.5">
+                    Valores válidos para <span className="font-mono normal-case">estado</span>
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { v: 'active',      label: 'Activo',          cls: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+                      { v: 'maintenance', label: 'Mantenimiento',   cls: 'bg-amber-50 border-amber-200 text-amber-700' },
+                      { v: 'inactive',    label: 'Inactivo',        cls: 'bg-slate-100 border-slate-300 text-slate-600' },
+                      { v: 'obsolete',    label: 'Obsoleto/Baja',   cls: 'bg-red-50 border-red-200 text-red-600' },
+                    ].map(s => (
+                      <span key={s.v}
+                        className={`px-2 py-0.5 border rounded-md text-[10px] font-mono ${s.cls}`}>
+                        {s.v}
+                        <span className="ml-1 font-sans text-[9px] opacity-70">({s.label})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
                 <button
                   onClick={downloadTemplate}
                   className="mt-3 flex items-center gap-1.5 text-[11px] text-blue-600 hover:text-blue-700 font-semibold transition-colors"
                 >
-                  <Download size={11} /> Descargar plantilla de ejemplo (.csv)
+                  <Download size={11} /> Descargar plantilla completa — 9 tipos de activo (.csv)
                 </button>
               </div>
 
