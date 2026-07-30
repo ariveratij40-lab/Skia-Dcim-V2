@@ -190,6 +190,8 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			Code             string  `json:"code"`
+			InternalCode     string  `json:"internal_code"` // alias enviado por el wizard
+			SiteType         string  `json:"site_type"`     // alias enviado por el wizard
 			Name             string  `json:"name"`
 			Type             string  `json:"type"`
 			Building         string  `json:"building"`
@@ -207,6 +209,13 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
+		}
+		// Normalizar aliases del wizard
+		if req.Code == "" && req.InternalCode != "" {
+			req.Code = req.InternalCode
+		}
+		if req.Type == "" && req.SiteType != "" {
+			req.Type = req.SiteType
 		}
 		if req.Status == "" {
 			req.Status = "active"

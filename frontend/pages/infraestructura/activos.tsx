@@ -17,6 +17,7 @@ import AppLayout from '../../components/AppLayout';
 import ModuleEmptyState from '../../components/ModuleEmptyState';
 import { ClearInventoryButton } from '../../components/clear-inventory-button';
 import { ImportModal } from '../../components/ImportModal';
+import RackBuilder from '../../components/RackBuilder';
 
 // ============================================================
 // TIPOS
@@ -340,9 +341,10 @@ interface AssetCardProps {
   totalInCategory: number;
   onEdit: (a: Asset) => void;
   onDelete: (id: string) => void;
+  onRackBuilder?: (a: Asset) => void;
 }
 
-function AssetCard({ asset, onEdit, onDelete }: AssetCardProps) {
+function AssetCard({ asset, onEdit, onDelete, onRackBuilder }: AssetCardProps) {
   const statusCfg = STATUS_CONFIG[asset.status] ?? STATUS_CONFIG.inactive;
   const cat = CATEGORIES.find(c => c.code === asset.asset_type_code);
 
@@ -401,6 +403,12 @@ function AssetCard({ asset, onEdit, onDelete }: AssetCardProps) {
             {asset.asset_type_name}
           </span>
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {onRackBuilder && ['RACK','MDF','IDF','MDF_IDF'].includes(asset.asset_type_code) && (
+              <button onClick={() => onRackBuilder(asset)}
+                className="p-1.5 rounded-lg hover:bg-violet-100/80 text-violet-500 transition-colors" title="Rack Builder">
+                <LayoutGrid size={12} />
+              </button>
+            )}
             <button onClick={() => onEdit(asset)}
               className="p-1.5 rounded-lg hover:bg-blue-100/80 text-blue-500 transition-colors" title="Editar">
               <Edit2 size={12} />
@@ -635,7 +643,31 @@ function AssetsContent() {
   const [deletingId, setDeletingId]     = useState<string | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showRackBuilder, setShowRackBuilder] = useState(false);
+  const [rackBuilderAsset, setRackBuilderAsset] = useState<Asset | null>(null);
+  const [rackBuilderRackId, setRackBuilderRackId] = useState<string>('');
   const exportRef = useRef<HTMLDivElement>(null);
+
+  // Abrir Rack Builder: busca el rack_id real del activo
+  const openRackBuilder = useCallback(async (asset: Asset) => {
+    // Si es un RACK, buscar su rack_id real en /api/infra/racks
+    try {
+      const res = await axios.get('/api/infra/racks');
+      const racks: Array<{id: string; code: string; height_u: number}> = res.data ?? [];
+      // Buscar el rack cuyo asset_id coincide con el activo (por código)
+      const match = racks.find((r: any) => r.code === asset.internal_code || r.id === asset.id);
+      if (match) {
+        setRackBuilderRackId(match.id);
+        setRackBuilderAsset(asset);
+        setShowRackBuilder(true);
+        return;
+      }
+    } catch {}
+    // Fallback: usar el asset.id directamente
+    setRackBuilderRackId(asset.id);
+    setRackBuilderAsset(asset);
+    setShowRackBuilder(true);
+  }, []);
 
   // Cerrar dropdown exportar
   useEffect(() => {
@@ -1077,6 +1109,7 @@ function AssetsContent() {
                       totalInCategory={assets.length}
                       onEdit={a => { setEditingAsset(a); setShowModal(true); }}
                       onDelete={id => setDeletingId(id)}
+                      onRackBuilder={openRackBuilder}
                     />
                   </div>
                 ))}
@@ -1170,6 +1203,18 @@ function AssetsContent() {
         <ImportModal
           onClose={() => setShowImportModal(false)}
           onSuccess={() => { loadAssets(); }}
+        />
+      )}
+
+      {/* ── RACK BUILDER ────────────────────────────────────────────────── */}
+      {showRackBuilder && rackBuilderAsset && (
+        <RackBuilder
+          rackId={rackBuilderRackId}
+          rackCode={rackBuilderAsset.internal_code}
+          totalU={42}
+          mdfIdfId={rackBuilderAsset.id}
+          onClose={() => { setShowRackBuilder(false); setRackBuilderAsset(null); }}
+          onSaved={() => { setShowRackBuilder(false); setRackBuilderAsset(null); loadAssets(); }}
         />
       )}
 
