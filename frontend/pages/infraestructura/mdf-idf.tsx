@@ -335,6 +335,14 @@ const STATUS_CONFIG: Record<string, { pill: string; dot: string; icon: React.Rea
 /** Fallback seguro para STATUS_CONFIG — nunca devuelve undefined */
 const getStatusConfig = (status: string) =>
   STATUS_CONFIG[status] ?? { pill: 'bg-slate-50 text-slate-500 ring-1 ring-[#E8EBF4]', dot: 'bg-slate-300', icon: <Clock size={11} />, bar: 'bg-slate-300' };
+/** Normaliza el valor de status del backend al label en español */
+const normalizeStatus = (status: string): string => {
+  const map: Record<string, string> = {
+    active: 'Operativo', warning: 'Atención', critical: 'Crítico', planned: 'Planeado',
+    Operativo: 'Operativo', Atención: 'Atención', Crítico: 'Crítico', Planeado: 'Planeado',
+  };
+  return map[status] ?? status;
+};
 
 // ============================================================
 // COMPONENTE EVALUACIÓN DE CERTIFICACIÓN
@@ -882,7 +890,7 @@ function MdfCard({ record, onView, onEdit, onRackBuilder }: MdfCardProps) {
           <div className="flex flex-col items-end gap-1">
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[13px] font-semibold ${sc.pill}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />
-              {record.status}
+              {normalizeStatus(record.status)}
             </span>
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[12px] font-bold ${tc.pill}`}>
               {record.type}
@@ -1099,7 +1107,7 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
           <p className="text-[13px] font-mono text-blue-500 font-bold mt-0.5">{record.code}</p>
           <div className="flex items-center gap-2 mt-3 flex-wrap">
             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[13px] font-semibold ${sc.pill}`}>
-              {sc.icon} {record.status}
+              {sc.icon} {normalizeStatus(record.status)}
             </span>
             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[13px] font-bold ${tc.pill}`}>
               {record.type}
@@ -1119,7 +1127,7 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
           <Section title="Información General" icon={<Info size={14} />}>
             <Row label="Código" value={record.code} mono />
             <Row label="Tipo" value={record.type} />
-            <Row label="Estado" value={record.status} />
+            <Row label="Estado" value={normalizeStatus(record.status)} />
             <Row label="Ref. en plano" value={record.floor_plan_ref || '—'} mono />
             <Row label="Creado" value={record.created_at} />
             <Row label="Última actualización" value={record.last_updated} />
@@ -1667,7 +1675,7 @@ function ExpandableListView({
               {/* Estado */}
               <div className="flex justify-end">
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-semibold ${sc.pill}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />{r.status}
+                  <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />{normalizeStatus(r.status)}
                 </span>
               </div>
             </div>
@@ -1726,7 +1734,7 @@ function ExpandableListView({
                     <div>
                       <p className="text-[12px] font-bold text-slate-500 uppercase tracking-widest">Estado</p>
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-semibold mt-0.5 ${sc.pill}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />{r.status}
+                        <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />{normalizeStatus(r.status)}
                       </span>
                     </div>
                     <div>
