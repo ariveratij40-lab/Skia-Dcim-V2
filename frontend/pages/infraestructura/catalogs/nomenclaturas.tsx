@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import AppLayout from '../../../components/AppLayout';
 import axios from 'axios';
 import { Tag, Edit2, RefreshCw, Eye, Hash, ChevronRight, CheckCircle, Info, Sliders } from 'lucide-react';
@@ -33,6 +33,9 @@ export default function NomenclaturasPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  // Tipo resaltado al llegar desde el wizard (parámetro ?type=MDF)
+  const [highlightType, setHighlightType] = useState<string | null>(null);
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -44,6 +47,30 @@ export default function NomenclaturasPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Leer ?type= de la URL y hacer scroll + highlight cuando las reglas carguen
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const typeParam = params.get('type')?.toUpperCase() ?? null;
+    if (typeParam) setHighlightType(typeParam);
+  }, []);
+
+  // Cuando las reglas carguen y haya un tipo a resaltar, hacer scroll y abrir editor
+  useEffect(() => {
+    if (!highlightType || loading || rules.length === 0) return;
+    // Pequeño delay para que el DOM esté listo
+    const timer = setTimeout(() => {
+      const el = cardRefs.current[highlightType];
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Abrir el editor de esa regla automáticamente
+        const rule = rules.find(r => r.asset_type_code === highlightType);
+        if (rule && !editing) openEdit(rule);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [highlightType, loading, rules]);
 
   const openEdit = (rule: NamingRule) => {
     setEditing(rule);
@@ -140,6 +167,19 @@ export default function NomenclaturasPage() {
           </button>
         </div>
 
+        {/* Banner contextual cuando viene del wizard */}
+        {highlightType && (
+          <div style={{ background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 10, padding: '10px 16px', marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
+            <span style={{ fontSize: 16 }}>📋</span>
+            <div style={{ fontSize: 13, color: '#92400E', lineHeight: 1.5 }}>
+              <strong>Abierto desde el wizard de alta.</strong>{' '}
+              Estás viendo la regla de nomenclatura para{' '}
+              <strong>{highlightType === 'MDF' ? 'Main Distribution Frame (MDF)' : highlightType === 'IDF' ? 'Intermediate Distribution Frame (IDF)' : highlightType}</strong>.
+              {' '}Edita el prefijo, separador y dígitos, luego guarda y regresa al wizard.
+            </div>
+          </div>
+        )}
+
         {/* Banner informativo */}
         <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '12px 16px', marginBottom: 24, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
           <Info size={16} color="#3b82f6" style={{ flexShrink: 0, marginTop: 1 }} />
@@ -157,8 +197,19 @@ export default function NomenclaturasPage() {
           <div style={{ textAlign: 'center', padding: 60, color: '#9ca3af' }}>Cargando reglas...</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {rules.map(rule => (
-              <div key={rule.id} style={{ background: '#fff', borderRadius: 12, border: editing?.id === rule.id ? '2px solid #4361EE' : '1px solid #e5e7eb', overflow: 'hidden', transition: 'border 150ms' }}>
+            {rules.map(rule => {
+              const isHighlighted = highlightType === rule.asset_type_code;
+              const isEditing = editing?.id === rule.id;
+              return (
+              <div
+                key={rule.id}
+                id={`rule-${rule.asset_type_code}`}
+                ref={el => { cardRefs.current[rule.asset_type_code] = el; }}
+                style={{
+                  background: '#fff', borderRadius: 12, overflow: 'hidden', transition: 'border 150ms, box-shadow 150ms',
+                  border: isEditing ? '2px solid #4361EE' : isHighlighted ? '2px solid #F59E0B' : '1px solid #e5e7eb',
+                  boxShadow: isHighlighted && !isEditing ? '0 0 0 4px #FEF3C7, 0 4px 16px rgba(245,158,11,0.15)' : 'none',
+                }}>
 
                 {/* Cabecera */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: editing?.id === rule.id ? '1px solid #e5e7eb' : 'none' }}>
@@ -344,7 +395,8 @@ export default function NomenclaturasPage() {
                   </div>
                 )}
               </div>
-            ))}
+            );
+            })}
           </div>
         )}
 
