@@ -8,10 +8,10 @@ import {
   Search, Plus, Edit2, Trash2, X,
   Building2, Building, Grid3X3, Network, Zap, Plug,
   LayoutGrid, Monitor, GitBranch, RefreshCw, Filter,
-  AlertCircle,
-  Upload, Download, FileSpreadsheet, ChevronDown,
+  AlertCircle, CheckCircle, BarChart2, TrendingUp,
+  Upload, Download, FileSpreadsheet, ChevronDown, ChevronRight,
   MapPin, Tag, Hash, Calendar,
-  Shield, List,
+  Shield, List, Activity,
 } from 'lucide-react';
 import AppLayout from '../../components/AppLayout';
 import ModuleEmptyState from '../../components/ModuleEmptyState';
@@ -140,6 +140,196 @@ const ICON_SMALL: Record<string, React.ReactNode> = {
   SWITCH: <Network size={12} />, UPS: <Zap size={12} />, PDU: <Plug size={12} />,
   PATCH_PANEL: <LayoutGrid size={12} />, NODE: <Monitor size={12} />, BACKBONE: <GitBranch size={12} />,
 };
+
+// ============================================================
+// DASHBOARD TAB — resumen por categoría
+// ============================================================
+interface DashboardTabProps {
+  allAssets: Asset[];
+  totalAssets: number;
+  counts: Record<string, number>;
+  loadingAssets: boolean;
+  onTabChange: (tab: string) => void;
+  onNewAsset: () => void;
+}
+
+function DashboardTab({ allAssets, totalAssets, counts, loadingAssets, onTabChange, onNewAsset }: DashboardTabProps) {
+  // KPIs globales
+  const activeCount    = allAssets.filter(a => a.status === 'active').length;
+  const maintCount     = allAssets.filter(a => a.status === 'maintenance').length;
+  const inactiveCount  = allAssets.filter(a => a.status === 'inactive').length;
+  const obsoleteCount  = allAssets.filter(a => a.status === 'obsolete' || a.status === 'decommissioned').length;
+  const activePercent  = totalAssets > 0 ? Math.round((activeCount / totalAssets) * 100) : 0;
+
+  // Distribución por estado para barra global
+  const statusBars = [
+    { label: 'Activo',       count: activeCount,   color: 'bg-emerald-400', pct: totalAssets > 0 ? (activeCount/totalAssets)*100 : 0 },
+    { label: 'Mantenimiento', count: maintCount,   color: 'bg-amber-400',   pct: totalAssets > 0 ? (maintCount/totalAssets)*100 : 0 },
+    { label: 'Inactivo',     count: inactiveCount, color: 'bg-slate-300',   pct: totalAssets > 0 ? (inactiveCount/totalAssets)*100 : 0 },
+    { label: 'Obsoleto/Baja', count: obsoleteCount, color: 'bg-red-300',   pct: totalAssets > 0 ? (obsoleteCount/totalAssets)*100 : 0 },
+  ];
+
+  if (loadingAssets) {
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        {Array.from({ length: 9 }).map((_, i) => (
+          <div key={i} className="bg-white rounded-2xl border border-[#E8EBF4] p-4 animate-pulse">
+            <div className="flex justify-between mb-3">
+              <div className="w-9 h-9 bg-slate-200 rounded-xl" />
+              <div className="w-12 h-5 bg-slate-200 rounded-full" />
+            </div>
+            <div className="h-7 bg-slate-200 rounded mb-1" />
+            <div className="h-2.5 bg-slate-100 rounded w-2/3 mb-3" />
+            <div className="h-1.5 bg-slate-200 rounded-full" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (totalAssets === 0) return null;
+
+  return (
+    <div className="space-y-6">
+
+      {/* ── KPIs GLOBALES ──────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: 'Total Activos',    value: totalAssets,    sub: 'registrados',          icon: <LayoutGrid size={18} />, color: 'from-blue-500 to-indigo-600' },
+          { label: 'Operativos',       value: activeCount,    sub: `${activePercent}% del total`, icon: <CheckCircle size={18} />, color: 'from-emerald-500 to-teal-600' },
+          { label: 'En Mantenimiento', value: maintCount,     sub: 'requieren atención',   icon: <Activity size={18} />,    color: 'from-amber-500 to-orange-500' },
+          { label: 'Inactivos / Baja', value: inactiveCount + obsoleteCount, sub: 'fuera de operación', icon: <AlertCircle size={18} />, color: 'from-rose-400 to-red-500' },
+        ].map((kpi, i) => (
+          <div key={i} className="bg-white rounded-2xl border border-[#E8EBF4] p-4 shadow-sm">
+            <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${kpi.color} flex items-center justify-center text-white mb-3`}>
+              {kpi.icon}
+            </div>
+            <div className="text-2xl font-black text-[#1A1D2E]">{kpi.value}</div>
+            <div className="text-xs font-bold text-slate-700 mt-0.5">{kpi.label}</div>
+            <div className="text-[11px] text-[#5C6194] mt-0.5">{kpi.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── BARRA DE DISTRIBUCIÓN GLOBAL ───────────────────────────────────── */}
+      <div className="bg-white rounded-2xl border border-[#E8EBF4] p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-[#1A1D2E] flex items-center gap-2">
+            <BarChart2 size={14} className="text-blue-500" /> Distribución por estado operacional
+          </h3>
+          <span className="text-[11px] text-[#5C6194] font-medium">{totalAssets} activos totales</span>
+        </div>
+        {/* Barra segmentada */}
+        <div className="flex h-3 rounded-full overflow-hidden gap-0.5 mb-3">
+          {statusBars.filter(b => b.pct > 0).map((b, i) => (
+            <div key={i} className={`${b.color} h-full transition-all`} style={{ width: `${b.pct}%` }} />
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-4">
+          {statusBars.map((b, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span className={`w-2.5 h-2.5 rounded-full ${b.color} flex-shrink-0`} />
+              <span className="text-[12px] text-[#5C6194] font-medium">{b.label}</span>
+              <span className="text-[12px] font-bold text-[#1A1D2E]">{b.count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── CARDS POR CATEGORÍA ────────────────────────────────────────────── */}
+      <div>
+        <h3 className="text-sm font-bold text-[#1A1D2E] mb-3 flex items-center gap-2">
+          <TrendingUp size={14} className="text-indigo-500" /> Inventario por tipo de activo
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          {CATEGORIES.map(cat => {
+            const total   = counts[cat.code] ?? 0;
+            const active  = allAssets.filter(a => a.asset_type_code === cat.code && a.status === 'active').length;
+            const maint   = allAssets.filter(a => a.asset_type_code === cat.code && a.status === 'maintenance').length;
+            const inactive = allAssets.filter(a => a.asset_type_code === cat.code && (a.status === 'inactive' || a.status === 'obsolete' || a.status === 'decommissioned')).length;
+            const activePct = total > 0 ? Math.round((active / total) * 100) : 0;
+
+            return (
+              <button
+                key={cat.code}
+                onClick={() => onTabChange(cat.code)}
+                className={`
+                  group text-left rounded-2xl border ${cat.borderColor}
+                  bg-gradient-to-br ${cat.gradientFrom} ${cat.gradientTo}
+                  p-4 shadow-sm hover:shadow-md transition-all duration-200 hover:-translate-y-0.5
+                  focus:outline-none
+                `}
+              >
+                {/* Icono + contador */}
+                <div className="flex items-start justify-between mb-3">
+                  <div className={`flex items-center justify-center w-10 h-10 rounded-xl ${cat.iconRing} ${cat.iconText}`}>
+                    {cat.icon}
+                  </div>
+                  <span className="text-2xl font-black text-[#1A1D2E]">{total}</span>
+                </div>
+
+                {/* Nombre */}
+                <p className="font-bold text-sm text-[#1A1D2E] leading-tight">{cat.label}</p>
+                <p className="text-[11px] text-[#5C6194] mt-0.5 leading-tight">{cat.subtitle}</p>
+
+                {/* Barra de activos operativos */}
+                <div className="mt-3">
+                  <div className="w-full bg-white/60 rounded-full h-1.5">
+                    <div
+                      className={`${cat.accentBar} h-1.5 rounded-full transition-all`}
+                      style={{ width: `${activePct}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between mt-1.5">
+                    <span className="text-[11px] text-[#5C6194]">
+                      {total === 0 ? 'Sin activos' : `${active} operativo${active !== 1 ? 's' : ''}`}
+                    </span>
+                    {total > 0 && (
+                      <span className={`text-[11px] font-bold ${cat.trendColor}`}>{activePct}%</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Mini badges de estado */}
+                {total > 0 && (
+                  <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-white/50">
+                    {maint > 0 && (
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-700">
+                        <Activity size={8} /> {maint}
+                      </span>
+                    )}
+                    {inactive > 0 && (
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-500">
+                        {inactive} inactivo{inactive !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {total > 0 && maint === 0 && inactive === 0 && (
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-600">
+                        <CheckCircle size={8} /> Todo operativo
+                      </span>
+                    )}
+                    <span className="ml-auto text-[10px] text-[#5C6194] group-hover:text-blue-500 transition-colors flex items-center gap-0.5 font-semibold">
+                      Ver <ChevronRight size={9} />
+                    </span>
+                  </div>
+                )}
+
+                {/* CTA cuando no hay activos */}
+                {total === 0 && (
+                  <div className="mt-2 pt-2 border-t border-white/50">
+                    <span className="text-[10px] text-[#5C6194] group-hover:text-blue-500 transition-colors font-semibold">
+                      + Registrar primero
+                    </span>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ============================================================
 // TARJETA DE ACTIVO INDIVIDUAL — estilo enterprise glass
@@ -434,7 +624,7 @@ function AssetsContent() {
   const [apiError, setApiError]         = useState('');
 
   // Estado de UI
-  const [activeTab, setActiveTab]       = useState<string>('general');  // 'general' | código de categoría
+  const [activeTab, setActiveTab]       = useState<string>('dashboard');  // 'dashboard' | código de categoría
   const [search, setSearch]             = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [viewMode, setViewMode]         = useState<'cards' | 'list'>('cards');
@@ -574,11 +764,11 @@ function AssetsContent() {
   const hasFilters = !!(search || statusFilter);
 
   const activeCat = CATEGORIES.find(c => c.code === activeTab);
-  const tabLabel = activeTab === 'general' ? 'Inventario General' : (activeCat?.label ?? activeTab);
+  const tabLabel = activeTab === 'dashboard' ? 'Dashboard' : (activeCat?.label ?? activeTab);
 
   // ── TABS ──────────────────────────────────────────────────────────────────────
   const tabs = [
-    { id: 'general', label: 'General', icon: <LayoutGrid size={14} />, count: totalAssets, accent: '#4361EE' },
+    { id: 'dashboard', label: 'Dashboard', icon: <BarChart2 size={14} />, count: totalAssets, accent: '#4361EE' },
     ...CATEGORIES.map(cat => ({
       id: cat.code,
       label: cat.label,
@@ -676,9 +866,24 @@ function AssetsContent() {
         </div>
       </div>
 
-      {/* ── CONTENIDO DEL TAB ────────────────────────────────────────────────── */}
+        {/* ── CONTENIDO DEL TAB ────────────────────────────────────────────────── */}
       <div className="p-6">
 
+        {/* ── TAB DASHBOARD ──────────────────────────────────────────────────── */}
+        {activeTab === 'dashboard' && (
+          <DashboardTab
+            allAssets={allAssets}
+            totalAssets={totalAssets}
+            counts={counts}
+            loadingAssets={loadingAssets}
+            onTabChange={setActiveTab}
+            onNewAsset={() => setShowActivoWizard(true)}
+          />
+        )}
+
+        {/* ── TABS DE TIPO (inventario filtrado) ─────────────────────────────── */}
+        {activeTab !== 'dashboard' && (
+        <>
         {/* Sub-header con título del tab + contador + controles */}
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -774,14 +979,14 @@ function AssetsContent() {
         </div>
 
         {/* ── ERROR ────────────────────────────────────────────────────────── */}
-        {apiError && (
+        {apiError && activeTab !== 'dashboard' && (
           <div className="flex items-center gap-2 px-4 py-3 mb-4 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs font-medium">
             <AlertCircle size={13} /> {apiError}
           </div>
         )}
 
         {/* ── EMPTY STATE ──────────────────────────────────────────────────── */}
-        {!loadingAssets && totalAssets === 0 && (
+        {!loadingAssets && totalAssets === 0 && activeTab !== 'dashboard' && (
           <ModuleEmptyState
             icon={<Monitor size={36} className="text-blue-600" />}
             title="Sin activos registrados"
@@ -799,7 +1004,7 @@ function AssetsContent() {
         )}
 
         {/* ── LOADING ──────────────────────────────────────────────────────── */}
-        {loadingAssets && (
+        {loadingAssets && activeTab !== 'dashboard' && (
           <div className={viewMode === 'cards'
             ? 'grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4'
             : 'space-y-2'
@@ -818,7 +1023,7 @@ function AssetsContent() {
         )}
 
         {/* ── VISTA TARJETAS ───────────────────────────────────────────────── */}
-        {!loadingAssets && totalAssets > 0 && viewMode === 'cards' && (
+        {!loadingAssets && totalAssets > 0 && viewMode === 'cards' && activeTab !== 'dashboard' && (
           <>
             {assets.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-slate-500">
@@ -855,7 +1060,7 @@ function AssetsContent() {
         )}
 
         {/* ── VISTA LISTA ──────────────────────────────────────────────────── */}
-        {!loadingAssets && totalAssets > 0 && viewMode === 'list' && (
+        {!loadingAssets && totalAssets > 0 && viewMode === 'list' && activeTab !== 'dashboard' && (
           <>
             {assets.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-slate-500">
@@ -900,8 +1105,9 @@ function AssetsContent() {
             )}
           </>
         )}
+        </>
+        )}
       </div>
-
       {/* ── MODAL CREAR/EDITAR ─────────────────────────────────────────────── */}
       {showModal && (
         <AssetModal
