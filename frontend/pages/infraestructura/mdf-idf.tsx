@@ -321,12 +321,20 @@ const TYPE_CONFIG: Record<MdfIdfType, {
 // ============================================================
 // CONFIGURACIÓN VISUAL POR ESTADO
 // ============================================================
-const STATUS_CONFIG: Record<MdfIdfStatus, { pill: string; dot: string; icon: React.ReactNode; bar: string }> = {
+const STATUS_CONFIG: Record<string, { pill: string; dot: string; icon: React.ReactNode; bar: string }> = {
   Operativo: { pill: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200', dot: 'bg-emerald-400', icon: <CheckCircle2 size={11} />, bar: 'bg-emerald-400' },
   Atención:  { pill: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',       dot: 'bg-amber-400',   icon: <AlertTriangle size={11} />, bar: 'bg-amber-400' },
   Crítico:   { pill: 'bg-red-50 text-red-700 ring-1 ring-red-200',             dot: 'bg-red-500',     icon: <XCircle size={11} />,       bar: 'bg-red-400' },
   Planeado:  { pill: 'bg-slate-50 text-slate-500 ring-1 ring-[#E8EBF4]',       dot: 'bg-slate-300',   icon: <Clock size={11} />,         bar: 'bg-slate-300' },
+  // Aliases del backend (inglés → visual español)
+  active:    { pill: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200', dot: 'bg-emerald-400', icon: <CheckCircle2 size={11} />, bar: 'bg-emerald-400' },
+  warning:   { pill: 'bg-amber-50 text-amber-700 ring-1 ring-amber-200',       dot: 'bg-amber-400',   icon: <AlertTriangle size={11} />, bar: 'bg-amber-400' },
+  critical:  { pill: 'bg-red-50 text-red-700 ring-1 ring-red-200',             dot: 'bg-red-500',     icon: <XCircle size={11} />,       bar: 'bg-red-400' },
+  planned:   { pill: 'bg-slate-50 text-slate-500 ring-1 ring-[#E8EBF4]',       dot: 'bg-slate-300',   icon: <Clock size={11} />,         bar: 'bg-slate-300' },
 };
+/** Fallback seguro para STATUS_CONFIG — nunca devuelve undefined */
+const getStatusConfig = (status: string) =>
+  STATUS_CONFIG[status] ?? { pill: 'bg-slate-50 text-slate-500 ring-1 ring-[#E8EBF4]', dot: 'bg-slate-300', icon: <Clock size={11} />, bar: 'bg-slate-300' };
 
 // ============================================================
 // COMPONENTE EVALUACIÓN DE CERTIFICACIÓN
@@ -852,8 +860,8 @@ interface MdfCardProps {
 }
 
 function MdfCard({ record, onView, onEdit, onRackBuilder }: MdfCardProps) {
-  const tc = TYPE_CONFIG[record.type];
-  const sc = STATUS_CONFIG[record.status];
+  const tc = TYPE_CONFIG[record.type] ?? { icon: <Building2 size={18} strokeWidth={1.8} />, pill: 'bg-slate-50 text-slate-500 ring-1 ring-[#E8EBF4]', border: 'border-slate-200/70', grad: 'from-slate-50/80 to-slate-50/60', iconRing: 'bg-slate-100 ring-1 ring-slate-200', iconText: 'text-slate-600', bar: 'bg-slate-300' };
+  const sc = getStatusConfig(record.status);
   const capacityPct = record.capacity_u > 0 ? Math.round((record.used_u / record.capacity_u) * 100) : 0;
   const capacityColor = capacityPct >= 90 ? 'bg-red-400' : capacityPct >= 70 ? 'bg-amber-400' : 'bg-emerald-400';
   const capacityText = capacityPct >= 90 ? 'text-red-600' : capacityPct >= 70 ? 'text-amber-600' : 'text-emerald-600';
@@ -1046,8 +1054,8 @@ interface DetailPanelProps {
 }
 
 function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
-  const tc = TYPE_CONFIG[record.type];
-  const sc = STATUS_CONFIG[record.status];
+  const tc = TYPE_CONFIG[record.type] ?? { icon: <Building2 size={18} strokeWidth={1.8} />, pill: 'bg-slate-50 text-slate-500 ring-1 ring-[#E8EBF4]', border: 'border-slate-200/70', grad: 'from-slate-50/80 to-slate-50/60', iconRing: 'bg-slate-100 ring-1 ring-slate-200', iconText: 'text-slate-600', bar: 'bg-slate-300' };
+  const sc = getStatusConfig(record.status);
   const capacityPct = record.capacity_u > 0 ? Math.round((record.used_u / record.capacity_u) * 100) : 0;
   const [localPhoto, setLocalPhoto] = useState(record.photo_url);
   const [localRef, setLocalRef] = useState(record.ref_image_url);
@@ -1587,8 +1595,8 @@ function ExpandableListView({
       </div>
 
       {records.map((r, i) => {
-        const tc = TYPE_CONFIG[r.type];
-        const sc = STATUS_CONFIG[r.status];
+        const tc = TYPE_CONFIG[r.type] ?? { icon: <Building2 size={18} strokeWidth={1.8} />, pill: 'bg-slate-50 text-slate-500 ring-1 ring-[#E8EBF4]', border: 'border-slate-200/70', grad: 'from-slate-50/80 to-slate-50/60', iconRing: 'bg-slate-100 ring-1 ring-slate-200', iconText: 'text-slate-600', bar: 'bg-slate-300' };
+        const sc = getStatusConfig(r.status);
         const capPct = r.capacity_u > 0 ? Math.round((r.used_u / r.capacity_u) * 100) : 0;
         const capColor = capPct >= 90 ? 'bg-red-400' : capPct >= 70 ? 'bg-amber-400' : 'bg-emerald-400';
         const capText = capPct >= 90 ? 'text-red-600' : capPct >= 70 ? 'text-amber-600' : 'text-emerald-600';
