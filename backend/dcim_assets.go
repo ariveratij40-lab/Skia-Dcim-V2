@@ -495,17 +495,18 @@ func (h *DCIMHandler) HandleHierarchy(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 func (h *DCIMHandler) generateInternalCode(tx *sql.Tx, tenantID, branchID, assetTypeCode string) (string, error) {
 	// Obtener la regla de nomenclatura con bloqueo exclusivo (FOR UPDATE)
-	var prefix, separator string
+		var prefix, separator string
 	var seqDigits, lastSeq int
 	var includeBranch bool
-
+	var customSeg1, customSeg2 sql.NullString
 	err := tx.QueryRow(
-		`SELECT prefix, separator, seq_digits, last_seq, include_branch
+		`SELECT prefix, separator, seq_digits, last_seq, include_branch,
+		        COALESCE(custom_segment_1,''), COALESCE(custom_segment_2,'')
 		 FROM naming_rules
 		 WHERE tenant_id = $1 AND asset_type_code = $2
 		 FOR UPDATE`,
 		tenantID, assetTypeCode,
-	).Scan(&prefix, &separator, &seqDigits, &lastSeq, &includeBranch)
+	).Scan(&prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &customSeg1, &customSeg2)
 
 	if err == sql.ErrNoRows {
 		// Sin regla configurada: usar prefijo genérico basado en el tipo
@@ -551,16 +552,21 @@ func (h *DCIMHandler) generateInternalCode(tx *sql.Tx, tenantID, branchID, asset
 		}
 	}
 
-	// Formatear secuencial con padding
+		// Formatear secuencial con padding
 	seqStr := fmt.Sprintf("%0*d", seqDigits, newSeq)
-
 	// Construir el código
 	parts := []string{prefix}
 	if branchCode != "" {
 		parts = append(parts, branchCode)
 	}
+	// Agregar segmentos genéricos si están configurados
+	if customSeg1.Valid && customSeg1.String != "" {
+		parts = append(parts, strings.ToUpper(strings.ReplaceAll(customSeg1.String, " ", "")))
+	}
+	if customSeg2.Valid && customSeg2.String != "" {
+		parts = append(parts, strings.ToUpper(strings.ReplaceAll(customSeg2.String, " ", "")))
+	}
 	parts = append(parts, seqStr)
-
 	return strings.Join(parts, separator), nil
 }
 
@@ -1583,7 +1589,9 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 		rows, err := h.DB.Query(
 			`SELECT nr.id, nr.asset_type_code, at.name,
 			        nr.prefix, nr.separator, nr.include_branch, nr.include_location,
-			        nr.seq_digits, nr.reset_per_location, nr.last_seq, nr.updated_at
+			        nr.seq_digits, nr.reset_per_location, nr.last_seq, nr.updated_at,
+			        COALESCE(nr.custom_segment_1,''), COALESCE(nr.custom_segment_2,''),
+			        COALESCE(nr.custom_segment_1_label,'Segmento 1'), COALESCE(nr.custom_segment_2_label,'Segmento 2')
 			 FROM naming_rules nr
 			 JOIN asset_types at ON at.code = nr.asset_type_code
 			 WHERE nr.tenant_id=$1 ORDER BY at.name`, tenantID)
@@ -1595,15 +1603,28 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			IncludeBranch bool `json:"include_branch"`; IncludeLocation bool `json:"include_location"`
 			SeqDigits int `json:"seq_digits"`; ResetPerLocation bool `json:"reset_per_location"`
 			LastSeq int `json:"last_seq"`; UpdatedAt string `json:"updated_at"`; NextCode string `json:"next_code_preview"`
+			CustomSegment1 string `json:"custom_segment_1"`; CustomSegment2 string `json:"custom_segment_2"`
+			CustomSegment1Label string `json:"custom_segment_1_label"`; CustomSegment2Label string `json:"custom_segment_2_label"`
 		}
 		list := []Rule{}
 		for rows.Next() {
 			var rule Rule; var ua interface{}
 			if err := rows.Scan(&rule.ID, &rule.AssetTypeCode, &rule.AssetTypeName,
 				&rule.Prefix, &rule.Separator, &rule.IncludeBranch, &rule.IncludeLocation,
-				&rule.SeqDigits, &rule.ResetPerLocation, &rule.LastSeq, &ua); err == nil {
+				&rule.SeqDigits, &rule.ResetPerLocation, &rule.LastSeq, &ua,
+				&rule.CustomSegment1, &rule.CustomSegment2,
+				&rule.CustomSegment1Label, &rule.CustomSegment2Label); err == nil {
 				rule.UpdatedAt = fmt.Sprintf("%v", ua)
-				rule.NextCode = rule.Prefix + rule.Separator + fmt.Sprintf("%0*d", rule.SeqDigits, rule.LastSeq+1)
+				// Preview del siguiente código con los segmentos genéricos
+				previewParts := []string{rule.Prefix}
+				if rule.CustomSegment1 != "" {
+					previewParts = append(previewParts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment1, " ", "")))
+				}
+				if rule.CustomSegment2 != "" {
+					previewParts = append(previewParts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment2, " ", "")))
+				}
+				previewParts = append(previewParts, fmt.Sprintf("%0*d", rule.SeqDigits, rule.LastSeq+1))
+				rule.NextCode = strings.Join(previewParts, rule.Separator)
 				list = append(list, rule)
 			}
 		}
@@ -1614,6 +1635,8 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			Prefix string `json:"prefix"`; Separator string `json:"separator"`
 			IncludeBranch *bool `json:"include_branch"`; IncludeLocation *bool `json:"include_location"`
 			SeqDigits *int `json:"seq_digits"`; ResetPerLocation *bool `json:"reset_per_location"`
+			CustomSegment1 *string `json:"custom_segment_1"`; CustomSegment2 *string `json:"custom_segment_2"`
+			CustomSegment1Label *string `json:"custom_segment_1_label"`; CustomSegment2Label *string `json:"custom_segment_2_label"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
@@ -1626,9 +1649,15 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			     include_location=COALESCE($4,include_location),
 			     seq_digits=COALESCE($5,seq_digits),
 			     reset_per_location=COALESCE($6,reset_per_location),
+			     custom_segment_1=$7,
+			     custom_segment_2=$8,
+			     custom_segment_1_label=COALESCE($9,custom_segment_1_label),
+			     custom_segment_2_label=COALESCE($10,custom_segment_2_label),
 			     updated_at=now()
-			 WHERE id=$7 AND tenant_id=$8`,
-			b.Prefix, b.Separator, b.IncludeBranch, b.IncludeLocation, b.SeqDigits, b.ResetPerLocation, ruleID, tenantID)
+			 WHERE id=$11 AND tenant_id=$12`,
+			b.Prefix, b.Separator, b.IncludeBranch, b.IncludeLocation, b.SeqDigits, b.ResetPerLocation,
+			b.CustomSegment1, b.CustomSegment2, b.CustomSegment1Label, b.CustomSegment2Label,
+			ruleID, tenantID)
 		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
 		json.NewEncoder(w).Encode(map[string]string{"id": ruleID, "status": "updated"})
 	default:
