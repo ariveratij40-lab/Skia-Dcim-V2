@@ -716,7 +716,9 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 			assets = append(assets, a)
 		}
 	} else {
-		log.Printf("Error querying imported_assets: %v", err)
+		// imported_assets es una tabla opcional del pipeline legacy.
+		// Si no existe, se ignora silenciosamente.
+		_ = err
 	}
 
 	json.NewEncoder(w).Encode(AssetsListResponse{
