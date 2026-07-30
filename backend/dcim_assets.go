@@ -182,6 +182,34 @@ func (h *DCIMHandler) getSessionContext(r *http.Request) (userID, tenantID, bran
 	}
 	tenantID = tenantNull.String
 	branchID = branchNull.String
+
+	// Fix defensivo: si branchID está vacío (usuario sin branch asignado en sesión),
+	// buscar el primer branch del tenant para evitar INSERT con branch_id vacío (INV-DCM-0013)
+	if branchID == "" && tenantID != "" {
+		var fallbackBranch sql.NullString
+		_ = h.DB.QueryRow(
+			`SELECT b.id FROM branches b
+			 JOIN user_branches ub ON ub.branch_id = b.id
+			 JOIN sessions s ON s.user_id = ub.user_id
+			 WHERE s.token = $1 AND b.tenant_id = $2
+			 LIMIT 1`,
+			token, tenantID,
+		).Scan(&fallbackBranch)
+		if fallbackBranch.Valid && fallbackBranch.String != "" {
+			branchID = fallbackBranch.String
+			log.Printf("[getSessionContext] branchID fallback aplicado para tenant %s: %s", tenantID, branchID)
+		} else {
+			// Último recurso: primer branch del tenant
+			_ = h.DB.QueryRow(
+				`SELECT id FROM branches WHERE tenant_id = $1 ORDER BY created_at LIMIT 1`,
+				tenantID,
+			).Scan(&fallbackBranch)
+			if fallbackBranch.Valid {
+				branchID = fallbackBranch.String
+				log.Printf("[getSessionContext] branchID último recurso para tenant %s: %s", tenantID, branchID)
+			}
+		}
+	}
 	return
 }
 
