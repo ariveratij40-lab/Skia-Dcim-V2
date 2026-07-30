@@ -65,8 +65,70 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [assetsError, setAssetsError] = useState('');
 
+  const [nameSuggestions, setNameSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
   const set = (field: keyof MdfIdfWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
+
+  // Generar sugerencias de nombre basadas en tipo y código
+  const buildSuggestions = (type: MdfIdfType, code: string): string[] => {
+    const codeUpper = code.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+    const suffixes = [
+      'Principal', 'Secundario', 'Torre A', 'Torre B', 'Edificio Central',
+      'Piso 1', 'Piso 2', 'Piso 3', 'Piso 4', 'Piso 5',
+      'Ala Norte', 'Ala Sur', 'Ala Este', 'Ala Oeste',
+      'Planta Baja', 'Sótano', 'Azotea',
+    ];
+    const prefixMap: Record<MdfIdfType, string> = {
+      'MDF': 'MDF',
+      'IDF': 'IDF',
+      'Site': 'Site',
+      'Sala Técnica': 'Sala Técnica',
+    };
+    const prefix = prefixMap[type];
+    // Sugerencias con sufijos comunes
+    const base = suffixes.map(s => `${prefix} ${s}`);
+    // Si el código tiene número, agregar sugerencia directa
+    if (codeUpper) base.unshift(`${prefix} ${codeUpper}`);
+    return base.slice(0, 8);
+  };
+
+  // Actualizar sugerencias cuando cambia el tipo o el código
+  const handleTypeChange = (v: MdfIdfType) => {
+    set('type', v);
+    setNameSuggestions(buildSuggestions(v, form.code));
+    if (!form.name) setShowSuggestions(true);
+  };
+
+  const handleCodeChange = (v: string) => {
+    set('code', v);
+    setNameSuggestions(buildSuggestions(form.type, v));
+    if (!form.name) setShowSuggestions(true);
+  };
+
+  const handleNameFocus = () => {
+    setNameSuggestions(buildSuggestions(form.type, form.code));
+    setShowSuggestions(true);
+  };
+
+  const handleNameChange = (v: string) => {
+    set('name', v);
+    if (v.length > 0) {
+      const filtered = buildSuggestions(form.type, form.code)
+        .filter(s => s.toLowerCase().includes(v.toLowerCase()));
+      setNameSuggestions(filtered);
+      setShowSuggestions(filtered.length > 0);
+    } else {
+      setNameSuggestions(buildSuggestions(form.type, form.code));
+      setShowSuggestions(true);
+    }
+  };
+
+  const selectSuggestion = (s: string) => {
+    set('name', s);
+    setShowSuggestions(false);
+  };
 
   // Cargar activos cuando se llega al paso 3
   useEffect(() => {
@@ -213,9 +275,84 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
       case 1: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>{fld('Código', inp('code', 'MDF-001', 'text'), true)}</div>
-            <div>{fld('Tipo', chips(TYPES, form.type, v => set('type', v as MdfIdfType), TYPE_COLORS))}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Nombre del cuarto técnico', inp('name', 'MDF Principal Torre A'), true)}</div>
+            {/* Campo Código con handler propio */}
+            <div>{fld('Código', (
+              <input
+                type="text"
+                placeholder="MDF-001"
+                value={form.code}
+                onChange={e => handleCodeChange(e.target.value)}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', outline: 'none', background: '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms' }}
+                onFocus={e => e.target.style.borderColor = '#4361EE'}
+                onBlur={e => e.target.style.borderColor = '#E8EBF4'}
+              />
+            ), true)}</div>
+            {/* Chips de Tipo con handler propio */}
+            <div>{fld('Tipo', (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {TYPES.map(opt => {
+                  const active = form.type === opt;
+                  const color = TYPE_COLORS[opt];
+                  return (
+                    <button key={opt} onClick={() => handleTypeChange(opt)} style={{
+                      padding: '6px 16px', borderRadius: 20, fontSize: '0.8rem', fontWeight: 500,
+                      border: `1.5px solid ${active ? color : '#E8EBF4'}`,
+                      background: active ? `${color}18` : '#F8FAFF',
+                      color: active ? color : '#64748B', cursor: 'pointer', transition: 'all 120ms',
+                    }}>{opt}</button>
+                  );
+                })}
+              </div>
+            ))}</div>
+
+            {/* Campo Nombre con autocompletado */}
+            <div style={{ gridColumn: '1/-1', position: 'relative' }}>
+              {lbl('Nombre del cuarto técnico', true)}
+              <input
+                type="text"
+                placeholder={`${form.type} Principal Torre A`}
+                value={form.name}
+                onChange={e => handleNameChange(e.target.value)}
+                onFocus={handleNameFocus}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: `1.5px solid ${form.name ? '#4361EE' : '#E8EBF4'}`, fontSize: '0.875rem', outline: 'none', background: '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms', boxSizing: 'border-box' }}
+                onFocusCapture={e => (e.target as HTMLInputElement).style.borderColor = '#4361EE'}
+              />
+              {/* Dropdown de sugerencias */}
+              {showSuggestions && nameSuggestions.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                  background: '#fff', border: '1.5px solid #E8EBF4', borderRadius: 12,
+                  boxShadow: '0 8px 24px rgba(15,23,42,0.12)', marginTop: 4,
+                  overflow: 'hidden',
+                }}>
+                  <div style={{ padding: '6px 12px', borderBottom: '1px solid #F1F5F9', fontSize: '0.7rem', color: '#94A3B8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Sugerencias — {form.type}
+                  </div>
+                  {nameSuggestions.map((s, i) => (
+                    <button
+                      key={i}
+                      onMouseDown={() => selectSuggestion(s)}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'left',
+                        padding: '9px 14px', border: 'none', background: 'transparent',
+                        fontSize: '0.85rem', color: '#1E293B', cursor: 'pointer',
+                        borderBottom: i < nameSuggestions.length - 1 ? '1px solid #F8FAFF' : 'none',
+                        transition: 'background 100ms',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#EEF2FF')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <span style={{ color: TYPE_COLORS[form.type], fontWeight: 700, marginRight: 6 }}>
+                        {form.type}
+                      </span>
+                      {s.replace(form.type + ' ', '')}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div style={{ gridColumn: '1/-1' }}>{fld('Estado', chips(STATUSES, form.status, v => set('status', v as MdfIdfStatus), STATUS_COLORS))}</div>
           </div>
         </div>
