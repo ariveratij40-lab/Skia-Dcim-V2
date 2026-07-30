@@ -68,6 +68,72 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const [nameSuggestions, setNameSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // ── Estado del paso 2: ubicaciones del catálogo ──────────────────────────────
+  interface CatalogLocation {
+    id: string; name: string; floor: string; room: string;
+    zone: string; description: string; asset_count: number;
+  }
+  const [locations, setLocations] = useState<CatalogLocation[]>([]);
+  const [loadingLocations, setLoadingLocations] = useState(false);
+  const [selectedLocationId, setSelectedLocationId] = useState('');
+  const [showNewLocationForm, setShowNewLocationForm] = useState(false);
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [newLoc, setNewLoc] = useState({ name: '', floor: '', room: '', zone: '', description: '' });
+
+  const loadLocations = async () => {
+    setLoadingLocations(true);
+    try {
+      const res = await fetch('/api/dcim/catalogs/locations');
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setLocations(data.locations ?? []);
+    } catch {
+      setLocations([]);
+    } finally {
+      setLoadingLocations(false);
+    }
+  };
+
+  const saveNewLocation = async () => {
+    if (!newLoc.name.trim()) return;
+    setSavingLocation(true);
+    try {
+      const res = await fetch('/api/dcim/catalogs/locations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLoc),
+      });
+      if (!res.ok) throw new Error();
+      const created = await res.json();
+      // Recargar lista y seleccionar la nueva
+      await loadLocations();
+      setSelectedLocationId(created.id);
+      // Pre-poblar campos del formulario con los datos de la nueva ubicación
+      setForm(f => ({
+        ...f,
+        building: newLoc.name,
+        floor: newLoc.floor,
+        zone: newLoc.zone,
+      }));
+      setShowNewLocationForm(false);
+      setNewLoc({ name: '', floor: '', room: '', zone: '', description: '' });
+    } catch {
+      alert('No se pudo guardar la ubicación. Intenta de nuevo.');
+    } finally {
+      setSavingLocation(false);
+    }
+  };
+
+  const selectLocation = (loc: CatalogLocation) => {
+    setSelectedLocationId(loc.id);
+    setForm(f => ({
+      ...f,
+      building: loc.name,
+      floor: loc.floor,
+      zone: loc.zone,
+    }));
+  };
+
   const set = (field: keyof MdfIdfWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
@@ -129,6 +195,11 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     set('name', s);
     setShowSuggestions(false);
   };
+
+  // Cargar ubicaciones cuando se llega al paso 2
+  useEffect(() => {
+    if (stage === 2) loadLocations();
+  }, [stage]);
 
   // Cargar activos cuando se llega al paso 3
   useEffect(() => {
@@ -359,16 +430,131 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
       );
       case 2: return (
         <div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>{fld('Edificio', inp('building', 'Torre A'))}</div>
-            <div>{fld('Piso', inp('floor', 'Piso 3'))}</div>
-            <div>{fld('Zona / Closet', inp('zone', 'Closet Telecomunicaciones'))}</div>
-            <div>{fld('Referencia en plano', inp('floor_plan_ref', 'Plano MDF-A S1'))}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Dirección completa', inp('address', 'Av. Reforma 123, CDMX'))}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Notas / Observaciones', (
-              <textarea placeholder="Descripción del cuarto, acceso, condiciones..." value={form.notes} onChange={e => set('notes', e.target.value)} rows={3}
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B', resize: 'vertical', outline: 'none' }} />
-            ))}</div>
+          {/* Encabezado del selector de ubicaciones */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <MapPin size={13} color="#4361EE" />
+              <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#1E293B' }}>Seleccionar ubicación existente</span>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={loadLocations} disabled={loadingLocations}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 8, border: '1px solid #E8EBF4', background: '#F8FAFF', cursor: 'pointer', fontSize: '0.72rem', color: '#4361EE', fontWeight: 600 }}>
+                <RefreshCw size={11} style={{ animation: loadingLocations ? 'spin 1s linear infinite' : 'none' }} />
+                {loadingLocations ? 'Cargando...' : 'Actualizar'}
+              </button>
+              <button onClick={() => setShowNewLocationForm(v => !v)}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 12px', borderRadius: 8, border: 'none', background: showNewLocationForm ? '#F1F5F9' : '#4361EE', cursor: 'pointer', fontSize: '0.72rem', color: showNewLocationForm ? '#64748B' : '#fff', fontWeight: 600 }}>
+                {showNewLocationForm ? '✕ Cancelar' : '+ Nueva ubicación'}
+              </button>
+            </div>
+          </div>
+
+          {/* Mini-formulario de alta de nueva ubicación */}
+          {showNewLocationForm && (
+            <div style={{ background: '#F0F4FF', border: '1.5px solid #C7D2FE', borderRadius: 14, padding: 14, marginBottom: 14 }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#4361EE', marginBottom: 10 }}>
+                📍 Nueva ubicación
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B', display: 'block', marginBottom: 3 }}>Nombre *</label>
+                  <input type="text" placeholder="Edificio Central, Torre A, Planta Baja..."
+                    value={newLoc.name} onChange={e => setNewLoc(v => ({ ...v, name: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1.5px solid #C7D2FE', fontSize: '0.85rem', outline: 'none', background: '#fff', color: '#1E293B', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B', display: 'block', marginBottom: 3 }}>Piso</label>
+                  <input type="text" placeholder="Piso 3"
+                    value={newLoc.floor} onChange={e => setNewLoc(v => ({ ...v, floor: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1.5px solid #C7D2FE', fontSize: '0.85rem', outline: 'none', background: '#fff', color: '#1E293B', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B', display: 'block', marginBottom: 3 }}>Zona / Closet</label>
+                  <input type="text" placeholder="Closet Telecom"
+                    value={newLoc.zone} onChange={e => setNewLoc(v => ({ ...v, zone: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1.5px solid #C7D2FE', fontSize: '0.85rem', outline: 'none', background: '#fff', color: '#1E293B', boxSizing: 'border-box' }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B', display: 'block', marginBottom: 3 }}>Cuarto / Sala</label>
+                  <input type="text" placeholder="Sala de Telecomunicaciones"
+                    value={newLoc.room} onChange={e => setNewLoc(v => ({ ...v, room: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1.5px solid #C7D2FE', fontSize: '0.85rem', outline: 'none', background: '#fff', color: '#1E293B', boxSizing: 'border-box' }} />
+                </div>
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B', display: 'block', marginBottom: 3 }}>Descripción</label>
+                  <input type="text" placeholder="Descripción breve..."
+                    value={newLoc.description} onChange={e => setNewLoc(v => ({ ...v, description: e.target.value }))}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1.5px solid #C7D2FE', fontSize: '0.85rem', outline: 'none', background: '#fff', color: '#1E293B', boxSizing: 'border-box' }} />
+                </div>
+              </div>
+              <button onClick={saveNewLocation} disabled={!newLoc.name.trim() || savingLocation}
+                style={{ marginTop: 10, padding: '8px 18px', borderRadius: 10, border: 'none', background: !newLoc.name.trim() ? '#CBD5E1' : '#4361EE', color: '#fff', cursor: !newLoc.name.trim() ? 'not-allowed' : 'pointer', fontSize: '0.82rem', fontWeight: 600 }}>
+                {savingLocation ? 'Guardando...' : '✓ Guardar y seleccionar'}
+              </button>
+            </div>
+          )}
+
+          {/* Lista de ubicaciones existentes */}
+          {loadingLocations ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[1,2,3].map(i => <div key={i} style={{ height: 52, borderRadius: 10, background: '#F1F5F9' }} />)}
+            </div>
+          ) : locations.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '20px 0', color: '#94A3B8', fontSize: '0.82rem' }}>
+              <MapPin size={28} style={{ margin: '0 auto 8px', display: 'block', opacity: 0.3 }} />
+              No hay ubicaciones registradas aún.
+              <br />
+              <span style={{ color: '#4361EE', cursor: 'pointer', fontWeight: 600 }}
+                onClick={() => setShowNewLocationForm(true)}>Crea la primera ubicación</span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto', paddingRight: 2 }}>
+              {locations.map(loc => {
+                const isSelected = selectedLocationId === loc.id;
+                return (
+                  <button key={loc.id} onClick={() => selectLocation(loc)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+                      borderRadius: 12, border: `1.5px solid ${isSelected ? '#4361EE' : '#E8EBF4'}`,
+                      background: isSelected ? '#EEF2FF' : '#FAFBFF',
+                      cursor: 'pointer', textAlign: 'left', transition: 'all 120ms',
+                    }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 8, background: isSelected ? '#4361EE' : '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <MapPin size={14} color={isSelected ? '#fff' : '#94A3B8'} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '0.85rem', fontWeight: 700, color: isSelected ? '#4361EE' : '#1E293B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {loc.name}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: 1 }}>
+                        {[loc.floor, loc.zone, loc.room].filter(Boolean).join(' • ') || 'Sin detalle'}
+                      </div>
+                    </div>
+                    {loc.asset_count > 0 && (
+                      <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: 20, background: '#F0FDF4', color: '#16A34A', fontWeight: 600, flexShrink: 0 }}>
+                        {loc.asset_count} activos
+                      </span>
+                    )}
+                    {isSelected && <Check size={16} color="#4361EE" style={{ flexShrink: 0 }} />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Campos manuales adicionales */}
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #F1F5F9' }}>
+            <div style={{ fontSize: '0.72rem', fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+              Detalle adicional
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>{fld('Referencia en plano', inp('floor_plan_ref', 'Plano MDF-A S1'))}</div>
+              <div>{fld('Dirección completa', inp('address', 'Av. Reforma 123, CDMX'))}</div>
+              <div style={{ gridColumn: '1/-1' }}>{fld('Notas / Observaciones', (
+                <textarea placeholder="Descripción del cuarto, acceso, condiciones..." value={form.notes} onChange={e => set('notes', e.target.value)} rows={2}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B', resize: 'vertical', outline: 'none' }} />
+              ))}</div>
+            </div>
           </div>
         </div>
       );
