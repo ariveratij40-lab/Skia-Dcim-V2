@@ -1415,7 +1415,7 @@ function MdfModal({ record, onClose, onSave }: MdfModalProps) {
 // ============================================================
 // PESTAÑA RESUMEN
 // ============================================================
-function TabResumen({ data, onTabChange }: { data: MdfIdfRecord[]; onTabChange: (tab: 'inventario') => void }) {
+function TabResumen({ data, onTabChange, onRackBuilder }: { data: MdfIdfRecord[]; onTabChange: (tab: 'inventario') => void; onRackBuilder?: (r: MdfIdfRecord) => void }) {
   const mdfList = data.filter(r => r.type === 'MDF');
   const idfList = data.filter(r => r.type === 'IDF');
 
@@ -1501,6 +1501,36 @@ function TabResumen({ data, onTabChange }: { data: MdfIdfRecord[]; onTabChange: 
           />
         </div>
       </div>
+
+      {/* Fila 3: Acceso rápido al Rack Builder por registro */}
+      {onRackBuilder && data.length > 0 && (
+        <div>
+          <SectionLabel>Acceso rápido — Rack Builder</SectionLabel>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+            {data.map(r => (
+              <div key={r.id} style={{
+                background: '#fff', borderRadius: 12, border: '1px solid #E8EBF4',
+                padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+              }}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: '#1A1D2E', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</p>
+                  <p style={{ fontSize: 11, color: '#5C6194', margin: 0, fontFamily: 'monospace' }}>{r.code} · {r.type}</p>
+                </div>
+                <button onClick={() => onRackBuilder(r)}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    padding: '6px 12px', background: '#7C3AED', color: '#fff',
+                    border: 'none', borderRadius: 8, fontSize: '11px', fontWeight: 700,
+                    cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                  }}
+                  title="Abrir Rack Builder">
+                  <Layers size={11} /> Rack Builder
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* CTA al inventario */}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -1799,7 +1829,7 @@ function ExpandableListView({
 // ============================================================
 // PESTAÑA INVENTARIO
 // ============================================================
-function TabInventario({ data, setData, highlightCode }: { data: MdfIdfRecord[]; setData: React.Dispatch<React.SetStateAction<MdfIdfRecord[]>>; highlightCode?: string; }) {
+function TabInventario({ data, setData, highlightCode, onRackBuilder }: { data: MdfIdfRecord[]; setData: React.Dispatch<React.SetStateAction<MdfIdfRecord[]>>; highlightCode?: string; onRackBuilder?: (r: MdfIdfRecord) => void; }) {
   const [search, setSearch] = useState(highlightCode||'');
   const [highlightedId, setHighlightedId] = useState<string|null>(null);
   const mdfRowRefs = useRef<Record<string,HTMLDivElement|null>>({});
@@ -1814,9 +1844,6 @@ function TabInventario({ data, setData, highlightCode }: { data: MdfIdfRecord[];
   const [exportOpen, setExportOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('list');
   const exportRef = useRef<HTMLDivElement>(null);
-  // Rack Builder
-  const [showRackBuilder, setShowRackBuilder] = useState(false);
-  const [rackBuilderRecord, setRackBuilderRecord] = useState<MdfIdfRecord | null>(null);
 
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -2002,7 +2029,7 @@ function TabInventario({ data, setData, highlightCode }: { data: MdfIdfRecord[];
               <MdfCard record={r}
                 onView={setViewRecord}
                 onEdit={r => { setEditRecord(r); setShowModal(true); }}
-                onRackBuilder={r => { setRackBuilderRecord(r); setShowRackBuilder(true); }} />
+                onRackBuilder={onRackBuilder} />
             </div>
           ))}
         </div>
@@ -2027,17 +2054,7 @@ function TabInventario({ data, setData, highlightCode }: { data: MdfIdfRecord[];
       {showModal && (
         <MdfModal record={editRecord} onClose={() => { setShowModal(false); setEditRecord(null); }} onSave={handleSave} />
       )}
-      {/* Rack Builder Modal */}
-      {showRackBuilder && rackBuilderRecord && (
-        <RackBuilder
-          rackId={rackBuilderRecord.id}
-          rackCode={rackBuilderRecord.code}
-          totalU={rackBuilderRecord.capacity_u || 42}
-          mdfIdfId={rackBuilderRecord.id}
-          onClose={() => { setShowRackBuilder(false); setRackBuilderRecord(null); }}
-          onSaved={() => { setShowRackBuilder(false); setRackBuilderRecord(null); }}
-        />
-      )}
+      {/* Rack Builder Modal — movido al padre MdfIdfContent */}
       {showMdfWizard && (
         <MdfIdfWizard
           onClose={() => setShowMdfWizard(false)}
@@ -2101,6 +2118,10 @@ function MdfIdfContent() {
   }, []);
   const [activeTab, setActiveTab] = useState<'resumen' | 'inventario' | 'normativa'>(highlightCode ? 'inventario' : 'resumen');
   const [showMdfWizard, setShowMdfWizard] = useState(false);
+  // ─── Rack Builder elevado al padre para que Resumen e Inventario lo compartan ───
+  const [showRackBuilderGlobal, setShowRackBuilderGlobal] = useState(false);
+  const [rackBuilderRecordGlobal, setRackBuilderRecordGlobal] = useState<MdfIdfRecord | null>(null);
+  const openRackBuilder = useCallback((r: MdfIdfRecord) => { setRackBuilderRecordGlobal(r); setShowRackBuilderGlobal(true); }, []);
 
   const tabs: { id: 'resumen' | 'inventario' | 'normativa'; label: string; icon: React.ReactNode }[] = [
     { id: 'resumen', label: 'Resumen', icon: <BarChart2 size={14} /> },
@@ -2158,10 +2179,21 @@ function MdfIdfContent() {
         />
       ) : (
         <>
-          {activeTab === 'resumen' && <TabResumen data={data} onTabChange={setActiveTab} />}
-          {activeTab === 'inventario' && <TabInventario data={data} setData={setData} highlightCode={highlightCode} />}
+          {activeTab === 'resumen' && <TabResumen data={data} onTabChange={setActiveTab} onRackBuilder={openRackBuilder} />}
+          {activeTab === 'inventario' && <TabInventario data={data} setData={setData} highlightCode={highlightCode} onRackBuilder={openRackBuilder} />}
           {activeTab === 'normativa' && <TabNormativa sites={data} />}
                 </>
+      )}
+      {/* Rack Builder Modal global — accesible desde Resumen e Inventario */}
+      {showRackBuilderGlobal && rackBuilderRecordGlobal && (
+        <RackBuilder
+          rackId={rackBuilderRecordGlobal.id}
+          rackCode={rackBuilderRecordGlobal.code}
+          totalU={rackBuilderRecordGlobal.capacity_u || 42}
+          mdfIdfId={rackBuilderRecordGlobal.id}
+          onClose={() => { setShowRackBuilderGlobal(false); setRackBuilderRecordGlobal(null); }}
+          onSaved={() => { setShowRackBuilderGlobal(false); setRackBuilderRecordGlobal(null); }}
+        />
       )}
       {showMdfWizard && (
         <MdfIdfWizard

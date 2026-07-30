@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Building2, Server, MapPin, Users, Shield, RefreshCw, AlertCircle, Package } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
 
@@ -125,6 +125,10 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
   const [nameSuggestions, setNameSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  // ─── Validación de código duplicado ───
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const [checkingCode, setCheckingCode] = useState(false);
+  const codeCheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Estado del paso 2: ubicaciones del catálogo ──────────────────────────────
   interface CatalogLocation {
@@ -225,10 +229,29 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     if (!form.name) setShowSuggestions(true);
   };
 
+  // Verificar si el código ya existe en el backend (debounce 500ms)
+  const checkCodeDuplicate = async (code: string) => {
+    if (!code.trim()) { setCodeError(null); return; }
+    setCheckingCode(true);
+    try {
+      const res = await fetch('/api/infra/mdf-idf');
+      if (!res.ok) { setCheckingCode(false); return; }
+      const data = await res.json();
+      const list: any[] = Array.isArray(data) ? data : [];
+      const exists = list.some(item => (item.code ?? '').toLowerCase() === code.trim().toLowerCase());
+      setCodeError(exists ? `Ya existe un registro con el código “${code}”. Elige un código diferente.` : null);
+    } catch { setCodeError(null); }
+    finally { setCheckingCode(false); }
+  };
+
   const handleCodeChange = (v: string) => {
     set('code', v);
     setNameSuggestions(buildSuggestions(form.type, v));
     if (!form.name) setShowSuggestions(true);
+    // Debounce la verificación de duplicado
+    if (codeCheckTimer.current) clearTimeout(codeCheckTimer.current);
+    setCodeError(null);
+    codeCheckTimer.current = setTimeout(() => checkCodeDuplicate(v), 500);
   };
 
   const handleNameFocus = () => {
@@ -335,6 +358,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
   const handleSave = async () => {
     if (!form.code || !form.name || !form.type) return;
+    if (codeError) return; // Bloquear si hay código duplicado
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -455,8 +479,19 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
                 onChange={e => handleCodeChange(e.target.value)}
                 onFocus={() => setShowCodeSuggestions(true)}
                 onBlur={() => setTimeout(() => setShowCodeSuggestions(false), 150)}
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: `1.5px solid ${form.code ? '#4361EE' : '#E8EBF4'}`, fontSize: '0.875rem', outline: 'none', background: '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms', boxSizing: 'border-box' }}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: `1.5px solid ${codeError ? '#EF4444' : form.code ? '#4361EE' : '#E8EBF4'}`, fontSize: '0.875rem', outline: 'none', background: codeError ? '#FFF5F5' : '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms', boxSizing: 'border-box' }}
               />
+              {/* Indicador de verificación / error de duplicado */}
+              {checkingCode && (
+                <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', color: '#64748B' }}>
+                  <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span> Verificando disponibilidad...
+                </div>
+              )}
+              {!checkingCode && codeError && (
+                <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', color: '#EF4444', fontWeight: 600 }}>
+                  <AlertCircle size={12} /> {codeError}
+                </div>
+              )}
               {/* Dropdown de sugerencias de código */}
               {showCodeSuggestions && codeSuggestions.length > 0 && (
                 <div style={{
@@ -885,9 +920,10 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.code || !form.name || saving}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.code || !form.name) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.code || !form.name) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
-              {saving ? '...' : <><Check size={16} /> Guardar MDF/IDF</>}
+            <button onClick={handleSave} disabled={!form.code || !form.name || saving || !!codeError || checkingCode}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.code || !form.name || !!codeError || checkingCode) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.code || !form.name || !!codeError || checkingCode) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+              title={codeError ? 'Corrige el código duplicado antes de guardar' : ''}>
+              {saving ? '...' : checkingCode ? 'Verificando...' : <><Check size={16} /> Guardar MDF/IDF</>}
             </button>
           )}
         </div>
