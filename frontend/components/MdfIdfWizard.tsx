@@ -384,7 +384,11 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   }: {
     label: string; count: number; icon: string; color: string;
     fieldKey: keyof MdfIdfWizardData;
-  }) => (
+  }) => {
+    const currentVal = form[fieldKey] as number;
+    const isAtMax = currentVal >= count;
+    const isAtMin = currentVal <= 0;
+    return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12,
       padding: '10px 14px', borderRadius: 12,
@@ -407,20 +411,34 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
           </span>
         </div>
       </div>
-      {/* Ajuste manual con +/- */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-        <button
-          onClick={() => set(fieldKey, Math.max(0, (form[fieldKey] as number) - 1))}
-          style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid #E8EBF4', background: '#F8FAFF', cursor: 'pointer', fontSize: '0.9rem', color: '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
-        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B', minWidth: 20, textAlign: 'center' }}>
-          {form[fieldKey] as number}
-        </span>
-        <button
-          onClick={() => set(fieldKey, (form[fieldKey] as number) + 1)}
-          style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid #E8EBF4', background: '#F8FAFF', cursor: 'pointer', fontSize: '0.9rem', color: '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+      {/* Ajuste manual con +/- — limitado al inventario real */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button
+            disabled={isAtMin}
+            onClick={() => set(fieldKey, Math.max(0, currentVal - 1))}
+            style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${isAtMin ? '#F1F5F9' : '#E8EBF4'}`, background: isAtMin ? '#F8FAFF' : '#F8FAFF', cursor: isAtMin ? 'not-allowed' : 'pointer', fontSize: '0.9rem', color: isAtMin ? '#CBD5E1' : '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: isAtMin ? 0.4 : 1 }}>−</button>
+          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: isAtMax ? color : '#1E293B', minWidth: 20, textAlign: 'center' }}>
+            {currentVal}
+          </span>
+          <button
+            disabled={isAtMax || count === 0}
+            onClick={() => { if (!isAtMax && count > 0) set(fieldKey, currentVal + 1); }}
+            title={isAtMax ? `Máximo: ${count} registrados en inventario` : count === 0 ? 'Sin activos registrados en inventario' : `Máx. ${count}`}
+            style={{ width: 22, height: 22, borderRadius: 6, border: `1px solid ${(isAtMax || count === 0) ? '#F1F5F9' : '#E8EBF4'}`, background: '#F8FAFF', cursor: (isAtMax || count === 0) ? 'not-allowed' : 'pointer', fontSize: '0.9rem', color: (isAtMax || count === 0) ? '#CBD5E1' : '#64748B', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: (isAtMax || count === 0) ? 0.4 : 1 }}>+</button>
+        </div>
+        {count > 0 && (
+          <span style={{ fontSize: '0.62rem', color: isAtMax ? '#EF4444' : '#94A3B8', fontWeight: 500 }}>
+            {isAtMax ? `Límite alcanzado (${count})` : `máx. ${count}`}
+          </span>
+        )}
+        {count === 0 && (
+          <span style={{ fontSize: '0.62rem', color: '#F59E0B', fontWeight: 500 }}>sin stock</span>
+        )}
       </div>
     </div>
   );
+  };
 
   const renderStage = () => {
     switch (stage) {
