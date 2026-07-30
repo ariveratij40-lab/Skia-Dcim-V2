@@ -173,6 +173,8 @@ func main() {
 	// Catálogos maestros CRUD (Fase 2 — INV-DCM-0014)
 	http.HandleFunc("/api/dcim/catalogs/manufacturers", dcim.HandleManufacturers)
 	http.HandleFunc("/api/dcim/catalogs/manufacturers/", dcim.HandleManufacturers)
+	http.HandleFunc("/api/dcim/catalogs/models", dcim.HandleModels)
+	http.HandleFunc("/api/dcim/catalogs/models/", dcim.HandleModels)
 	http.HandleFunc("/api/dcim/catalogs/providers", dcim.HandleProviders)
 	http.HandleFunc("/api/dcim/catalogs/providers/", dcim.HandleProviders)
 	http.HandleFunc("/api/dcim/catalogs/naming-rules", dcim.HandleNamingRules)

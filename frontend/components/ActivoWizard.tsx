@@ -7,13 +7,15 @@
  *   - El internal_code es generado por el backend (INV-DCM-0015); no se pide al usuario
  *   - handleSave hace POST real a /api/dcim/assets con payload polimórfico
  *   - Los estados se envían en inglés (active, inactive...) — corrige F-AST-04
+ *   - Modelo: select dinámico filtrado por fabricante con alta inline
+ *   - Nombre descriptivo: placeholder con ejemplo de nomenclatura estándar + enlace a reglas
+ *   - Proveedor: select desde catálogo real (no hardcodeado)
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Package, Tag, MapPin, DollarSign, Shield } from 'lucide-react';
 import axios from 'axios';
 import { useCatalogs, ASSET_TYPE_UI, OPERATIONAL_STATUS_UI } from '../hooks/useCatalogs';
-import { CATALOGOS } from '../data/catalogos';
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -91,17 +93,83 @@ const EMPTY: WizardForm = {
 // ── Componente ───────────────────────────────────────────────────────────────
 
 export default function ActivoWizard({ onClose, onSave, initial }: Props) {
-  const { assetTypes, manufacturers, loading: catalogsLoading } = useCatalogs();
+  const { assetTypes, manufacturers, providers, loading: catalogsLoading } = useCatalogs();
   const [stage, setStage] = useState(1);
   const [form, setForm] = useState<WizardForm>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // ── Estado para modelos dinámicos ─────────────────────────────────────────
+  const [models, setModels] = useState<{ id: string; name: string; part_number: string }[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [showAddModel, setShowAddModel] = useState(false);
+  const [newModelName, setNewModelName] = useState('');
+  const [newModelPN, setNewModelPN] = useState('');
+  const [addingModel, setAddingModel] = useState(false);
+
+  // ── Estado para nomenclatura de ejemplo ──────────────────────────────────
+  const [namingExample, setNamingExample] = useState<string | null>(null);
 
   const set = (field: keyof WizardForm, value: unknown) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const setTech = (k: keyof TechnicalData, v: unknown) =>
     setForm(f => ({ ...f, technical: { ...f.technical, [k]: v } }));
+
+  // Cargar modelos cuando cambia el fabricante
+  useEffect(() => {
+    if (!form.manufacturer_id) { setModels([]); setShowAddModel(false); return; }
+    setModelsLoading(true);
+    axios.get(`/api/dcim/catalogs/models?manufacturer_id=${form.manufacturer_id}`)
+      .then(r => setModels(r.data?.models ?? []))
+      .catch(() => setModels([]))
+      .finally(() => setModelsLoading(false));
+  }, [form.manufacturer_id]);
+
+  // Cargar ejemplo de nomenclatura cuando cambia el tipo de activo
+  useEffect(() => {
+    if (!form.asset_type_code) { setNamingExample(null); return; }
+    axios.get('/api/dcim/catalogs/naming-rules')
+      .then(r => {
+        const rules: {
+          asset_type_code: string;
+          prefix: string;
+          separator: string;
+          sequential_digits: number;
+          custom_segment_1?: string;
+          custom_segment_2?: string;
+        }[] = r.data?.naming_rules ?? [];
+        const rule = rules.find(nr => nr.asset_type_code === form.asset_type_code);
+        if (!rule) { setNamingExample(null); return; }
+        const sep = rule.separator || '-';
+        const parts = [rule.prefix];
+        if (rule.custom_segment_1) parts.push(rule.custom_segment_1);
+        if (rule.custom_segment_2) parts.push(rule.custom_segment_2);
+        parts.push('0001'.padStart(rule.sequential_digits || 4, '0'));
+        setNamingExample(parts.join(sep));
+      })
+      .catch(() => setNamingExample(null));
+  }, [form.asset_type_code]);
+
+  // Alta inline de modelo
+  const handleAddModel = async () => {
+    if (!newModelName.trim() || !form.manufacturer_id) return;
+    setAddingModel(true);
+    try {
+      const res = await axios.post('/api/dcim/catalogs/models', {
+        manufacturer_id: form.manufacturer_id,
+        name: newModelName.trim(),
+        part_number: newModelPN.trim(),
+      });
+      const created = { id: res.data.id, name: newModelName.trim(), part_number: newModelPN.trim() };
+      setModels(prev => [...prev, created]);
+      set('model', created.name);
+      setNewModelName('');
+      setNewModelPN('');
+      setShowAddModel(false);
+    } catch { /* silencioso */ }
+    finally { setAddingModel(false); }
+  };
 
   // Etapas completadas (para el indicador visual)
   const completedStages = (): number[] => {
@@ -211,7 +279,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
       const payload = {
         asset_type_id:   form.asset_type_id,
         name:            form.name,
-        status:          form.status,                                        // inglés canónico (corrige F-AST-04)
+        status:          form.status,
         serial_number:   form.serial_number || null,
         manufacturer_id: form.manufacturer_id || null,
         model:           form.model || null,
@@ -222,11 +290,11 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
         cost_usd:        form.cost_usd ? parseFloat(form.cost_usd) : null,
         purchase_date:   form.purchase_date || null,
         warranty_expiry: form.warranty_expiry || null,
-        technical:       form.technical,                                     // tabla satélite (INV-DCM-0013)
+        technical:       form.technical,
       };
       const res = await axios.post('/api/dcim/assets', payload);
       const internalCode: string = res.data?.internal_code ?? '';
-      onSave(internalCode, form.asset_type_code);  // devuelve código + tipo para activar filtro (fix F-AST-BUG-01)
+      onSave(internalCode, form.asset_type_code);
     } catch (err: unknown) {
       const axErr = err as { response?: { data?: { error?: string } } };
       setSaveError(axErr.response?.data?.error ?? 'Error al guardar el activo');
@@ -298,7 +366,37 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                <div style={{ gridColumn: '1/-1' }}>{fld('Nombre descriptivo', inp('name', 'Switch Core MDF Principal'), true)}</div>
+                {/* Nombre descriptivo con ejemplo de nomenclatura */}
+                <div style={{ gridColumn: '1/-1', marginBottom: 14 }}>
+                  {lbl('Nombre descriptivo', true)}
+                  <input
+                    type="text"
+                    placeholder={namingExample
+                      ? `Ej. ${namingExample} — Switch Core MDF Principal`
+                      : 'Switch Core MDF Principal'}
+                    value={form.name}
+                    onChange={e => set('name', e.target.value)}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', outline: 'none', background: '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms', boxSizing: 'border-box' }}
+                    onFocus={e => (e.target.style.borderColor = '#4361EE')}
+                    onBlur={e => (e.target.style.borderColor = '#E8EBF4')}
+                  />
+                  {namingExample && (
+                    <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: '#64748B', flexWrap: 'wrap' }}>
+                      <span>Nomenclatura estándar:</span>
+                      <code style={{ background: '#EEF2FF', color: '#4361EE', padding: '2px 8px', borderRadius: 6, fontWeight: 700, letterSpacing: '0.03em' }}>
+                        {namingExample}
+                      </code>
+                      <a
+                        href="/infraestructura/catalogs/nomenclaturas"
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: '#4361EE', textDecoration: 'underline', marginLeft: 2 }}
+                      >
+                        Editar regla →
+                      </a>
+                    </div>
+                  )}
+                </div>
                 <div>
                   {lbl('Estado', true)}
                   <select
@@ -323,21 +421,113 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
       case 2: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+            {/* Fabricante */}
             <div>
               {lbl('Fabricante')}
-              <select
-                value={form.manufacturer_id}
-                onChange={e => set('manufacturer_id', e.target.value)}
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}
-              >
-                <option value="">Sin fabricante</option>
-                {manufacturers.length > 0
-                  ? manufacturers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)
-                  : CATALOGOS.marcasActivos.map(m => <option key={m} value={m}>{m}</option>)
-                }
-              </select>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select
+                  value={form.manufacturer_id}
+                  onChange={e => { set('manufacturer_id', e.target.value); set('model', ''); }}
+                  style={{ flex: 1, padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}
+                >
+                  <option value="">Sin fabricante</option>
+                  {manufacturers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                {manufacturers.length === 0 && (
+                  <a
+                    href="/infraestructura/catalogs/fabricantes"
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Dar de alta fabricantes"
+                    style={{ display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 10, border: '1.5px solid #4361EE', background: '#EEF2FF', color: '#4361EE', fontSize: '0.8rem', fontWeight: 700, textDecoration: 'none', whiteSpace: 'nowrap' }}
+                  >
+                    + Agregar
+                  </a>
+                )}
+              </div>
+              {manufacturers.length === 0 && (
+                <div style={{ marginTop: 4, fontSize: '0.75rem', color: '#94A3B8' }}>
+                  <a href="/infraestructura/catalogs/fabricantes" target="_blank" rel="noreferrer" style={{ color: '#4361EE', textDecoration: 'underline' }}>
+                    Dar de alta fabricantes →
+                  </a>
+                </div>
+              )}
             </div>
-            <div>{fld('Modelo', inp('model', 'Catalyst 9300-48P'))}</div>
+
+            {/* Modelo — select dinámico con alta inline */}
+            <div>
+              {lbl('Modelo')}
+              {!showAddModel ? (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <select
+                    value={form.model}
+                    onChange={e => set('model', e.target.value)}
+                    disabled={!form.manufacturer_id || modelsLoading}
+                    style={{
+                      flex: 1, padding: '10px 14px', borderRadius: 10,
+                      border: '1.5px solid #E8EBF4', fontSize: '0.875rem',
+                      background: '#FAFBFF',
+                      color: form.model ? '#1E293B' : '#94A3B8',
+                      opacity: (!form.manufacturer_id || modelsLoading) ? 0.6 : 1,
+                    }}
+                  >
+                    <option value="">
+                      {!form.manufacturer_id
+                        ? 'Selecciona fabricante primero'
+                        : modelsLoading
+                          ? 'Cargando...'
+                          : models.length === 0
+                            ? 'Sin modelos — agrega uno'
+                            : 'Seleccionar modelo'}
+                    </option>
+                    {models.map(m => (
+                      <option key={m.id} value={m.name}>
+                        {m.name}{m.part_number ? ` (${m.part_number})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {form.manufacturer_id && (
+                    <button
+                      onClick={() => setShowAddModel(true)}
+                      title="Agregar nuevo modelo"
+                      style={{ padding: '0 12px', borderRadius: 10, border: '1.5px solid #4361EE', background: '#EEF2FF', color: '#4361EE', fontSize: '1.2rem', cursor: 'pointer', fontWeight: 700, lineHeight: 1 }}
+                    >+</button>
+                  )}
+                </div>
+              ) : (
+                <div style={{ border: '1.5px solid #4361EE', borderRadius: 10, padding: 12, background: '#F8FAFF' }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#4361EE', marginBottom: 8 }}>
+                    Nuevo modelo para {manufacturers.find(m => m.id === form.manufacturer_id)?.name}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Nombre del modelo *"
+                    value={newModelName}
+                    onChange={e => setNewModelName(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1.5px solid #E8EBF4', fontSize: '0.85rem', marginBottom: 6, boxSizing: 'border-box' }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Part number (opcional)"
+                    value={newModelPN}
+                    onChange={e => setNewModelPN(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1.5px solid #E8EBF4', fontSize: '0.85rem', marginBottom: 8, boxSizing: 'border-box' }}
+                  />
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      onClick={handleAddModel}
+                      disabled={!newModelName.trim() || addingModel}
+                      style={{ flex: 1, padding: '7px 0', borderRadius: 8, border: 'none', background: newModelName.trim() ? '#4361EE' : '#CBD5E1', color: '#fff', fontSize: '0.82rem', fontWeight: 600, cursor: newModelName.trim() ? 'pointer' : 'not-allowed' }}
+                    >{addingModel ? 'Guardando...' : 'Guardar modelo'}</button>
+                    <button
+                      onClick={() => { setShowAddModel(false); setNewModelName(''); setNewModelPN(''); }}
+                      style={{ padding: '7px 14px', borderRadius: 8, border: '1.5px solid #E8EBF4', background: '#fff', color: '#64748B', fontSize: '0.82rem', cursor: 'pointer' }}
+                    >Cancelar</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div style={{ gridColumn: '1/-1' }}>{fld('No. de serie', inp('serial_number', 'FDO2312G0AB'))}</div>
           </div>
           {selectedType && (
@@ -375,6 +565,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
       case 4: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            {/* Proveedor desde catálogo real */}
             <div style={{ gridColumn: '1/-1' }}>
               {lbl('Proveedor / Integrador')}
               <select
@@ -383,8 +574,20 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
                 style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}
               >
                 <option value="">Seleccionar proveedor</option>
-                {CATALOGOS.integradores.map((i: string) => <option key={i}>{i}</option>)}
+                {providers.length > 0
+                  ? providers.map((p: { id: string; legal_name: string; trade_name?: string }) => (
+                      <option key={p.id} value={p.id}>{p.trade_name || p.legal_name}</option>
+                    ))
+                  : null
+                }
               </select>
+              {providers.length === 0 && (
+                <div style={{ marginTop: 4, fontSize: '0.75rem', color: '#94A3B8' }}>
+                  <a href="/infraestructura/catalogs/proveedores" target="_blank" rel="noreferrer" style={{ color: '#4361EE', textDecoration: 'underline' }}>
+                    Dar de alta proveedores →
+                  </a>
+                </div>
+              )}
             </div>
             <div>{fld('No. Factura', inp('invoice_no', 'F-2024-0312'))}</div>
             <div>{fld('Costo (USD)', inp('cost_usd', '4200', 'number'))}</div>
@@ -412,10 +615,12 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
               ['Fabricante / Modelo', [
                 manufacturers.find(m => m.id === form.manufacturer_id)?.name,
                 form.model
-              ].filter(Boolean).join(' ') || '—'],
+              ].filter(Boolean).join(' — ') || '—'],
               ['No. Serie', form.serial_number || '—'],
               ['Etiqueta RFID', form.rfid_tag || '—'],
-              ['Proveedor', form.supplier || '—'],
+              ['Proveedor', providers.find((p: { id: string; legal_name: string; trade_name?: string }) => p.id === form.supplier)?.trade_name
+                || providers.find((p: { id: string; legal_name: string; trade_name?: string }) => p.id === form.supplier)?.legal_name
+                || form.supplier || '—'],
               ['Costo', form.cost_usd ? `$${parseFloat(form.cost_usd).toLocaleString()} USD` : '—'],
             ].map(([k, v]) => (
               <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #E8EBF4', fontSize: '0.82rem' }}>

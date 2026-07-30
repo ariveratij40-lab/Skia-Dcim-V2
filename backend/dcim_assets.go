@@ -1746,3 +1746,121 @@ func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Reque
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
 }
+
+// HandleModels — /api/dcim/catalogs/models y /api/dcim/catalogs/models/{id}
+// Soporta ?manufacturer_id=UUID para filtrar por fabricante
+func (h *DCIMHandler) HandleModels(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_, tenantID, _, err := h.getSessionContext(r)
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized); return
+	}
+	path := r.URL.Path
+	modelID := ""
+	pfx := "/api/dcim/catalogs/models/"
+	if len(path) > len(pfx) { modelID = path[len(pfx):] }
+
+	switch r.Method {
+	case http.MethodGet:
+		manufacturerID := r.URL.Query().Get("manufacturer_id")
+		var rows *sql.Rows
+		if manufacturerID != "" {
+			rows, err = h.DB.Query(
+				`SELECT m.id, m.manufacturer_id, mf.name as manufacturer_name,
+				        m.name, COALESCE(m.part_number,''), COALESCE(m.description,''), m.status, m.created_at
+				 FROM catalogs_models m
+				 JOIN catalogs_manufacturers mf ON mf.id = m.manufacturer_id
+				 WHERE m.tenant_id=$1 AND m.manufacturer_id=$2 AND m.status='active'
+				 ORDER BY m.name`, tenantID, manufacturerID)
+		} else {
+			rows, err = h.DB.Query(
+				`SELECT m.id, m.manufacturer_id, mf.name as manufacturer_name,
+				        m.name, COALESCE(m.part_number,''), COALESCE(m.description,''), m.status, m.created_at
+				 FROM catalogs_models m
+				 JOIN catalogs_manufacturers mf ON mf.id = m.manufacturer_id
+				 WHERE m.tenant_id=$1 AND m.status='active'
+				 ORDER BY mf.name, m.name`, tenantID)
+		}
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		defer rows.Close()
+		type Model struct {
+			ID             string `json:"id"`
+			ManufacturerID string `json:"manufacturer_id"`
+			ManufacturerName string `json:"manufacturer_name"`
+			Name           string `json:"name"`
+			PartNumber     string `json:"part_number"`
+			Description    string `json:"description"`
+			Status         string `json:"status"`
+			CreatedAt      string `json:"created_at"`
+		}
+		list := []Model{}
+		for rows.Next() {
+			var m Model; var ca interface{}
+			if err := rows.Scan(&m.ID, &m.ManufacturerID, &m.ManufacturerName,
+				&m.Name, &m.PartNumber, &m.Description, &m.Status, &ca); err == nil {
+				m.CreatedAt = fmt.Sprintf("%v", ca)
+				list = append(list, m)
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"models": list})
+
+	case http.MethodPost:
+		var b struct {
+			ManufacturerID string `json:"manufacturer_id"`
+			Name           string `json:"name"`
+			PartNumber     string `json:"part_number"`
+			Description    string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Name == "" || b.ManufacturerID == "" {
+			http.Error(w, `{"error":"manufacturer_id and name are required"}`, http.StatusBadRequest); return
+		}
+		// Verificar que el fabricante pertenece al tenant
+		var mfCount int
+		h.DB.QueryRow(`SELECT COUNT(*) FROM catalogs_manufacturers WHERE id=$1 AND tenant_id=$2`, b.ManufacturerID, tenantID).Scan(&mfCount)
+		if mfCount == 0 {
+			http.Error(w, `{"error":"manufacturer not found"}`, http.StatusNotFound); return
+		}
+		newID := uuid.New().String()
+		_, err := h.DB.Exec(
+			`INSERT INTO catalogs_models (id, tenant_id, manufacturer_id, name, part_number, description)
+			 VALUES ($1, $2, $3, $4, NULLIF($5,''), NULLIF($6,''))`,
+			newID, tenantID, b.ManufacturerID, b.Name, b.PartNumber, b.Description)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"id": newID, "name": b.Name})
+
+	case http.MethodPut:
+		if modelID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		var b struct {
+			Name        string `json:"name"`
+			PartNumber  string `json:"part_number"`
+			Description string `json:"description"`
+			Status      string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+		}
+		_, err := h.DB.Exec(
+			`UPDATE catalogs_models SET
+			 name=COALESCE(NULLIF($1,''),name),
+			 part_number=NULLIF($2,''),
+			 description=NULLIF($3,''),
+			 status=COALESCE(NULLIF($4,''),'active'),
+			 updated_at=now()
+			 WHERE id=$5 AND tenant_id=$6`,
+			b.Name, b.PartNumber, b.Description, b.Status, modelID, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		json.NewEncoder(w).Encode(map[string]string{"id": modelID, "status": "updated"})
+
+	case http.MethodDelete:
+		if modelID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		_, err := h.DB.Exec(
+			`UPDATE catalogs_models SET status='inactive', updated_at=now() WHERE id=$1 AND tenant_id=$2`,
+			modelID, tenantID)
+		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		json.NewEncoder(w).Encode(map[string]string{"id": modelID, "status": "deactivated"})
+
+	default:
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
