@@ -633,7 +633,7 @@ interface ImageUploaderProps {
   icon?: React.ReactNode;
 }
 
-function ImageUploader({ label, sublabel, value, onChange, onClear, accent = 'text-blue-500', icon }: ImageUploaderProps) {
+const ImageUploader = React.memo(function ImageUploader({ label, sublabel, value, onChange, onClear, accent = 'text-blue-500', icon }: ImageUploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -728,7 +728,7 @@ function ImageUploader({ label, sublabel, value, onChange, onClear, accent = 'te
       <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleChange} />
     </div>
   );
-}
+});
 
 // ============================================================
 // MODAL VISOR DE IMAGEN (lightbox)
@@ -1321,6 +1321,16 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
 // ============================================================
 // MODAL CREAR / EDITAR
 // ============================================================
+// Componente F extraído fuera del modal para evitar re-mounts en cada keystroke
+const MdfFormField = React.memo(function MdfFormField({ label, children, span = 1 }: { label: string; children: React.ReactNode; span?: number }) {
+  return (
+    <div className={span === 2 ? 'col-span-2' : ''}>
+      <label className="block text-[12px] font-bold text-slate-500 uppercase tracking-widest mb-1">{label}</label>
+      {children}
+    </div>
+  );
+});
+
 interface MdfModalProps {
   record: MdfIdfRecord | null;
   onClose: () => void;
@@ -1332,6 +1342,9 @@ function MdfModal({ record, onClose, onSave }: MdfModalProps) {
   const [evaluation, setEvaluation] = useState<CertEvaluation>(
     (record as any)?._evaluation ?? buildDefaultEval()
   );
+  // Estado de imágenes separado para que ImageUploader no se re-renderice al escribir texto
+  const [photoUrl, setPhotoUrl] = useState(record?.photo_url ?? '');
+  const [refUrl, setRefUrl] = useState(record?.ref_image_url ?? '');
   const [form, setForm] = useState<Partial<MdfIdfRecord>>(record ?? {
     code: '', name: '', type: 'IDF', building: '', floor: '', zone: '',
     address: '', status: 'Operativo', responsible: '', responsible_email: '',
@@ -1348,6 +1361,8 @@ function MdfModal({ record, onClose, onSave }: MdfModalProps) {
     const certResults = calcCertResults(evaluation);
     onSave({
       ...form,
+      photo_url: photoUrl,
+      ref_image_url: refUrl,
       id: record?.id ?? Date.now().toString(),
       created_at: record?.created_at ?? now,
       last_updated: now,
@@ -1358,14 +1373,14 @@ function MdfModal({ record, onClose, onSave }: MdfModalProps) {
     } as MdfIdfRecord & { _evaluation: CertEvaluation; _cert_badge: string; _cert_overall: number | null });
   };
 
-  const F = ({ label, children, span = 1 }: { label: string; children: React.ReactNode; span?: number }) => (
-    <div className={span === 2 ? 'col-span-2' : ''}>
-      <label className="block text-[12px] font-bold text-slate-500 uppercase tracking-widest mb-1">{label}</label>
-      {children}
-    </div>
-  );
+  const F = MdfFormField;
   const inp = "w-full px-3 py-2 border border-[#E8EBF4] rounded-xl text-xs focus:border-blue-400 focus:outline-none bg-slate-100";
   const sel = "w-full px-3 py-2 border border-[#E8EBF4] rounded-xl text-xs focus:border-blue-400 focus:outline-none bg-slate-100";
+  // Callbacks estables para ImageUploader (evitan re-renders por referencia nueva)
+  const handlePhotoChange = useCallback((url: string) => setPhotoUrl(url), []);
+  const handlePhotoClear = useCallback(() => setPhotoUrl(''), []);
+  const handleRefChange = useCallback((url: string) => setRefUrl(url), []);
+  const handleRefClear = useCallback(() => setRefUrl(''), []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -1421,9 +1436,9 @@ function MdfModal({ record, onClose, onSave }: MdfModalProps) {
               <ImageUploader
                 label="Fotografía real del cuarto técnico"
                 sublabel="Sube una foto actual de la instalación"
-                value={form.photo_url ?? ''}
-                onChange={url => setForm(f => ({ ...f, photo_url: url }))}
-                onClear={() => setForm(f => ({ ...f, photo_url: '' }))}
+                value={photoUrl}
+                onChange={handlePhotoChange}
+                onClear={handlePhotoClear}
                 accent="text-blue-500"
                 icon={<Camera size={14} />}
               />
@@ -1432,9 +1447,9 @@ function MdfModal({ record, onClose, onSave }: MdfModalProps) {
               <ImageUploader
                 label="Imagen de referencia (norma)"
                 sublabel="Cómo debe verse según ANSI/TIA-568, ISO 11801 u otra norma aplicable"
-                value={form.ref_image_url ?? ''}
-                onChange={url => setForm(f => ({ ...f, ref_image_url: url }))}
-                onClear={() => setForm(f => ({ ...f, ref_image_url: '' }))}
+                value={refUrl}
+                onChange={handleRefChange}
+                onClear={handleRefClear}
                 accent="text-violet-500"
                 icon={<BookOpen size={14} />}
               />
