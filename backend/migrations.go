@@ -320,6 +320,32 @@ ALTER TABLE racks ADD COLUMN IF NOT EXISTS mdf_idf_id UUID REFERENCES mdf_idf(id
 CREATE INDEX IF NOT EXISTS idx_racks_mdf_idf_id ON racks(mdf_idf_id);
 `,
 		},
+		{
+			version: "014_cert_evaluations",
+			sql: `
+CREATE TABLE IF NOT EXISTS cert_evaluations (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id     UUID NOT NULL,
+  site_id       UUID NOT NULL,
+  site_name     TEXT NOT NULL,
+  standard      TEXT NOT NULL,
+  evaluator     TEXT NOT NULL DEFAULT '',
+  eval_date     DATE NOT NULL,
+  answers       JSONB NOT NULL DEFAULT '[]',
+  overall_pct   NUMERIC(5,2),
+  badge         TEXT NOT NULL DEFAULT 'Encaminado',
+  notes         TEXT NOT NULL DEFAULT '',
+  report_url    TEXT NOT NULL DEFAULT '',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cert_eval_tenant ON cert_evaluations(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_cert_eval_site ON cert_evaluations(site_id);
+-- Columnas de imagen en assets (si no existen)
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS photo_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE assets ADD COLUMN IF NOT EXISTS ref_image_url TEXT NOT NULL DEFAULT '';
+`,
+		},
 	}
 
 	for _, m := range migrations {

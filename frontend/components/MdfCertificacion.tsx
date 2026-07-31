@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   CheckCircle2, XCircle, Clock, AlertTriangle, FileText,
   Network, Zap, Wind, Shield, ChevronDown, ChevronRight,
@@ -54,6 +54,7 @@ export interface CertEvalRecord {
   overall_pct: number | null;
   badge: 'Certificable' | 'Encaminado' | 'Crítico';
   notes: string;
+  report_url?: string;
   created_at: string;
 }
 
@@ -462,6 +463,9 @@ interface TabNormativaProps {
 export function TabNormativa({ sites }: TabNormativaProps) {
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
   const [history, setHistory] = useState<CertEvalRecord[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [savingEval, setSavingEval] = useState(false);
+  const [generatingReport, setGeneratingReport] = useState<string | null>(null);
   const [activeEval, setActiveEval] = useState<{
     answers: EvalAnswer[];
     standard: CertNorm | 'Evaluación interna SKIA';
@@ -478,6 +482,36 @@ export function TabNormativa({ sites }: TabNormativaProps) {
 
   const selectedSite = sites.find(s => s.id === selectedSiteId);
   const siteHistory = history.filter(h => h.site_id === selectedSiteId);
+
+  // ── Cargar historial desde el backend al montar ──────────
+  const loadHistory = useCallback(async (siteId?: string) => {
+    setLoadingHistory(true);
+    try {
+      const url = siteId
+        ? `/api/infra/cert-evaluations?site_id=${siteId}`
+        : '/api/infra/cert-evaluations';
+      const res = await fetch(url, { credentials: 'include' });
+      if (res.ok) {
+        const data: CertEvalRecord[] = await res.json();
+        if (siteId) {
+          setHistory(prev => [
+            ...prev.filter(h => h.site_id !== siteId),
+            ...data,
+          ]);
+        } else {
+          setHistory(data);
+        }
+      }
+    } catch (e) {
+      console.error('Error cargando historial:', e);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
 
   const results = useMemo(
     () => activeEval ? calcResults(activeEval.answers) : null,
@@ -524,43 +558,109 @@ export function TabNormativa({ sites }: TabNormativaProps) {
     reader.readAsDataURL(file);
   }
 
-  function saveEval() {
+  async function saveEval() {
     if (!activeEval || !selectedSite || !results) return;
-    if (editingRecordId) {
-      // Actualizar evaluación existente
-      setHistory(h => h.map(rec =>
-        rec.id === editingRecordId
-          ? {
-              ...rec,
-              standard: activeEval.standard,
-              evaluator: activeEval.evaluator,
-              eval_date: activeEval.eval_date,
-              answers: activeEval.answers,
-              overall_pct: results.overall,
-              badge: results.badge,
-              notes: activeEval.notes,
-            }
-          : rec
-      ));
-      setEditingRecordId(null);
-    } else {
-      // Nueva evaluación
-      const rec: CertEvalRecord = {
-        id: Date.now().toString(),
-        site_id: selectedSite.id,
-        site_name: selectedSite.name,
-        standard: activeEval.standard,
-        evaluator: activeEval.evaluator,
-        eval_date: activeEval.eval_date,
-        answers: activeEval.answers,
-        overall_pct: results.overall,
-        badge: results.badge,
-        notes: activeEval.notes,
-        created_at: new Date().toISOString(),
-      };
-      setHistory(h => [rec, ...h]);
+    setSavingEval(true);
+    try {
+      if (editingRecordId) {
+        // Actualizar evaluación existente en el backend
+        const res = await fetch(`/api/infra/cert-evaluations/${editingRecordId}`, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            standard: activeEval.standard,
+            evaluator: activeEval.evaluator,
+            eval_date: activeEval.eval_date,
+            answers: activeEval.answers,
+            overall_pct: results.overall,
+            badge: results.badge,
+            notes: activeEval.notes,
+          }),
+        });
+        if (res.ok) {
+          setHistory(h => h.map(rec =>
+            rec.id === editingRecordId
+              ? {
+                  ...rec,
+                  standard: activeEval.standard,
+                  evaluator: activeEval.evaluator,
+                  eval_date: activeEval.eval_date,
+                  answers: activeEval.answers,
+                  overall_pct: results.overall,
+                  badge: results.badge,
+                  notes: activeEval.notes,
+                }
+              : rec
+          ));
+          setEditingRecordId(null);
+        }
+      } else {
+        // Nueva evaluación en el backend
+        const res = await fetch('/api/infra/cert-evaluations', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            site_id: selectedSite.id,
+            site_name: selectedSite.name,
+            standard: activeEval.standard,
+            evaluator: activeEval.evaluator,
+            eval_date: activeEval.eval_date,
+            answers: activeEval.answers,
+            overall_pct: results.overall,
+            badge: results.badge,
+            notes: activeEval.notes,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const rec: CertEvalRecord = {
+            id: data.id,
+            site_id: selectedSite.id,
+            site_name: selectedSite.name,
+            standard: activeEval.standard,
+            evaluator: activeEval.evaluator,
+            eval_date: activeEval.eval_date,
+            answers: activeEval.answers,
+            overall_pct: results.overall,
+            badge: results.badge,
+            notes: activeEval.notes,
+            created_at: new Date().toISOString(),
+          };
+          setHistory(h => [rec, ...h]);
+        }
+      }
+      setActiveEval(null);
+    } catch (e) {
+      console.error('Error guardando evaluación:', e);
+    } finally {
+      setSavingEval(false);
     }
-    setActiveEval(null);
+  }
+
+  async function generateReport(evalId: string) {
+    setGeneratingReport(evalId);
+    try {
+      const res = await fetch(`/api/infra/cert-evaluations/${evalId}/report`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const reportUrl = data.report_url as string;
+        // Actualizar el registro en el historial local con la URL del reporte
+        setHistory(h => h.map(rec =>
+          rec.id === evalId ? { ...rec, report_url: reportUrl } : rec
+        ));
+        // Abrir el reporte en nueva pestaña
+        window.open(reportUrl, '_blank');
+      }
+    } catch (e) {
+      console.error('Error generando reporte:', e);
+    } finally {
+      setGeneratingReport(null);
+    }
   }
 
   const badgeStyle = (badge: string) =>
@@ -579,7 +679,7 @@ export function TabNormativa({ sites }: TabNormativaProps) {
     const r = calcResults(viewingRecord.answers);
     return (
       <div className="space-y-4">
-        <div className="flex items-center gap-3 mb-2">
+        <div className="flex items-center gap-3 mb-2 flex-wrap">
           <button onClick={() => setViewingRecord(null)}
             className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 bg-slate-100/80 border border-[#E8EBF4] rounded-xl px-3 py-1.5 transition-colors">
             <ChevronRight size={12} className="rotate-180" /> Volver al historial
@@ -588,6 +688,20 @@ export function TabNormativa({ sites }: TabNormativaProps) {
             className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 bg-blue-50 border border-blue-200 rounded-xl px-3 py-1.5 transition-colors">
             <Edit2 size={12} /> Editar evaluación
           </button>
+          <button
+            onClick={() => generateReport(viewingRecord.id)}
+            disabled={generatingReport === viewingRecord.id}
+            className="flex items-center gap-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 rounded-xl px-3 py-1.5 transition-colors shadow-sm">
+            {generatingReport === viewingRecord.id
+              ? <><RefreshCw size={11} className="animate-spin" /> Generando...</>
+              : <><Printer size={11} /> Reporte ejecutivo</>}
+          </button>
+          {viewingRecord.report_url && (
+            <a href={viewingRecord.report_url} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 hover:text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-1.5 transition-colors">
+              <Eye size={11} /> Ver último reporte
+            </a>
+          )}
           <span className="text-sm font-black text-[#1A1D2E]">{viewingRecord.site_name}</span>
           <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[13px] font-bold ${badgeStyle(viewingRecord.badge)}`}>
             {badgeIcon(viewingRecord.badge)} {viewingRecord.badge}
@@ -789,15 +903,29 @@ export function TabNormativa({ sites }: TabNormativaProps) {
                         {siteHist.map(rec => (
                           <div key={rec.id} className="flex items-center gap-3 p-3 bg-slate-100/80 border border-[#E8EBF4] rounded-xl hover:border-indigo-200 transition-colors">
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-0.5">
+                              <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[12px] font-bold ${badgeStyle(rec.badge)}`}>
                                   {badgeIcon(rec.badge)} {rec.badge}{rec.overall_pct !== null ? ` — ${rec.overall_pct}%` : ''}
                                 </span>
                                 <span className="text-[12px] text-[#5C6194] font-mono bg-slate-100 px-1.5 py-0.5 rounded-md">{rec.standard}</span>
+                                {rec.report_url && (
+                                  <a href={rec.report_url} target="_blank" rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-[12px] text-emerald-600 font-bold bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-md hover:bg-emerald-100 transition-colors">
+                                    <FileText size={9} /> Reporte
+                                  </a>
+                                )}
                               </div>
                               <p className="text-[13px] text-[#5C6194]">{rec.eval_date} · {rec.evaluator || 'Sin evaluador'}</p>
                             </div>
                             <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => generateReport(rec.id)}
+                                disabled={generatingReport === rec.id}
+                                className="flex items-center gap-1 text-[12px] text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 font-bold rounded-lg px-2.5 py-1.5 transition-colors">
+                                {generatingReport === rec.id
+                                  ? <><RefreshCw size={9} className="animate-spin" /> Gen...</>
+                                  : <><Printer size={9} /> Reporte</>}
+                              </button>
                               <button onClick={() => editExistingEval(rec)}
                                 className="flex items-center gap-1 text-[12px] text-blue-500 hover:text-blue-700 font-bold border border-blue-200 rounded-lg px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 transition-colors">
                                 <Edit2 size={10} /> Editar
@@ -1008,9 +1136,11 @@ export function TabNormativa({ sites }: TabNormativaProps) {
                     className="px-4 py-2 text-xs font-bold text-slate-600 bg-[#F0F2FA] border border-[#E8EBF4] rounded-xl hover:bg-slate-50 transition-colors">
                     Cancelar
                   </button>
-                  <button onClick={saveEval}
-                    className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-1.5">
-                    <CheckSquare size={13} /> {editingRecordId ? 'Actualizar evaluación' : 'Guardar evaluación'}
+                  <button onClick={saveEval} disabled={savingEval}
+                    className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 disabled:opacity-60 transition-colors shadow-sm flex items-center gap-1.5">
+                    {savingEval
+                      ? <><RefreshCw size={13} className="animate-spin" /> Guardando...</>
+                      : <><CheckSquare size={13} /> {editingRecordId ? 'Actualizar evaluación' : 'Guardar evaluación'}</>}
                   </button>
                 </div>
               </div>
