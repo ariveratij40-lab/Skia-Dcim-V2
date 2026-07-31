@@ -960,15 +960,15 @@ function MdfCard({ record, onView, onEdit, onRackBuilder }: MdfCardProps) {
             </span>
             {record.photo_url ? (
               <button type="button" onClick={() => setViewer({ src: record.photo_url, title: `Foto — ${record.name}` })}
-                className="relative group/img h-16 rounded-xl overflow-hidden border border-[#E8EBF4]">
-                <img src={record.photo_url} alt="Foto" className="w-full h-full object-cover" />
+                className="relative group/img h-28 rounded-xl overflow-hidden border border-[#E8EBF4] bg-slate-100/60">
+                <img src={record.photo_url} alt="Foto" className="w-full h-full object-contain" />
                 <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover/img:opacity-100">
                   <ZoomIn size={14} className="text-white" />
                 </div>
               </button>
             ) : (
-              <div className="h-16 rounded-xl bg-slate-100/40 border border-dashed border-[#E8EBF4] flex items-center justify-center text-[#5C6194]">
-                <Camera size={14} />
+              <div className="h-28 rounded-xl bg-slate-100/40 border border-dashed border-[#E8EBF4] flex items-center justify-center text-[#5C6194]">
+                <Camera size={16} />
               </div>
             )}
           </div>
@@ -979,15 +979,15 @@ function MdfCard({ record, onView, onEdit, onRackBuilder }: MdfCardProps) {
             </span>
             {record.ref_image_url ? (
               <button type="button" onClick={() => setViewer({ src: record.ref_image_url, title: `Referencia normativa — ${record.name}` })}
-                className="relative group/img h-16 rounded-xl overflow-hidden border border-[#E8EBF4]">
-                <img src={record.ref_image_url} alt="Referencia" className="w-full h-full object-cover" />
+                className="relative group/img h-28 rounded-xl overflow-hidden border border-[#E8EBF4] bg-slate-100/60">
+                <img src={record.ref_image_url} alt="Referencia" className="w-full h-full object-contain" />
                 <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover/img:opacity-100">
                   <ZoomIn size={14} className="text-white" />
                 </div>
               </button>
             ) : (
-              <div className="h-16 rounded-xl bg-slate-100/40 border border-dashed border-[#E8EBF4] flex items-center justify-center text-[#5C6194]">
-                <BookOpen size={14} />
+              <div className="h-28 rounded-xl bg-slate-100/40 border border-dashed border-[#E8EBF4] flex items-center justify-center text-[#5C6194]">
+                <BookOpen size={16} />
               </div>
             )}
           </div>
