@@ -1,7 +1,7 @@
 import MdfIdfWizard, { MdfIdfWizardData } from '../../components/MdfIdfWizard';
 import RackBuilder from '../../components/RackBuilder';
 import axios from 'axios';
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
 import {
@@ -633,7 +633,7 @@ interface ImageUploaderProps {
   icon?: React.ReactNode;
 }
 
-const ImageUploader = React.memo(function ImageUploader({ label, sublabel, value, onChange, onClear, accent = 'text-blue-500', icon }: ImageUploaderProps) {
+const ImageUploader = memo(function ImageUploader({ label, sublabel, value, onChange, onClear, accent = 'text-blue-500', icon }: ImageUploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -1322,7 +1322,7 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
 // MODAL CREAR / EDITAR
 // ============================================================
 // Componente F extraído fuera del modal para evitar re-mounts en cada keystroke
-const MdfFormField = React.memo(function MdfFormField({ label, children, span = 1 }: { label: string; children: React.ReactNode; span?: number }) {
+const MdfFormField = memo(function MdfFormField({ label, children, span = 1 }: { label: string; children: React.ReactNode; span?: number }) {
   return (
     <div className={span === 2 ? 'col-span-2' : ''}>
       <label className="block text-[12px] font-bold text-slate-500 uppercase tracking-widest mb-1">{label}</label>
