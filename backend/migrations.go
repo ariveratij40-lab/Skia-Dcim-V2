@@ -311,6 +311,14 @@ CREATE INDEX IF NOT EXISTS idx_imported_assets_tenant
 -- Limpiar tabla legacy huérfana (CASCADE para limpiar imported_assets que tiene FK hacia ella)
 TRUNCATE TABLE inventory_imports_legacy CASCADE;
 `,
+			},
+		{
+			version: "013_racks_mdf_idf_id",
+			sql: `
+-- Agregar columna mdf_idf_id a la tabla racks para vincular racks con su MDF/IDF padre
+ALTER TABLE racks ADD COLUMN IF NOT EXISTS mdf_idf_id UUID REFERENCES mdf_idf(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_racks_mdf_idf_id ON racks(mdf_idf_id);
+`,
 		},
 	}
 
