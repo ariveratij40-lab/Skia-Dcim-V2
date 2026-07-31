@@ -1085,7 +1085,7 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
         cooling: record.cooling ?? '',
         power_kva: record.power_kva ?? 0,
         capacity_u: record.capacity_u ?? 0,
-        observations: record.observations ?? '',
+        observations: record.notes ?? '',
         photo_url: photoUrl,
         ref_image_url: refUrl,
       });
@@ -1951,7 +1951,7 @@ function TabInventario({ data, setData, highlightCode, onRackBuilder }: { data: 
         cooling: r.cooling,
         power_kva: r.power_kva,
         capacity_u: r.capacity_u,
-        observations: r.observations,
+        observations: r.notes ?? '',
         photo_url: r.photo_url ?? '',
         ref_image_url: r.ref_image_url ?? '',
       });
