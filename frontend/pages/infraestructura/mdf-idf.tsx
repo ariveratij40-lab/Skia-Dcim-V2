@@ -699,8 +699,8 @@ function ImageUploader({ label, sublabel, value, onChange, onClear, accent = 'te
           <p className="text-[13px] text-blue-500 font-medium">Subiendo imagen...</p>
         </div>
       ) : value ? (
-        <div className="relative group rounded-xl overflow-hidden border border-[#E8EBF4] bg-slate-50">
-          <img src={value} alt={label} className="w-full h-36 object-cover" />
+        <div className="relative group rounded-xl overflow-hidden border border-[#E8EBF4] bg-slate-100 flex items-center justify-center" style={{minHeight:'9rem', maxHeight:'14rem'}}>
+          <img src={value} alt={label} className="w-full max-h-56 object-contain" style={{maxHeight:'14rem'}} />
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
             <button type="button" onClick={() => inputRef.current?.click()}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-white/90 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:bg-slate-100 transition-colors">
@@ -1204,8 +1204,8 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
           <Section title="Fotografía Real" icon={<Camera size={14} />}>
             <div className="space-y-2">
               {localPhoto ? (
-                <div className="relative group/img rounded-xl overflow-hidden border border-[#E8EBF4]">
-                  <img src={localPhoto} alt="Foto real" className="w-full h-48 object-cover" />
+                <div className="relative group/img rounded-xl overflow-hidden border border-[#E8EBF4] bg-slate-100 flex items-center justify-center" style={{minHeight:'8rem', maxHeight:'16rem'}}>
+                  <img src={localPhoto} alt="Foto real" className="w-full max-h-64 object-contain" style={{maxHeight:'16rem'}} />
                   <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/40 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover/img:opacity-100">
                     <button type="button" onClick={() => setViewer({ src: localPhoto, title: `Foto real — ${record.name}` })}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-white/90 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:bg-slate-100">
@@ -1239,8 +1239,8 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
                 Sirve como guía visual para auditoría y normativa.
               </p>
               {localRef ? (
-                <div className="relative group/img rounded-xl overflow-hidden border border-[#E8EBF4]">
-                  <img src={localRef} alt="Referencia normativa" className="w-full h-48 object-cover" />
+                <div className="relative group/img rounded-xl overflow-hidden border border-[#E8EBF4] bg-slate-100 flex items-center justify-center" style={{minHeight:'8rem', maxHeight:'16rem'}}>
+                  <img src={localRef} alt="Referencia normativa" className="w-full max-h-64 object-contain" style={{maxHeight:'16rem'}} />
                   <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/40 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover/img:opacity-100">
                     <button type="button" onClick={() => setViewer({ src: localRef, title: `Referencia normativa — ${record.name}` })}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-white/90 rounded-xl text-[13px] font-bold text-slate-700 shadow-sm hover:bg-slate-100">
@@ -1691,9 +1691,9 @@ function ExpandableListView({
                       <p className="text-[12px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1">
                         <Camera size={10} /> Foto real
                       </p>
-                      <div className="w-full h-32 rounded-xl overflow-hidden bg-[#F0F2FA] border border-[#E8EBF4] flex items-center justify-center">
+                      <div className="w-full rounded-xl overflow-hidden bg-[#F0F2FA] border border-[#E8EBF4] flex items-center justify-center" style={{minHeight:'6rem', maxHeight:'12rem'}}>
                         {r.photo_url ? (
-                          <img src={r.photo_url} alt={r.name} className="w-full h-full object-cover" />
+                          <img src={r.photo_url} alt={r.name} className="w-full max-h-48 object-contain" style={{maxHeight:'12rem'}} />
                         ) : (
                           <div className="flex flex-col items-center gap-1 text-[#5C6194]">
                             <Camera size={20} />
@@ -1707,9 +1707,9 @@ function ExpandableListView({
                       <p className="text-[12px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 flex items-center gap-1">
                         <BookOpen size={10} /> Referencia normativa
                       </p>
-                      <div className="w-full h-28 rounded-xl overflow-hidden bg-[#F0F2FA] border border-[#E8EBF4] flex items-center justify-center">
+                      <div className="w-full rounded-xl overflow-hidden bg-[#F0F2FA] border border-[#E8EBF4] flex items-center justify-center" style={{minHeight:'6rem', maxHeight:'12rem'}}>
                         {r.ref_image_url ? (
-                          <img src={r.ref_image_url} alt="Referencia" className="w-full h-full object-cover" />
+                          <img src={r.ref_image_url} alt="Referencia" className="w-full max-h-48 object-contain" style={{maxHeight:'12rem'}} />
                         ) : (
                           <div className="flex flex-col items-center gap-1 text-[#5C6194]">
                             <BookOpen size={18} />
