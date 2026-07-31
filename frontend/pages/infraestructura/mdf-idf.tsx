@@ -2137,7 +2137,36 @@ function MdfIdfContent() {
   // ─── Rack Builder elevado al padre para que Resumen e Inventario lo compartan ───
   const [showRackBuilderGlobal, setShowRackBuilderGlobal] = useState(false);
   const [rackBuilderRecordGlobal, setRackBuilderRecordGlobal] = useState<MdfIdfRecord | null>(null);
-  const openRackBuilder = useCallback((r: MdfIdfRecord) => { setRackBuilderRecordGlobal(r); setShowRackBuilderGlobal(true); }, []);
+  // rackBuilderRealId es el ID real del rack en la tabla racks (distinto al asset_id del MDF)
+  const [rackBuilderRealId, setRackBuilderRealId] = useState<string>('');
+  const [rackBuilderRealCode, setRackBuilderRealCode] = useState<string>('');
+  const [rackBuilderRealTotalU, setRackBuilderRealTotalU] = useState<number>(42);
+  const [rackBuilderLoading, setRackBuilderLoading] = useState(false);
+
+  const openRackBuilder = useCallback(async (r: MdfIdfRecord) => {
+    setRackBuilderLoading(true);
+    try {
+      const res = await axios.post(`/api/infra/mdf-idf/${r.id}/ensure-rack`, {
+        total_u: r.capacity_u || 42,
+      });
+      const data = res.data as { rack_id: string; rack_code: string; total_u: number };
+      setRackBuilderRealId(data.rack_id);
+      setRackBuilderRealCode(data.rack_code || r.code);
+      setRackBuilderRealTotalU(data.total_u || r.capacity_u || 42);
+      setRackBuilderRecordGlobal(r);
+      setShowRackBuilderGlobal(true);
+    } catch (e) {
+      console.error('[RackBuilder] Error al obtener rack real:', e);
+      // Fallback: usar el ID del MDF como antes (modo degradado)
+      setRackBuilderRealId(r.id);
+      setRackBuilderRealCode(r.code);
+      setRackBuilderRealTotalU(r.capacity_u || 42);
+      setRackBuilderRecordGlobal(r);
+      setShowRackBuilderGlobal(true);
+    } finally {
+      setRackBuilderLoading(false);
+    }
+  }, []);
 
   const tabs: { id: 'resumen' | 'inventario' | 'normativa'; label: string; icon: React.ReactNode }[] = [
     { id: 'resumen', label: 'Resumen', icon: <BarChart2 size={14} /> },
@@ -2200,15 +2229,33 @@ function MdfIdfContent() {
           {activeTab === 'normativa' && <TabNormativa sites={data} />}
                 </>
       )}
+      {/* Spinner mientras se obtiene el rack real */}
+      {rackBuilderLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl p-6 flex items-center gap-3 shadow-2xl">
+            <svg className="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            <span className="text-sm font-semibold text-slate-700">Preparando Rack Builder…</span>
+          </div>
+        </div>
+      )}
       {/* Rack Builder Modal global — accesible desde Resumen e Inventario */}
-      {showRackBuilderGlobal && rackBuilderRecordGlobal && (
+      {showRackBuilderGlobal && rackBuilderRecordGlobal && rackBuilderRealId && (
         <RackBuilder
-          rackId={rackBuilderRecordGlobal.id}
-          rackCode={rackBuilderRecordGlobal.code}
-          totalU={rackBuilderRecordGlobal.capacity_u || 42}
+          rackId={rackBuilderRealId}
+          rackCode={rackBuilderRealCode || rackBuilderRecordGlobal.code}
+          totalU={rackBuilderRealTotalU || rackBuilderRecordGlobal.capacity_u || 42}
           mdfIdfId={rackBuilderRecordGlobal.id}
-          onClose={() => { setShowRackBuilderGlobal(false); setRackBuilderRecordGlobal(null); }}
-          onSaved={() => { setShowRackBuilderGlobal(false); setRackBuilderRecordGlobal(null); }}
+          onClose={() => { setShowRackBuilderGlobal(false); setRackBuilderRecordGlobal(null); setRackBuilderRealId(''); }}
+          onSaved={() => {
+            setShowRackBuilderGlobal(false);
+            setRackBuilderRecordGlobal(null);
+            setRackBuilderRealId('');
+            // Recargar datos para actualizar el contador de racks
+            axios.get('/api/infra/mdf-idf').then(res => setData(Array.isArray(res.data) ? res.data : []));
+          }}
         />
       )}
       {showMdfWizard && (

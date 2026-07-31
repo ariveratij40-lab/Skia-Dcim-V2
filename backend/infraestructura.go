@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -161,7 +162,8 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			SELECT a.id, a.internal_code, COALESCE(a.name, a.internal_code),
 				COALESCE(m.type,'MDF'),
 				COALESCE(a.status,'active'),
-				COALESCE(m.rack_count,0), COALESCE(m.switch_count,0), COALESCE(m.ups_count,0),
+				(SELECT COUNT(*) FROM racks rk WHERE rk.mdf_idf_id = m.id) AS real_rack_count,
+				COALESCE(m.switch_count,0), COALESCE(m.ups_count,0),
 				COALESCE(a.observations,''), a.created_at
 			FROM mdf_idf m
 			JOIN assets a ON a.id = m.asset_id
@@ -290,6 +292,9 @@ type RackRecord struct {
 	CapacityU    int       `json:"capacity_u"`
 	UsedU        int       `json:"used_u"`
 	CreatedAt    time.Time `json:"created_at"`
+	MdfIdfID     string    `json:"mdf_idf_id"`
+	MdfIdfCode   string    `json:"mdf_idf_code"`
+	MdfIdfName   string    `json:"mdf_idf_name"`
 }
 
 func handleRacks(w http.ResponseWriter, r *http.Request) {
@@ -308,9 +313,14 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 				COALESCE(a.status,'active'),
 				COALESCE(a.observations,''),
 				COALESCE(a.install_year,0), COALESCE(rk.total_u,42), COALESCE(rk.used_u,0),
-				a.created_at
+				a.created_at,
+				COALESCE(rk.mdf_idf_id::text,''),
+				COALESCE(ma.internal_code,''),
+				COALESCE(ma.name,'')
 			FROM racks rk
 			JOIN assets a ON a.id = rk.asset_id
+			LEFT JOIN mdf_idf mi ON mi.id = rk.mdf_idf_id
+			LEFT JOIN assets ma ON ma.id = mi.asset_id
 			WHERE rk.tenant_id = $1
 			ORDER BY a.created_at DESC`, tenantID)
 		if err != nil {
@@ -327,7 +337,8 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 				&rec.Status,
 				&rec.Observations,
 				&rec.InstallYear, &rec.CapacityU, &rec.UsedU,
-				&rec.CreatedAt)
+				&rec.CreatedAt,
+				&rec.MdfIdfID, &rec.MdfIdfCode, &rec.MdfIdfName)
 			list = append(list, rec)
 		}
 		if list == nil {
@@ -391,6 +402,113 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// ─── Ensure Rack para MDF/IDF ────────────────────────────────────────────────
+// POST /api/infra/mdf-idf/{id}/ensure-rack
+// Crea o recupera el rack real asociado a un MDF/IDF.
+// Devuelve: { rack_id, rack_asset_id, rack_code, total_u, is_new }
+func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	tenantID, branchID, userID, err := getInfraSession(r)
+	if err != nil {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Extraer asset_id del MDF/IDF de la URL: /api/infra/mdf-idf/{id}/ensure-rack
+	urlPath := r.URL.Path
+	urlPath = strings.TrimPrefix(urlPath, "/api/infra/mdf-idf/")
+	urlPath = strings.TrimSuffix(urlPath, "/ensure-rack")
+	mdfAssetID := strings.TrimSpace(urlPath)
+	if mdfAssetID == "" {
+		http.Error(w, `{"error":"mdf_idf_id requerido"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Obtener el mdf_idf.id y datos del asset
+	var mdfIdfID, mdfCode, mdfName string
+	var totalU int
+	err = db.QueryRow(`
+		SELECT m.id, a.internal_code, COALESCE(a.name, a.internal_code)
+		FROM mdf_idf m JOIN assets a ON a.id = m.asset_id
+		WHERE m.asset_id = $1 AND m.tenant_id = $2`,
+		mdfAssetID, tenantID).Scan(&mdfIdfID, &mdfCode, &mdfName)
+	if err != nil {
+		http.Error(w, `{"error":"MDF/IDF no encontrado"}`, http.StatusNotFound)
+		return
+	}
+
+	// Leer capacity_u del body (opcional)
+	var body struct {
+		TotalU int `json:"total_u"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	totalU = body.TotalU
+	if totalU <= 0 {
+		totalU = 42
+	}
+
+	// Verificar si ya existe un rack para este mdf_idf_id
+	var existingRackID, existingRackAssetID, existingRackCode string
+	var existingTotalU int
+	err = db.QueryRow(`
+		SELECT rk.id, rk.asset_id, a.internal_code, rk.total_u
+		FROM racks rk JOIN assets a ON a.id = rk.asset_id
+		WHERE rk.mdf_idf_id = $1 AND rk.tenant_id = $2
+		ORDER BY rk.created_at LIMIT 1`,
+		mdfIdfID, tenantID).Scan(&existingRackID, &existingRackAssetID, &existingRackCode, &existingTotalU)
+
+	if err == nil {
+		// Ya existe — devolver el rack existente
+		jsonResp(w, 200, map[string]interface{}{
+			"rack_id":       existingRackID,
+			"rack_asset_id": existingRackAssetID,
+			"rack_code":     existingRackCode,
+			"total_u":       existingTotalU,
+			"is_new":        false,
+		})
+		return
+	}
+
+	// No existe — crear el rack automáticamente
+	rackCode := fmt.Sprintf("RCK-%s", mdfCode)
+	atID, _ := ensureAssetType(tenantID, "RACK", "infrastructure")
+	rackAssetID := generateID()
+	_, err = db.Exec(`
+		INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
+			internal_code, name, status, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,'active',$7)`,
+		rackAssetID, tenantID, branchID, atID,
+		rackCode, fmt.Sprintf("Rack %s", mdfName), userID)
+	if err != nil {
+		log.Printf("[EnsureRack] Error creando asset del rack: %v", err)
+		http.Error(w, `{"error":"error creando rack"}`, http.StatusInternalServerError)
+		return
+	}
+
+	rackID := generateID()
+	_, err = db.Exec(`
+		INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u, mdf_idf_id)
+		VALUES ($1,$2,$3,$4,$5,$6)`,
+		rackID, rackAssetID, tenantID, branchID, totalU, mdfIdfID)
+	if err != nil {
+		log.Printf("[EnsureRack] Error creando rack: %v", err)
+		http.Error(w, `{"error":"error creando rack"}`, http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[EnsureRack] Rack %s creado para MDF/IDF %s (%s)", rackID, mdfIdfID, mdfCode)
+	jsonResp(w, 201, map[string]interface{}{
+		"rack_id":       rackID,
+		"rack_asset_id": rackAssetID,
+		"rack_code":     rackCode,
+		"total_u":       totalU,
+		"is_new":        true,
+	})
 }
 
 // ─── Switches ─────────────────────────────────────────────────────────────────
