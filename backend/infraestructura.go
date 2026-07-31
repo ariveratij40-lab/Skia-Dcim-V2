@@ -158,17 +158,18 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
-			SELECT a.id, a.internal_code, COALESCE(a.name, a.internal_code),
-				COALESCE(m.type,'MDF'),
-				COALESCE(a.status,'active'),
-				(SELECT COUNT(*) FROM racks rk WHERE rk.mdf_idf_id = m.id) AS real_rack_count,
-				COALESCE(m.switch_count,0), COALESCE(m.ups_count,0),
-				COALESCE(a.observations,''), a.created_at
-			FROM mdf_idf m
-			JOIN assets a ON a.id = m.asset_id
-			WHERE m.tenant_id = $1
-			ORDER BY a.created_at DESC`, tenantID)
+			rows, err := db.Query(`
+				SELECT a.id, a.internal_code, COALESCE(a.name, a.internal_code),
+					COALESCE(m.type,'MDF'),
+					COALESCE(a.status,'active'),
+					(SELECT COUNT(*) FROM racks rk WHERE rk.mdf_idf_id = m.id) AS real_rack_count,
+					COALESCE(m.switch_count,0), COALESCE(m.ups_count,0),
+					COALESCE(a.observations,''), a.created_at,
+					COALESCE(a.photo_url,''), COALESCE(a.ref_image_url,'')
+				FROM mdf_idf m
+				JOIN assets a ON a.id = m.asset_id
+				WHERE m.tenant_id = $1
+				ORDER BY a.created_at DESC`, tenantID)
 		if err != nil {
 			jsonResp(w, 200, []MdfIdfRecord{})
 			return
@@ -180,7 +181,8 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			_ = rows.Scan(&rec.ID, &rec.Code, &rec.Name, &rec.Type,
 				&rec.Status,
 				&rec.RacksCount, &rec.SwitchesCount, &rec.UpsCount,
-				&rec.Observations, &rec.CreatedAt)
+				&rec.Observations, &rec.CreatedAt,
+				&rec.PhotoURL, &rec.RefImageURL)
 			rec.Tags = []string{}
 			list = append(list, rec)
 		}
@@ -406,22 +408,86 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 
 // ─── Ensure Rack para MDF/IDF ────────────────────────────────────────────────
 // POST /api/infra/mdf-idf/{id}/ensure-rack
-// Crea o recupera el rack real asociado a un MDF/IDF.
-// Devuelve: { rack_id, rack_asset_id, rack_code, total_u, is_new }
+// handleMdfIdfItem maneja rutas con ID:
+//   PUT /api/infra/mdf-idf/{id}           — actualizar campos
+//   POST /api/infra/mdf-idf/{id}/ensure-rack — crear/recuperar rack
 func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	tenantID, branchID, userID, err := getInfraSession(r)
 	if err != nil {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
 
-	// Extraer asset_id del MDF/IDF de la URL: /api/infra/mdf-idf/{id}/ensure-rack
+	// Extraer el ID del MDF/IDF de la URL
 	urlPath := r.URL.Path
 	urlPath = strings.TrimPrefix(urlPath, "/api/infra/mdf-idf/")
+	
+	// ─── PUT /api/infra/mdf-idf/{id} — Actualizar MDF/IDF ───────────────────────
+	if r.Method == http.MethodPut && !strings.Contains(urlPath, "/") {
+		mdfAssetID := strings.TrimSpace(urlPath)
+		if mdfAssetID == "" {
+			http.Error(w, `{"error":"id requerido"}`, http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			Name            string  `json:"name"`
+			Type            string  `json:"type"`
+			Status          string  `json:"status"`
+			Building        string  `json:"building"`
+			Floor           string  `json:"floor"`
+			Zone            string  `json:"zone"`
+			Address         string  `json:"address"`
+			Responsible     string  `json:"responsible"`
+			ResponsibleEmail string `json:"responsible_email"`
+			Cooling         string  `json:"cooling"`
+			PowerKva        float64 `json:"power_kva"`
+			CapacityU       int     `json:"capacity_u"`
+			Observations    string  `json:"observations"`
+			PhotoURL        string  `json:"photo_url"`
+			RefImageURL     string  `json:"ref_image_url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+		// Normalizar status
+		statusMap := map[string]string{
+			"Operativo": "active", "Atención": "maintenance",
+			"Crítico": "inactive", "Planeado": "unknown",
+		}
+		dbStatus := req.Status
+		if mapped, ok := statusMap[req.Status]; ok {
+			dbStatus = mapped
+		}
+		// Actualizar asset
+		_, err = db.Exec(`
+			UPDATE assets SET
+				name = $1, status = $2, observations = $3,
+				photo_url = $4, ref_image_url = $5,
+				updated_by = $6, updated_at = NOW()
+			WHERE id = $7 AND tenant_id = $8`,
+			req.Name, dbStatus, req.Observations,
+			req.PhotoURL, req.RefImageURL,
+			userID, mdfAssetID, tenantID)
+		if err != nil {
+			http.Error(w, "Error updating: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Actualizar tipo en mdf_idf si es válido
+		if req.Type == "MDF" || req.Type == "IDF" {
+			_, _ = db.Exec(`UPDATE mdf_idf SET type = $1, updated_at = NOW() WHERE asset_id = $2 AND tenant_id = $3`,
+				req.Type, mdfAssetID, tenantID)
+		}
+		jsonResp(w, 200, map[string]string{"status": "ok"})
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// ─── POST /api/infra/mdf-idf/{id}/ensure-rack ────────────────────────────────
 	urlPath = strings.TrimSuffix(urlPath, "/ensure-rack")
 	mdfAssetID := strings.TrimSpace(urlPath)
 	if mdfAssetID == "" {

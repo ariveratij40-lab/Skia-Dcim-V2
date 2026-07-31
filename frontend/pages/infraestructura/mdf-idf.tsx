@@ -1069,6 +1069,31 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
   const [localRef, setLocalRef] = useState(record.ref_image_url);
   const [viewer, setViewer] = useState<{ src: string; title: string } | null>(null);
 
+  // Persiste photo_url y ref_image_url en el backend
+  const persistImages = async (photoUrl: string, refUrl: string) => {
+    try {
+      await axios.put(`/api/infra/mdf-idf/${record.id}`, {
+        name: record.name,
+        type: record.type,
+        status: record.status,
+        building: record.building ?? '',
+        floor: record.floor ?? '',
+        zone: record.zone ?? '',
+        address: record.address ?? '',
+        responsible: record.responsible ?? '',
+        responsible_email: record.responsible_email ?? '',
+        cooling: record.cooling ?? '',
+        power_kva: record.power_kva ?? 0,
+        capacity_u: record.capacity_u ?? 0,
+        observations: record.observations ?? '',
+        photo_url: photoUrl,
+        ref_image_url: refUrl,
+      });
+    } catch (e) {
+      console.error('[DetailPanel] Error guardando imagen:', e);
+    }
+  };
+
   const Section = ({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) => (
     <div className="bg-slate-100/80 backdrop-blur-sm rounded-2xl border border-[#E8EBF4]/70 p-4">
       <div className="flex items-center gap-2 mb-3">
@@ -1222,8 +1247,8 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
                   label="Subir fotografía real"
                   sublabel="Foto actual del cuarto técnico o sala de telecomunicaciones"
                   value={localPhoto}
-                  onChange={url => { setLocalPhoto(url); record.photo_url = url; }}
-                  onClear={() => { setLocalPhoto(''); record.photo_url = ''; }}
+                  onChange={url => { setLocalPhoto(url); record.photo_url = url; persistImages(url, localRef); }}
+                  onClear={() => { setLocalPhoto(''); record.photo_url = ''; persistImages('', localRef); }}
                   accent={tc.iconText}
                   icon={<Camera size={14} />}
                 />
@@ -1257,8 +1282,8 @@ function DetailPanel({ record, onClose, onEdit }: DetailPanelProps) {
                   label="Subir imagen de referencia"
                   sublabel="Imagen normativa de cómo debe verse este tipo de instalación"
                   value={localRef}
-                  onChange={url => { setLocalRef(url); record.ref_image_url = url; }}
-                  onClear={() => { setLocalRef(''); record.ref_image_url = ''; }}
+                  onChange={url => { setLocalRef(url); record.ref_image_url = url; persistImages(localPhoto, url); }}
+                  onClear={() => { setLocalRef(''); record.ref_image_url = ''; persistImages(localPhoto, ''); }}
                   accent="text-violet-500"
                   icon={<BookOpen size={14} />}
                 />
@@ -1910,7 +1935,29 @@ function TabInventario({ data, setData, highlightCode, onRackBuilder }: { data: 
   const clearFilters = () => { setSearch(''); setTypeFilter(''); setStatusFilter(''); setBuildingFilter(''); };
   const hasFilters = !!(search || typeFilter || statusFilter || buildingFilter);
 
-  const handleSave = (r: MdfIdfRecord) => {
+  const handleSave = async (r: MdfIdfRecord) => {
+    // Persistir cambios en el backend (incluyendo photo_url y ref_image_url)
+    try {
+      await axios.put(`/api/infra/mdf-idf/${r.id}`, {
+        name: r.name,
+        type: r.type,
+        status: r.status,
+        building: r.building,
+        floor: r.floor,
+        zone: r.zone,
+        address: r.address,
+        responsible: r.responsible,
+        responsible_email: r.responsible_email,
+        cooling: r.cooling,
+        power_kva: r.power_kva,
+        capacity_u: r.capacity_u,
+        observations: r.observations,
+        photo_url: r.photo_url ?? '',
+        ref_image_url: r.ref_image_url ?? '',
+      });
+    } catch (e) {
+      console.error('[handleSave] Error al guardar en backend:', e);
+    }
     setData(prev => {
       const idx = prev.findIndex(x => x.id === r.id);
       if (idx >= 0) { const n = [...prev]; n[idx] = r; return n; }
