@@ -502,6 +502,39 @@ function AssetModal({ asset, assetTypes, locations, onClose, onSave }: AssetModa
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
 
+  // Tipos que son espacios físicos (cuartos técnicos) — no tienen fabricante/modelo/serie/RFID
+  const LOCATION_TYPE_CODES = ['MDF', 'IDF', 'SITE', 'ST', 'MDF_IDF'];
+  const selectedTypeCode = assetTypes.find(t => t.id === form.asset_type_id)?.code ?? '';
+  const isLocationAsset = LOCATION_TYPE_CODES.includes(selectedTypeCode);
+
+  // ── Backbones conectados (solo para MDF/IDF) ──────────────────────────────
+  const [connectedBackbones, setConnectedBackbones] = useState<any[]>([]);
+  const [allAssetsMap, setAllAssetsMap] = useState<Record<string, string>>({});
+  const [loadingBB, setLoadingBB] = useState(false);
+
+  useEffect(() => {
+    if (!isLocationAsset || !asset?.id) return;
+    setLoadingBB(true);
+    Promise.all([
+      axios.get('/api/infra/backbone'),
+      axios.get('/api/dcim/assets'),
+    ]).then(([bbRes, assetsRes]) => {
+      const allBB: any[] = bbRes.data ?? [];
+      const assetsList: any[] = assetsRes.data?.assets ?? assetsRes.data ?? [];
+      // Mapa id → nombre para resolver extremos
+      const aMap: Record<string, string> = {};
+      assetsList.forEach((a: any) => { aMap[a.id] = a.name || a.internal_code; });
+      setAllAssetsMap(aMap);
+      // Filtrar backbones donde este asset es origen o destino
+      const related = allBB.filter(
+        (bb: any) => bb.idf_origen === asset.id || bb.idf_destino === asset.id
+      );
+      setConnectedBackbones(related);
+    }).catch(() => {
+      setConnectedBackbones([]);
+    }).finally(() => setLoadingBB(false));
+  }, [isLocationAsset, asset?.id]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setFormError(''); setSaving(true);
     try {
@@ -571,14 +604,75 @@ function AssetModal({ asset, assetTypes, locations, onClose, onSave }: AssetModa
             {field('Código Interno', 'internal_code', 'text', { required: true })}
             {field('Nombre Descriptivo', 'name', 'text', { required: true })}
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            {field('Fabricante', 'manufacturer')}
-            {field('Modelo', 'model')}
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            {field('No. de Serie', 'serial_number')}
-            {field('Etiqueta RFID', 'rfid_tag')}
-          </div>
+          {!isLocationAsset && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                {field('Fabricante', 'manufacturer')}
+                {field('Modelo', 'model')}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {field('No. de Serie', 'serial_number')}
+                {field('Etiqueta RFID', 'rfid_tag')}
+              </div>
+            </>
+          )}
+          {isLocationAsset && (
+            <>
+              <div className="px-3 py-2 bg-blue-50 border border-blue-100 rounded-xl text-blue-600 text-xs flex items-center gap-2">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+                Los cuartos técnicos (MDF, IDF, Site) no requieren fabricante, modelo ni número de serie.
+              </div>
+
+              {/* ── Sección Backbones conectados ── */}
+              <div className="border border-[#E8EBF4] rounded-xl overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 border-b border-[#E8EBF4]">
+                  <GitBranch size={13} className="text-indigo-500" />
+                  <span className="text-[12px] font-bold text-slate-700">Backbones conectados</span>
+                  {loadingBB && <span className="ml-auto text-[10px] text-slate-400 animate-pulse">Cargando...</span>}
+                  {!loadingBB && connectedBackbones.length > 0 && (
+                    <span className="ml-auto text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                      {connectedBackbones.length}
+                    </span>
+                  )}
+                </div>
+                <div className="p-3">
+                  {loadingBB ? (
+                    <p className="text-[11px] text-slate-400 text-center py-2">Consultando backbones...</p>
+                  ) : connectedBackbones.length === 0 ? (
+                    <div className="text-center py-3">
+                      <p className="text-[11px] text-slate-400 mb-1">Sin backbones registrados para este cuarto técnico.</p>
+                      <p className="text-[10px] text-slate-300">Regístralos en la sección <span className="font-semibold text-indigo-400">Backbone</span> del módulo de infraestructura.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {connectedBackbones.map((bb: any) => {
+                        const esOrigen = bb.idf_origen === asset?.id;
+                        const otroExtremoId = esOrigen ? bb.idf_destino : bb.idf_origen;
+                        const otroExtremo = otroExtremoId ? (allAssetsMap[otroExtremoId] ?? otroExtremoId.slice(0, 8) + '...') : '—';
+                        return (
+                          <div key={bb.id} className="flex items-center gap-3 px-3 py-2 bg-indigo-50/60 border border-indigo-100 rounded-lg">
+                            <GitBranch size={12} className="text-indigo-400 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[11px] font-bold text-slate-700 font-mono">{bb.codigo}</p>
+                              <p className="text-[10px] text-slate-500">
+                                {bb.tipo_fibra ?? 'fiber'}
+                                {bb.hilos ? ` · ${bb.hilos} hilos` : ''}
+                                {bb.longitud ? ` · ${bb.longitud} m` : ''}
+                              </p>
+                            </div>
+                            <div className="text-right flex-shrink-0">
+                              <p className="text-[10px] text-slate-400">{esOrigen ? 'Destino' : 'Origen'}</p>
+                              <p className="text-[11px] font-semibold text-indigo-700">{otroExtremo}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-[12px] font-bold text-slate-600 mb-1">Estado</label>
