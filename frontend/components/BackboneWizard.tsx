@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { X, ChevronRight, ChevronLeft, Check, Cable, Tag, MapPin, DollarSign, Shield } from 'lucide-react';
-import { CATALOGOS } from '../data/catalogos';
+import { useState, useEffect, useRef } from 'react';
+import { X, ChevronRight, ChevronLeft, Check, Cable, Tag, MapPin, DollarSign, Shield, AlertCircle, Loader2 } from 'lucide-react';
+import axios from 'axios';
 
 export type FiberType = 'OM2' | 'OM3' | 'OM4' | 'OS1' | 'OS2' | 'UTP Cat6' | 'UTP Cat6A';
 export type JumperLen = '3 Pies' | '7 Pies' | '10 Pies' | '15 Pies' | '20 Pies' | 'Otro';
@@ -63,12 +63,69 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
   const [form, setForm] = useState<BackboneWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
 
+  // ── Catálogo de fabricantes ──────────────────────────────────────────────
+  const [manufacturers, setManufacturers] = useState<{ id: string; name: string }[]>([]);
+
+  // ── Validación de código ─────────────────────────────────────────────────
+  const [codeChecking, setCodeChecking] = useState(false);
+  const [codeError, setCodeError] = useState('');
+  const [codeSuggestion, setCodeSuggestion] = useState('');
+  const [codeAvailable, setCodeAvailable] = useState<boolean | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const set = (field: keyof BackboneWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
+  // Cargar fabricantes y sugerencia de código al montar
+  useEffect(() => {
+    // Fabricantes del catálogo
+    axios.get('/api/dcim/catalogs/manufacturers')
+      .then(res => {
+        const list = res.data?.manufacturers ?? [];
+        setManufacturers(list);
+      })
+      .catch(() => setManufacturers([]));
+
+    // Sugerencia de código inicial (solo en creación)
+    if (!initial?.codigo) {
+      axios.get('/api/infra/backbone/check')
+        .then(res => {
+          const suggestion = res.data?.suggestion ?? '';
+          if (suggestion) {
+            setForm(f => ({ ...f, codigo: suggestion }));
+            setCodeSuggestion(suggestion);
+            setCodeAvailable(true);
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
+
+  // Validar código en tiempo real con debounce 600ms
+  const handleCodeChange = (value: string) => {
+    set('codigo', value);
+    setCodeError('');
+    setCodeAvailable(null);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!value.trim()) { setCodeChecking(false); return; }
+    setCodeChecking(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await axios.get(`/api/infra/backbone/check?code=${encodeURIComponent(value)}`);
+        setCodeAvailable(res.data.code_available);
+        setCodeError(res.data.code_error ?? '');
+        setCodeSuggestion(res.data.suggestion ?? '');
+      } catch {
+        setCodeAvailable(null);
+      } finally {
+        setCodeChecking(false);
+      }
+    }, 600);
+  };
+
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.codigo && form.tipo_fibra && form.status) c.push(1);
+    if (form.codigo && form.tipo_fibra && form.status && codeAvailable !== false) c.push(1);
     if (form.hilos && form.longitud) c.push(2);
     if (form.idf_origen && form.idf_destino) c.push(3);
     if (form.integrador) c.push(4);
@@ -76,7 +133,7 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.codigo || !form.tipo_fibra) return;
+    if (!form.codigo || !form.tipo_fibra || codeAvailable === false) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -134,15 +191,91 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
       case 1: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Código del backbone', inp('codigo', 'MDF-IDF1-BB0001'), true)}</div>
+            {/* ── Campo Código con validación de unicidad ── */}
+            <div style={{ gridColumn: '1/-1', marginBottom: 14 }}>
+              {lbl('Código del backbone', true)}
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  placeholder="BB-0001"
+                  value={form.codigo}
+                  onChange={e => handleCodeChange(e.target.value)}
+                  style={{
+                    width: '100%', padding: '10px 14px', paddingRight: 40,
+                    borderRadius: 10, fontSize: '0.875rem', outline: 'none',
+                    background: '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms',
+                    border: `1.5px solid ${codeAvailable === false ? '#EF4444' : codeAvailable === true ? '#22C55E' : '#E8EBF4'}`,
+                  }}
+                  onFocus={e => e.target.style.borderColor = '#4361EE'}
+                  onBlur={e => e.target.style.borderColor = codeAvailable === false ? '#EF4444' : codeAvailable === true ? '#22C55E' : '#E8EBF4'}
+                />
+                {codeChecking && (
+                  <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }}>
+                    <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  </span>
+                )}
+                {!codeChecking && codeAvailable === true && (
+                  <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#22C55E' }}>
+                    <Check size={14} />
+                  </span>
+                )}
+                {!codeChecking && codeAvailable === false && (
+                  <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#EF4444' }}>
+                    <AlertCircle size={14} />
+                  </span>
+                )}
+              </div>
+              {/* Error de duplicado */}
+              {codeError && (
+                <div style={{ marginTop: 6, padding: '6px 10px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, fontSize: '0.75rem', color: '#DC2626', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <AlertCircle size={12} />
+                  {codeError}
+                  {codeSuggestion && codeSuggestion !== form.codigo && (
+                    <button
+                      onClick={() => { handleCodeChange(codeSuggestion); }}
+                      style={{ marginLeft: 'auto', padding: '2px 8px', background: '#4361EE', color: '#fff', border: 'none', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>
+                      Usar {codeSuggestion}
+                    </button>
+                  )}
+                </div>
+              )}
+              {/* Sugerencia de siguiente disponible (sin error) */}
+              {!codeError && codeSuggestion && codeSuggestion !== form.codigo && (
+                <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: '0.72rem', color: '#64748B' }}>Siguiente disponible:</span>
+                  <button
+                    onClick={() => handleCodeChange(codeSuggestion)}
+                    style={{ padding: '2px 8px', background: '#EEF2FF', color: '#4361EE', border: '1px solid #C7D2FE', borderRadius: 6, fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}>
+                    {codeSuggestion}
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div style={{ gridColumn: '1/-1' }}>{fld('Tipo de fibra / cable', chips(FIBER_TYPES, form.tipo_fibra, v => set('tipo_fibra', v as FiberType), FIBER_COLORS))}</div>
             <div style={{ gridColumn: '1/-1' }}>{fld('Estado', chips(BB_STATUSES, form.status, v => set('status', v as BBStatus), STATUS_COLORS))}</div>
-            <div>{fld('Marca', (
-              <select value={form.marca} onChange={e => set('marca', e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}>
-                <option value="">Seleccionar marca</option>
-                {['Panduit','Corning','Belden','CommScope','Draka','OFS','Sumitomo','Cablemas','Nexans','Prysmian'].map(m => <option key={m}>{m}</option>)}
+
+            {/* ── Campo Marca desde catálogo de Fabricantes ── */}
+            <div>
+              {lbl('Marca / Fabricante')}
+              <select
+                value={form.marca}
+                onChange={e => set('marca', e.target.value)}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: form.marca ? '#1E293B' : '#94A3B8', outline: 'none' }}
+              >
+                <option value="">Seleccionar fabricante...</option>
+                {manufacturers.length > 0
+                  ? manufacturers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)
+                  : ['Panduit','Corning','Belden','CommScope','Draka','OFS','Sumitomo','Nexans','Prysmian'].map(m => <option key={m} value={m}>{m}</option>)
+                }
               </select>
-            ))}</div>
+              {manufacturers.length === 0 && (
+                <p style={{ fontSize: '0.7rem', color: '#94A3B8', marginTop: 4 }}>
+                  Da de alta fabricantes en <strong>Catálogos → Fabricantes</strong> para personalizar esta lista.
+                </p>
+              )}
+            </div>
+
             <div>{fld('Año de instalación', inp('anio_instalacion', '2024', 'number'))}</div>
           </div>
         </div>
@@ -181,7 +314,7 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
             <div style={{ gridColumn: '1/-1' }}>{fld('Integrador / Proveedor', (
               <select value={form.integrador} onChange={e => set('integrador', e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}>
                 <option value="">Seleccionar integrador</option>
-                {CATALOGOS.integradores.map(i => <option key={i}>{i}</option>)}
+                {/* Cargado dinámicamente desde el catálogo de proveedores */}
               </select>
             ))}</div>
             <div>{fld('Orden de Compra (PO)', inp('po', 'PO-2024-001'))}</div>
@@ -198,6 +331,7 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
               ['Código', form.codigo || '—'],
               ['Tipo de fibra', form.tipo_fibra || '—'],
               ['Estado', form.status || '—'],
+              ['Marca', form.marca || '—'],
               ['Hilos / Longitud', `${form.hilos} / ${form.longitud || '—'}`],
               ['Origen → Destino', form.idf_origen && form.idf_destino ? `${form.idf_origen} → ${form.idf_destino}` : '—'],
               ['Integrador', form.integrador || '—'],
@@ -210,6 +344,11 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
               </div>
             ))}
           </div>
+          {codeAvailable === false && (
+            <div style={{ padding: 10, background: '#FEF2F2', borderRadius: 10, border: '1px solid #FECACA', fontSize: '0.8rem', color: '#DC2626', marginBottom: 12 }}>
+              ⚠ El código ingresado ya existe. Regresa a la Etapa 1 y usa el código sugerido.
+            </div>
+          )}
           <div style={{ padding: 12, background: '#FFF7ED', borderRadius: 10, border: '1px solid #FED7AA', fontSize: '0.8rem', color: '#92400E' }}>
             ✓ Puedes completar fotos, normativa y relaciones después desde el inventario.
           </div>
@@ -220,6 +359,7 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
   };
 
   const completed = completedStages();
+  const canSave = !!form.codigo && !!form.tipo_fibra && codeAvailable !== false;
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
@@ -256,13 +396,19 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
             <ChevronLeft size={16} /> Anterior
           </button>
           {stage < STAGES.length ? (
-            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: '#4361EE', color: '#fff', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button
+              onClick={() => {
+                // En etapa 1, bloquear si código no disponible
+                if (stage === 1 && codeAvailable === false) return;
+                setStage(s => Math.min(STAGES.length, s + 1));
+              }}
+              disabled={stage === 1 && codeAvailable === false}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: (stage === 1 && codeAvailable === false) ? '#CBD5E1' : '#4361EE', color: '#fff', cursor: (stage === 1 && codeAvailable === false) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.codigo || !form.tipo_fibra || saving}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.codigo || !form.tipo_fibra) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.codigo || !form.tipo_fibra) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button onClick={handleSave} disabled={!canSave || saving}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: !canSave ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: !canSave ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               {saving ? '...' : <><Check size={16} /> Guardar Backbone</>}
             </button>
           )}

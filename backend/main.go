@@ -184,6 +184,7 @@ func main() {
 
 	// Infraestructura DCIM — endpoints por módulo
 	http.HandleFunc("/api/infra/mdf-idf", handleMdfIdf)
+	http.HandleFunc("/api/infra/mdf-idf/check", handleMdfIdfCheck) // validación de duplicados en tiempo real
 	http.HandleFunc("/api/infra/mdf-idf/", handleEnsureRack) // /api/infra/mdf-idf/{id}/ensure-rack
 	http.HandleFunc("/api/infra/cert-evaluations", handleCertEvaluations)
 	http.HandleFunc("/api/infra/cert-evaluations/", handleCertEvaluationItem)
@@ -193,6 +194,7 @@ func main() {
 	http.HandleFunc("/api/infra/patch-panels", handlePatchPanels)
 	http.HandleFunc("/api/infra/ups-pdus", handleUpsPdus)
 	http.HandleFunc("/api/infra/backbone", handleBackbone)
+	http.HandleFunc("/api/infra/backbone/check", handleBackboneCheck)
 	http.HandleFunc("/api/infra/nodos", handleNodos)
 
 	// Rutas CAPEX

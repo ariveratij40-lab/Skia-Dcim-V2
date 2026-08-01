@@ -102,6 +102,52 @@ func ensureAssetType(tenantID, category, subcat string) (string, error) {
 	return id, nil
 }
 
+// suggestNextMdfCode genera el siguiente código disponible para un MDF/IDF
+// dado un código base (ej: "MDF-001" → "MDF-002", "MDF-IDF-001" → "MDF-IDF-002")
+func suggestNextMdfCode(tenantID, baseCode string) string {
+	// Obtener todos los códigos existentes del tenant
+	rows, err := db.Query(`
+		SELECT internal_code FROM assets
+		WHERE tenant_id = $1
+		ORDER BY internal_code`, tenantID)
+	if err != nil {
+		return baseCode + "-2"
+	}
+	defer rows.Close()
+	existing := map[string]bool{}
+	for rows.Next() {
+		var c string
+		_ = rows.Scan(&c)
+		existing[strings.ToLower(c)] = true
+	}
+
+	// Extraer prefijo y número del código base
+	// Ejemplos: MDF-001, IDF-001, MDF-IDF-001, MDF-IMGTEST
+	prefix := baseCode
+	num := 1
+	// Intentar separar el último segmento numérico
+	for i := len(baseCode) - 1; i >= 0; i-- {
+		if baseCode[i] == '-' {
+			suffix := baseCode[i+1:]
+			var n int
+			if cnt, _ := fmt.Sscanf(suffix, "%d", &n); cnt == 1 {
+				prefix = baseCode[:i]
+				num = n + 1
+			}
+			break
+		}
+	}
+
+	// Buscar el siguiente número libre
+	for i := num; i <= num+999; i++ {
+		candidate := fmt.Sprintf("%s-%03d", prefix, i)
+		if !existing[strings.ToLower(candidate)] {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("%s-%d", prefix, num)
+}
+
 func jsonResp(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -147,6 +193,50 @@ type MdfIdfRecord struct {
 	Observations     string    `json:"observations"`
 	Tags             []string  `json:"tags"`
 	CreatedAt        time.Time `json:"created_at"`
+}
+
+// handleMdfIdfCheck — GET /api/infra/mdf-idf/check?code=X&name=Y
+// Valida en tiempo real si un código o nombre ya existe para el tenant
+func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
+	tenantID, _, _, err := getInfraSession(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+
+	result := map[string]interface{}{
+		"code_available": true,
+		"name_available": true,
+		"code_error":     "",
+		"name_error":     "",
+		"suggestion":     "",
+	}
+
+	if code != "" {
+		var count int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
+			tenantID, code).Scan(&count)
+		if count > 0 {
+			result["code_available"] = false
+			result["code_error"] = fmt.Sprintf("El código '%s' ya existe. Elige uno diferente.", code)
+			result["suggestion"] = suggestNextMdfCode(tenantID, code)
+		}
+	}
+	if name != "" {
+		var count int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(name)=LOWER($2)`,
+			tenantID, name).Scan(&count)
+		if count > 0 {
+			result["name_available"] = false
+			result["name_error"] = fmt.Sprintf("El nombre '%s' ya existe. Elige uno diferente.", name)
+			if result["suggestion"] == "" {
+				result["suggestion"] = suggestNextMdfCode(tenantID, code)
+			}
+		}
+	}
+	jsonResp(w, 200, result)
 }
 
 func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
@@ -229,6 +319,42 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Name == "" {
 			req.Name = req.Code
+		}
+
+		// ─── Validar unicidad de código por tenant ───────────────────────────────
+		var codeExists int
+		_ = db.QueryRow(`
+			SELECT COUNT(*) FROM assets
+			WHERE tenant_id = $1 AND LOWER(internal_code) = LOWER($2)`,
+			tenantID, req.Code).Scan(&codeExists)
+		if codeExists > 0 {
+			// Sugerir el siguiente código disponible
+			nextCode := suggestNextMdfCode(tenantID, req.Code)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":      "duplicate_code",
+				"message":    fmt.Sprintf("El código '%s' ya existe en esta organización.", req.Code),
+				"suggestion": nextCode,
+			})
+			return
+		}
+		// ─── Validar unicidad de nombre por tenant ────────────────────────────────
+		var nameExists int
+		_ = db.QueryRow(`
+			SELECT COUNT(*) FROM assets
+			WHERE tenant_id = $1 AND LOWER(name) = LOWER($2)`,
+			tenantID, req.Name).Scan(&nameExists)
+		if nameExists > 0 {
+			nextCode := suggestNextMdfCode(tenantID, req.Code)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":      "duplicate_name",
+				"message":    fmt.Sprintf("El nombre '%s' ya existe en esta organización.", req.Name),
+				"suggestion": nextCode,
+			})
+			return
 		}
 
 		atID, _ := ensureAssetType(tenantID, "MDF_IDF", "network")
@@ -412,6 +538,14 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 //   PUT /api/infra/mdf-idf/{id}           — actualizar campos
 //   POST /api/infra/mdf-idf/{id}/ensure-rack — crear/recuperar rack
 func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
+	// — Ruta especial: GET /api/infra/mdf-idf/check?code=X&name=Y
+	// El mux de Go enruta /api/infra/mdf-idf/check a este handler porque el patrón
+	// "/api/infra/mdf-idf/" tiene mayor precedencia que "/api/infra/mdf-idf/check".
+	if r.URL.Path == "/api/infra/mdf-idf/check" {
+		handleMdfIdfCheck(w, r)
+		return
+	}
+
 	tenantID, branchID, userID, err := getInfraSession(r)
 	if err != nil {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
@@ -1090,6 +1224,24 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 			req.LinkType = "fiber"
 		}
 
+		// ─── Validar unicidad de código por tenant ───────────────────────────────
+		if req.InternalCode != "" {
+			var codeExists int
+			_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
+				tenantID, req.InternalCode).Scan(&codeExists)
+			if codeExists > 0 {
+				nextCode := suggestNextMdfCode(tenantID, req.InternalCode)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error":      "duplicate_code",
+					"message":    fmt.Sprintf("El código '%s' ya existe en esta organización.", req.InternalCode),
+					"suggestion": nextCode,
+				})
+				return
+			}
+		}
+
 		atID, _ := ensureAssetType(tenantID, "BACKBONE", "network")
 		assetID := generateID()
 		_, err = db.Exec(`
@@ -1127,6 +1279,50 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleBackboneCheck — GET /api/infra/backbone/check?code=X
+// Valida unicidad de código y sugiere el siguiente disponible
+func handleBackboneCheck(w http.ResponseWriter, r *http.Request) {
+	tenantID, _, _, err := getInfraSession(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+
+	result := map[string]interface{}{
+		"code_available": true,
+		"code_error":     "",
+		"suggestion":     "",
+	}
+
+	if code != "" {
+		var count int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
+			tenantID, code).Scan(&count)
+		if count > 0 {
+			result["code_available"] = false
+			result["code_error"] = fmt.Sprintf("El código '%s' ya existe. Elige uno diferente.", code)
+			result["suggestion"] = suggestNextMdfCode(tenantID, code)
+		} else {
+			// Sugerir el siguiente aunque esté disponible (para referencia)
+			result["suggestion"] = suggestNextMdfCode(tenantID, code)
+		}
+	} else {
+		// Sin código: sugerir el primero disponible basado en naming_rules
+		var prefix string
+		var seqDigits int
+		err2 := db.QueryRow(`SELECT prefix, seq_digits FROM naming_rules WHERE tenant_id=$1 AND asset_type_code='BACKBONE' LIMIT 1`,
+			tenantID).Scan(&prefix, &seqDigits)
+		if err2 != nil || prefix == "" {
+			prefix = "BB"
+			seqDigits = 4
+		}
+		baseCode := fmt.Sprintf("%s-%0*d", prefix, seqDigits, 1)
+		result["suggestion"] = suggestNextMdfCode(tenantID, baseCode)
+	}
+	jsonResp(w, 200, result)
 }
 
 // ─── Nodos ────────────────────────────────────────────────────────────────────
