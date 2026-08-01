@@ -65,6 +65,29 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
 
   // ── Catálogo de fabricantes ──────────────────────────────────────────────
   const [manufacturers, setManufacturers] = useState<{ id: string; name: string }[]>([]);
+  const [showNewMfModal, setShowNewMfModal] = useState(false);
+  const [newMfName, setNewMfName] = useState('');
+  const [newMfSaving, setNewMfSaving] = useState(false);
+  const [newMfError, setNewMfError] = useState('');
+
+  const handleCreateManufacturer = async () => {
+    const name = newMfName.trim();
+    if (!name) { setNewMfError('El nombre es obligatorio.'); return; }
+    setNewMfSaving(true);
+    setNewMfError('');
+    try {
+      const res = await axios.post('/api/dcim/catalogs/manufacturers', { name });
+      const created = { id: res.data?.id ?? name, name };
+      setManufacturers(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      set('marca', name);
+      setShowNewMfModal(false);
+      setNewMfName('');
+    } catch (e: any) {
+      setNewMfError(e?.response?.data?.error ?? 'Error al guardar el fabricante.');
+    } finally {
+      setNewMfSaving(false);
+    }
+  };
 
   // ── Validación de código ─────────────────────────────────────────────────
   const [codeChecking, setCodeChecking] = useState(false);
@@ -257,7 +280,15 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
 
             {/* ── Campo Marca desde catálogo de Fabricantes ── */}
             <div>
-              {lbl('Marca / Fabricante')}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                {lbl('Marca / Fabricante')}
+                <button
+                  onClick={() => { setShowNewMfModal(true); setNewMfName(''); setNewMfError(''); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '2px 8px', background: '#EEF2FF', color: '#4361EE', border: '1px solid #C7D2FE', borderRadius: 6, fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  + Nuevo
+                </button>
+              </div>
               <select
                 value={form.marca}
                 onChange={e => set('marca', e.target.value)}
@@ -269,10 +300,45 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
                   : ['Panduit','Corning','Belden','CommScope','Draka','OFS','Sumitomo','Nexans','Prysmian'].map(m => <option key={m} value={m}>{m}</option>)
                 }
               </select>
-              {manufacturers.length === 0 && (
-                <p style={{ fontSize: '0.7rem', color: '#94A3B8', marginTop: 4 }}>
-                  Da de alta fabricantes en <strong>Catálogos → Fabricantes</strong> para personalizar esta lista.
-                </p>
+
+              {/* ── Mini-modal inline: Nuevo Fabricante ── */}
+              {showNewMfModal && (
+                <div style={{ marginTop: 10, padding: 14, background: '#F8FAFF', borderRadius: 12, border: '1.5px solid #C7D2FE', boxShadow: '0 4px 16px rgba(67,97,238,0.10)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#4361EE' }}>Nuevo Fabricante</span>
+                    <button onClick={() => setShowNewMfModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 2 }}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Ej: Panduit, Corning, Belden..."
+                    value={newMfName}
+                    onChange={e => { setNewMfName(e.target.value); setNewMfError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleCreateManufacturer(); if (e.key === 'Escape') setShowNewMfModal(false); }}
+                    autoFocus
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: `1.5px solid ${newMfError ? '#EF4444' : '#C7D2FE'}`, fontSize: '0.85rem', background: '#fff', color: '#1E293B', outline: 'none', marginBottom: 8 }}
+                  />
+                  {newMfError && (
+                    <div style={{ fontSize: '0.72rem', color: '#EF4444', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <AlertCircle size={11} /> {newMfError}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={() => setShowNewMfModal(false)}
+                      style={{ padding: '6px 14px', borderRadius: 8, border: '1.5px solid #E8EBF4', background: '#fff', color: '#64748B', fontSize: '0.78rem', fontWeight: 500, cursor: 'pointer' }}
+                    >Cancelar</button>
+                    <button
+                      onClick={handleCreateManufacturer}
+                      disabled={newMfSaving || !newMfName.trim()}
+                      style={{ padding: '6px 14px', borderRadius: 8, border: 'none', background: newMfSaving || !newMfName.trim() ? '#CBD5E1' : '#4361EE', color: '#fff', fontSize: '0.78rem', fontWeight: 700, cursor: newMfSaving || !newMfName.trim() ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                    >
+                      {newMfSaving ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Check size={12} />}
+                      {newMfSaving ? 'Guardando...' : 'Guardar'}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
