@@ -35,11 +35,19 @@ Editar `.env.staging`:
 
 ```bash
 # Base de datos
+# NOTA (C-5, 2026-08-05): backend/main.go solo lee DATABASE_URL
+# (os.Getenv("DATABASE_URL")); las claves DB_HOST/DB_USER/DB_PASSWORD/DB_NAME
+# de aquí abajo NO las lee el binario -- se conservan por compatibilidad con
+# otros scripts/tooling, pero configurar solo estas NO cambia con qué rol se
+# conecta el API. Editar DATABASE_URL en docker-compose.yml (o en el .env que
+# lo alimente). El API debe correr como `skia_runtime` (sin privilegios
+# elevados), nunca como `skia_user` (reservado para tareas administrativas:
+# backups, migraciones, ALTER ROLE, etc. -- ver ops/2026-08-05_*.sql).
 DB_HOST=skia_postgres_staging
 DB_PORT=5432
 DB_NAME=skia_db
-DB_USER=skia_user
-DB_PASSWORD=skia_dev_pass  # Cambiar en producción
+DB_USER=skia_runtime
+DB_PASSWORD=${SKIA_RUNTIME_DB_PASSWORD}  # nunca hardcodear; ver gestor de secretos (A-2)
 
 # Redis
 REDIS_HOST=skia_redis

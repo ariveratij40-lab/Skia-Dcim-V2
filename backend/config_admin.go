@@ -377,10 +377,40 @@ func handleRFIDReaders(w http.ResponseWriter, r *http.Request) {
 // /api/admin/users  (GET + POST + PUT + DELETE)
 // ==========================================
 
+// adminUserRoles enumera los nombres de rol válidos para /api/admin/users.
+// Server-side allowlist: nunca confiar en el valor crudo enviado por el cliente
+// para construir un lookup de role_id (invariante #4 - autorización server-side).
+var adminUserRoles = map[string]bool{"viewer": true, "operator": true, "admin": true}
+
+// resolveRoleID resuelve un nombre de rol a su UUID dentro del alcance del tenant,
+// prefiriendo un rol específico del tenant sobre uno global (tenant_id IS NULL).
+// Corrige A-8: la tabla user_roles nunca tuvo columna `role`, solo `role_id` (FK a roles).
+func resolveRoleID(tenantID, roleName string) (string, error) {
+	var roleID string
+	err := db.QueryRow(
+		`SELECT id FROM roles
+		 WHERE name = $1 AND (tenant_id = $2 OR tenant_id IS NULL)
+		 ORDER BY tenant_id NULLS LAST
+		 LIMIT 1`,
+		roleName, tenantID,
+	).Scan(&roleID)
+	return roleID, err
+}
+
 func handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	sess, err := getSession(r)
 	if err != nil {
 		jsonErr(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// SEGURIDAD: /api/admin/users administra membresías y roles de todo el tenant;
+	// solo el rol "admin" puede leerlo o modificarlo. Antes de este fix no había
+	// ninguna verificación de rol aquí -- el bug de SQL de A-8 hacía fallar el
+	// PUT antes de llegar a esta lógica, pero arreglar solo el SQL sin agregar
+	// esta verificación habría abierto una escalación de privilegios real
+	// (cualquier usuario autenticado pudiendo auto-asignarse "admin").
+	if sess.Role != "admin" {
+		jsonErr(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -391,11 +421,11 @@ func handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	case "GET":
 		rows, err := db.Query(
 			`SELECT u.id, u.email, u.name, u.created_at,
-			        COALESCE(ur.role, 'viewer') as role,
-			        COALESCE(ut.status, 'active') as status
+			        COALESCE(r.name, 'viewer') as role
 			 FROM users u
 			 JOIN user_tenants ut ON ut.user_id = u.id AND ut.tenant_id = $1
 			 LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.tenant_id = $1
+			 LEFT JOIN roles r ON r.id = ur.role_id
 			 ORDER BY u.name`,
 			sess.TenantID,
 		)
@@ -409,13 +439,17 @@ func handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			Email     string `json:"email"`
 			Name      string `json:"name"`
 			Role      string `json:"role"`
+			// Status: user_tenants no tiene columna status (A-9). No existe hoy
+			// un mecanismo de desactivación de membresía por tenant; se reporta
+			// "active" de forma fija hasta que se diseñe esa capacidad.
 			Status    string `json:"status"`
 			CreatedAt string `json:"createdAt"`
 		}
 		var list []UserRow
 		for rows.Next() {
 			var row UserRow
-			rows.Scan(&row.ID, &row.Email, &row.Name, &row.CreatedAt, &row.Role, &row.Status)
+			row.Status = "active"
+			rows.Scan(&row.ID, &row.Email, &row.Name, &row.CreatedAt, &row.Role)
 			list = append(list, row)
 		}
 		if list == nil {
@@ -429,20 +463,50 @@ func handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			Role   string `json:"role"`
-			Status string `json:"status"`
+			Role string `json:"role"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			jsonErr(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
 		if body.Role != "" {
-			db.Exec(
-				`INSERT INTO user_roles (user_id, tenant_id, role)
-				 VALUES ($1, $2, $3)
-				 ON CONFLICT (user_id, tenant_id) DO UPDATE SET role = $3`,
-				userID, sess.TenantID, body.Role,
-			)
+			if !adminUserRoles[body.Role] {
+				jsonErr(w, "Invalid role: "+body.Role, http.StatusBadRequest)
+				return
+			}
+			roleID, err := resolveRoleID(sess.TenantID, body.Role)
+			if err != nil {
+				jsonErr(w, "Unknown role for this tenant: "+body.Role, http.StatusBadRequest)
+				return
+			}
+			tx, err := db.Begin()
+			if err != nil {
+				jsonErr(w, "DB error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			// user_roles.role_id es parte de la unique key (user_id, tenant_id, role_id);
+			// el modelo de negocio de este endpoint asume un solo rol activo por
+			// tenant, así que se reemplaza explícitamente en vez de solo insertar.
+			if _, err := tx.Exec(
+				`DELETE FROM user_roles WHERE user_id = $1 AND tenant_id = $2`,
+				userID, sess.TenantID,
+			); err != nil {
+				tx.Rollback()
+				jsonErr(w, "DB error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if _, err := tx.Exec(
+				`INSERT INTO user_roles (user_id, tenant_id, role_id) VALUES ($1, $2, $3)`,
+				userID, sess.TenantID, roleID,
+			); err != nil {
+				tx.Rollback()
+				jsonErr(w, "DB error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := tx.Commit(); err != nil {
+				jsonErr(w, "DB error: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 

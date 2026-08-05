@@ -82,8 +82,14 @@ services:
       DB_HOST: skia_postgres_staging
       DB_PORT: 5432
       DB_NAME: skia_db
-      DB_USER: skia_user
-      DB_PASSWORD: skia_dev_pass
+      # C-4 / C-5: el API corre como skia_runtime (sin SUPERUSER/BYPASSRLS/
+      # CREATEROLE/CREATEDB), no como skia_user. skia_user queda reservado
+      # para operaciones administrativas/migraciones (ver ops/2026-08-05_*.sql).
+      DB_USER: skia_runtime
+      # La contraseña de skia_runtime NO debe quedar hardcodeada en este
+      # archivo versionado (ver A-2, gestión de secretos, aún abierto).
+      # Debe proveerse vía variable de entorno del host/orquestador.
+      DB_PASSWORD: ${SKIA_RUNTIME_DB_PASSWORD:?SKIA_RUNTIME_DB_PASSWORD no está definida}
       REDIS_HOST: skia_redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: skia_redis_dev
@@ -97,7 +103,13 @@ services:
       GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-https://skia.iamet.mx/api/auth/google/callback}
       FRONTEND_URL: ${FRONTEND_URL:-https://skia.iamet.mx}
       # DATABASE_URL — NUNCA usar localhost; siempre el nombre del contenedor
-      DATABASE_URL: postgres://skia_user:skia_dev_pass@skia_postgres_staging:5432/skia_db?sslmode=disable
+      # C-5: esta es la variable que backend/main.go realmente lee para
+      # conectarse (os.Getenv("DATABASE_URL"); ver main.go:103). Las claves
+      # DB_HOST/DB_USER/DB_PASSWORD/DB_NAME de arriba NO son leídas por el
+      # binario Go -- son configuración muerta. Verificar el rol efectivo
+      # de conexión debe hacerse contra ESTA variable (o contra
+      # pg_stat_activity en vivo), no contra DB_USER.
+      DATABASE_URL: postgres://skia_runtime:${SKIA_RUNTIME_DB_PASSWORD:?SKIA_RUNTIME_DB_PASSWORD no está definida}@skia_postgres_staging:5432/skia_db?sslmode=disable
     volumes:
       - skia_uploads:/app/uploads
     ports:
