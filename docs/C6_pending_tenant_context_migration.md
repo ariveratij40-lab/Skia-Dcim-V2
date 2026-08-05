@@ -1,0 +1,78 @@
+# C-6 — checklist de migración a `TenantDB` (RequireTenantTx)
+
+Estado: **listAssets** y **getAsset** (`dcim_assets.go`) ya migrados y probados
+en este patch. El resto de rutas que tocan `assets`/`asset_logs`/
+`asset_relationships` sigue usando `h.DB`/`db` directo — **no reactivar
+`FORCE ROW LEVEL SECURITY` en esas 3 tablas hasta cerrar el Grupo A.**
+
+## Grupo A — bloqueante para reactivar el piloto de RLS (assets/asset_logs/asset_relationships)
+
+Organizado por archivo. Cada línea es, al momento de este commit, una
+llamada a `h.DB.*`/`db.*` que tocaría una tabla con RLS.
+
+- **dcim_assets.go**
+  - `updateAsset` (PUT /api/dcim/assets/{id}): `EXISTS` de verificación (línea ~1119), `UPDATE assets` (línea ~1230).
+  - `deleteAsset` (DELETE /api/dcim/assets/{id}): `DELETE FROM assets` (línea ~1255).
+  - `HandleRFID` (GET, lookup por tag RFID): `SELECT ... FROM assets` y `SELECT ... FROM asset_logs` (líneas ~1327, ~1422).
+  - `HandleLocationsManage` (borrado de ubicación): `SELECT COUNT(*) FROM assets WHERE location_id=...` antes de permitir el borrado (línea ~1792).
+  - **`createAsset` (POST) NO entra en este grupo**: ya usa `BeginTenantTx` propio. Si se decide unificarlo bajo `RequireTenantTx` más adelante, hay que quitarle su `BeginTenantTx`/`Commit`/`Rollback` interno primero (ver nota de "transacciones anidadas" más abajo) — es un cambio de mayor riesgo por la lógica de tablas satélite (`racks`, `switches`, `ups`, `pdus`, `patch_panels`, `mdf_idf`) y no se hizo en este pase.
+
+- **dashboard.go** (`handleDashboardStats`): dos `COUNT(*) FROM assets` (líneas ~108, ~115) y una consulta de listado (línea ~226) que alimentan el widget de resumen — es probablemente la ruta más visible si queda rota.
+
+- **ai_chat.go**: `SELECT COUNT(*) FROM assets` para el contexto que se le pasa al asistente de IA (línea ~87).
+
+- **duplicate_detector.go** (`DetectDuplicates`, `insertAsset`, `updateAsset`): usado por el pipeline de importación para detectar/insertar/actualizar activos (líneas ~56, ~285, ~335). Riesgo: si queda sin migrar y se reactiva RLS, la detección de duplicados dejaría de encontrar duplicados reales (falso negativo, no falso positivo) — y las inserciones vía este camino violarían `WITH CHECK` con error.
+
+- **import_upload_handlers.go**: `INSERT INTO assets` en el flujo de carga masiva (línea ~360).
+
+- **infraestructura.go**: el módulo más grande pendiente — ~15 sitios (líneas ~110, 219, 229, 327, 345, 363, 508, 598, 682, 815, 976, 1110, 1230, 1248, 1302, 1416), mezcla de `INSERT`/`UPDATE`/`COUNT` sobre `assets` para los formularios de infraestructura (MDF/IDF, backbone, etc.).
+
+- **inventory_clear_handler.go**: `COUNT`/`DELETE FROM assets` del botón "vaciar inventario del tenant" (líneas ~95, ~99).
+
+- **rack_layout.go**: validación y guardado de layout de rack — `SELECT`/`UPDATE` sobre `assets` (líneas ~168, ~262, ~276, ~280).
+
+**Antes de reactivar RLS en estas 3 tablas:** migrar (o al menos auditar
+explícitamente) cada punto de este grupo, y correr
+`go run ./tools/tenant_db_lint backend/*.go` — debe salir limpio para los
+archivos de este grupo (se pueden exceptuar con `-allow` los que
+deliberadamente se dejen fuera, mencionando por qué).
+
+## Grupo B — hallazgo de alcance, no bloqueante hoy
+
+Al correr una búsqueda amplia de `db.Query*`/`db.Exec*`/`h.DB.Query*`/
+`h.DB.Exec*` en todo `backend/*.go` (sin filtrar por tabla), aparecen
+**más de 200 sitios en al menos 15 archivos** (`config_admin.go`,
+`capex.go`, `cert_evaluations.go`, `google_oauth.go`, `main.go`,
+`migrations.go`, `report_generator.go`, los `import_*.go`, etc.). Esto no
+es un problema hoy porque **RLS solo existe (y está desactivado) en 3
+tablas** — pero es la evidencia concreta de que el objetivo más amplio de
+C-2 ("extender RLS a todas las tablas con tenant_id") no se puede lograr
+migrando sitio por sitio a mano como se hizo aquí con 2 rutas. A esa
+escala, `RequireTenantTx` + el lint estático dejan de ser algo deseable y
+pasan a ser prerrequisito: sin un mecanismo sistemático (o una reescritura
+más amplia por capas/repositorio), extender RLS tabla por tabla implicará
+tocar la mayoría del backend, no un módulo aislado.
+
+## Nota sobre transacciones anidadas (`createAsset`)
+
+`createAsset` seguirá usando su propio `BeginTenantTx(r.Context(), h.DB, ...)`
+mientras no se envuelva su ruta con `RequireTenantTx`. **No hay que
+envolver `HandleAssets` completo (GET+POST) con `RequireTenantTx`** como se
+hizo para `HandleAssetByID`/GET — eso abriría una segunda transacción
+desconectada de la primera. Si en el futuro se decide unificar, la función
+`createAsset` debe dejar de llamar a `BeginTenantTx`/`tx.Commit()` por su
+cuenta y en su lugar tomar el `TenantDB` (más precisamente, en ese caso
+convendría exponer también el `*sql.Tx` real desde el contexto para
+`generateInternalCode(tx *sql.Tx, ...)`, que hoy depende del tipo concreto,
+no de la interfaz `TenantDB`) del contexto que ponga `RequireTenantTx`.
+
+## Rutas de streaming / larga duración (mencionadas, no resueltas aquí)
+
+`report_generator.go` (`GenerateExcelReport`, `GenerateCSVReport`,
+`GenerateJSONReport`) no toca las tablas del piloto de RLS hoy, pero si en
+el futuro genera reportes de `assets`, no debe envolverse con
+`RequireTenantTx` tal cual está escrito (mantendría una transacción abierta
+durante todo el streaming del archivo). Estrategia sugerida cuando aplique:
+leer los datos necesarios dentro de una transacción corta con contexto de
+tenant, cerrarla, y recién empezar a escribir el archivo de salida con los
+datos ya en memoria.

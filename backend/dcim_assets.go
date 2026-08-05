@@ -37,47 +37,47 @@ type Location struct {
 }
 
 type Asset struct {
-	ID              string     `json:"id"`
-	TenantID        string     `json:"tenant_id"`
-	BranchID        string     `json:"branch_id"`
-	AssetTypeID     string     `json:"asset_type_id"`
-	AssetTypeCode   string     `json:"asset_type_code"`
-	AssetTypeName   string     `json:"asset_type_name"`
-	LocationID      *string    `json:"location_id"`
-	LocationName    *string    `json:"location_name"`
-	InternalCode    string     `json:"internal_code"`
-	Name            string     `json:"name"`
-	SerialNumber    *string    `json:"serial_number"`
-	Model           *string    `json:"model"`
-	Manufacturer    *string    `json:"manufacturer"`
-	ManufacturerID  *string    `json:"manufacturer_id"`
-	ModelID         *string    `json:"model_id"`
-	ProviderID      *string    `json:"provider_id"`
-	Status          string     `json:"status"`
-	InventoryStatus *string    `json:"inventory_status"`
-	RFIDTag         *string    `json:"rfid_tag"`
-	QRCode          *string    `json:"qr_code"`
-	InstallYear     *int       `json:"install_year"`
-	PurchaseDate    *string    `json:"purchase_date"`
-	WarrantyExpiry  *string    `json:"warranty_expiry"`
-	CostUSD         *float64   `json:"cost_usd"`
-	Observations    *string    `json:"observations"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID              string    `json:"id"`
+	TenantID        string    `json:"tenant_id"`
+	BranchID        string    `json:"branch_id"`
+	AssetTypeID     string    `json:"asset_type_id"`
+	AssetTypeCode   string    `json:"asset_type_code"`
+	AssetTypeName   string    `json:"asset_type_name"`
+	LocationID      *string   `json:"location_id"`
+	LocationName    *string   `json:"location_name"`
+	InternalCode    string    `json:"internal_code"`
+	Name            string    `json:"name"`
+	SerialNumber    *string   `json:"serial_number"`
+	Model           *string   `json:"model"`
+	Manufacturer    *string   `json:"manufacturer"`
+	ManufacturerID  *string   `json:"manufacturer_id"`
+	ModelID         *string   `json:"model_id"`
+	ProviderID      *string   `json:"provider_id"`
+	Status          string    `json:"status"`
+	InventoryStatus *string   `json:"inventory_status"`
+	RFIDTag         *string   `json:"rfid_tag"`
+	QRCode          *string   `json:"qr_code"`
+	InstallYear     *int      `json:"install_year"`
+	PurchaseDate    *string   `json:"purchase_date"`
+	WarrantyExpiry  *string   `json:"warranty_expiry"`
+	CostUSD         *float64  `json:"cost_usd"`
+	Observations    *string   `json:"observations"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 	// Asignación de rack (se rellena en el listado vía LEFT JOIN)
-	RackID          *string    `json:"rack_id"`
-	RackUnit        *int       `json:"rack_unit"`
+	RackID   *string `json:"rack_id"`
+	RackUnit *int    `json:"rack_unit"`
 }
 
 // TechnicalData contiene los campos específicos de la tabla satélite según el tipo de activo.
 // Solo se usan los campos relevantes al tipo; el resto se ignora.
 type TechnicalData struct {
 	// RACK
-	TotalU    *int     `json:"total_u"`
-	HeightMM  *int     `json:"height_mm"`
-	WidthMM   *int     `json:"width_mm"`
-	DepthMM   *int     `json:"depth_mm"`
-	PowerKW   *float64 `json:"power_kw"`
+	TotalU   *int     `json:"total_u"`
+	HeightMM *int     `json:"height_mm"`
+	WidthMM  *int     `json:"width_mm"`
+	DepthMM  *int     `json:"depth_mm"`
+	PowerKW  *float64 `json:"power_kw"`
 	// SWITCH
 	PortCount    *int    `json:"port_count"`
 	UplinkCount  *int    `json:"uplink_count"`
@@ -94,10 +94,10 @@ type TechnicalData struct {
 	PortType *string `json:"port_type"`
 	// MDF/IDF
 	MDFType         *string `json:"mdf_type"`
-	RackCount        *int    `json:"rack_count"`
-	PatchPanelCount  *int    `json:"patch_panel_count"`
-	SwitchCount      *int    `json:"switch_count"`
-	UPSCount         *int    `json:"ups_count"`
+	RackCount       *int    `json:"rack_count"`
+	PatchPanelCount *int    `json:"patch_panel_count"`
+	SwitchCount     *int    `json:"switch_count"`
+	UPSCount        *int    `json:"ups_count"`
 }
 
 type CreateAssetRequest struct {
@@ -223,7 +223,12 @@ func (h *DCIMHandler) HandleAssets(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.Method {
 	case http.MethodGet:
-		h.listAssets(w, r)
+		// C-6: listAssets solo lee el TenantDB del contexto que este
+		// middleware inyecta -- no usa h.DB directamente. createAsset
+		// (POST) NO se envuelve aquí porque ya abre su propia transacción
+		// vía BeginTenantTx (INV-DCM-0013); envolverlo también abriría una
+		// segunda transacción anidada e innecesaria.
+		RequireTenantTx(h.DB, h.listAssets)(w, r)
 	case http.MethodPost:
 		h.createAsset(w, r)
 	default:
@@ -243,7 +248,12 @@ func (h *DCIMHandler) HandleAssetByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		h.getAsset(w, r, assetID)
+		// C-6: getAsset usa el TenantDB del contexto. updateAsset/deleteAsset
+		// (PUT/DELETE) TODAVIA usan h.DB directamente -- quedan pendientes
+		// en el checklist de migración (ver informe de auditoría, C-6).
+		RequireTenantTx(h.DB, func(w http.ResponseWriter, r *http.Request) {
+			h.getAsset(w, r, assetID)
+		})(w, r)
 	case http.MethodPut:
 		h.updateAsset(w, r, assetID)
 	case http.MethodDelete:
@@ -441,10 +451,10 @@ func (h *DCIMHandler) HandleHierarchy(w http.ResponseWriter, r *http.Request) {
 		Zones       []Zone `json:"zones"`
 	}
 	type Building struct {
-		ID       string  `json:"id"`
-		Name     string  `json:"name"`
-		Status   string  `json:"status"`
-		Floors   []Floor `json:"floors"`
+		ID     string  `json:"id"`
+		Name   string  `json:"name"`
+		Status string  `json:"status"`
+		Floors []Floor `json:"floors"`
 	}
 
 	// Obtener buildings del branch
@@ -526,7 +536,7 @@ func (h *DCIMHandler) HandleHierarchy(w http.ResponseWriter, r *http.Request) {
 // ==========================================
 func (h *DCIMHandler) generateInternalCode(tx *sql.Tx, tenantID, branchID, assetTypeCode string) (string, error) {
 	// Obtener la regla de nomenclatura con bloqueo exclusivo (FOR UPDATE)
-		var prefix, separator string
+	var prefix, separator string
 	var seqDigits, lastSeq int
 	var includeBranch bool
 	var customSeg1, customSeg2 sql.NullString
@@ -583,7 +593,7 @@ func (h *DCIMHandler) generateInternalCode(tx *sql.Tx, tenantID, branchID, asset
 		}
 	}
 
-		// Formatear secuencial con padding
+	// Formatear secuencial con padding
 	seqStr := fmt.Sprintf("%0*d", seqDigits, newSeq)
 	// Construir el código
 	parts := []string{prefix}
@@ -616,6 +626,16 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 	_, tenantID, branchID, err := h.getSessionContext(r)
 	if err != nil {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	// C-6: esta tabla tiene RLS+FORCE; sin el TenantDB del contexto (que
+	// solo existe si se pasó por RequireTenantTx) la consulta vería 0 filas
+	// de forma silenciosa. Mejor fallar explícito con 500 que devolver una
+	// lista vacía que parece "el tenant no tiene activos".
+	tdb, ok := TenantDBFromContext(r.Context())
+	if !ok {
+		log.Printf("listAssets: falta TenantDB en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -666,7 +686,7 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 
 	query += ` ORDER BY a.internal_code`
 
-	rows, err := h.DB.Query(query, args...)
+	rows, err := tdb.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 		return
@@ -738,7 +758,7 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		FROM imported_assets
 		WHERE tenant_id = $1
 	`
-	importedRows, err := h.DB.Query(importedQuery, tenantID, branchID)
+	importedRows, err := tdb.QueryContext(r.Context(), importedQuery, tenantID, branchID)
 	if err == nil {
 		defer importedRows.Close()
 		for importedRows.Next() {
@@ -784,9 +804,15 @@ func (h *DCIMHandler) getAsset(w http.ResponseWriter, r *http.Request, assetID s
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+	tdb, ok := TenantDBFromContext(r.Context())
+	if !ok {
+		log.Printf("getAsset: falta TenantDB en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
+		return
+	}
 
 	var a Asset
-	err = h.DB.QueryRow(`
+	err = tdb.QueryRowContext(r.Context(), `
 		SELECT a.id, a.tenant_id, a.branch_id,
 		       a.asset_type_id, at.code, at.name AS type_name,
 		       a.location_id, l.name AS location_name,
@@ -1302,20 +1328,20 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 
 	// Buscar el activo por rfid_tag o qr_code (INV-TRK-0001: único por tenant)
 	type RFIDAsset struct {
-		ID             string  `json:"id"`
-		InternalCode   string  `json:"internal_code"`
-		Name           string  `json:"name"`
-		AssetTypeCode  string  `json:"asset_type_code"`
-		AssetTypeName  string  `json:"asset_type_name"`
-		Status         string  `json:"status"`
-		Manufacturer   *string `json:"manufacturer"`
-		Model          *string `json:"model"`
-		SerialNumber   *string `json:"serial_number"`
-		LocationName   *string `json:"location_name"`
-		RFIDTag        *string `json:"rfid_tag"`
-		QRCode         *string `json:"qr_code"`
-		InstallYear    *int    `json:"install_year"`
-		Observations   *string `json:"observations"`
+		ID            string  `json:"id"`
+		InternalCode  string  `json:"internal_code"`
+		Name          string  `json:"name"`
+		AssetTypeCode string  `json:"asset_type_code"`
+		AssetTypeName string  `json:"asset_type_name"`
+		Status        string  `json:"status"`
+		Manufacturer  *string `json:"manufacturer"`
+		Model         *string `json:"model"`
+		SerialNumber  *string `json:"serial_number"`
+		LocationName  *string `json:"location_name"`
+		RFIDTag       *string `json:"rfid_tag"`
+		QRCode        *string `json:"qr_code"`
+		InstallYear   *int    `json:"install_year"`
+		Observations  *string `json:"observations"`
 	}
 
 	var asset RFIDAsset
@@ -1479,29 +1505,43 @@ func (h *DCIMHandler) HandleManufacturers(w http.ResponseWriter, r *http.Request
 			        COALESCE(contact,''), status, COALESCE(notes,''), created_at
 			 FROM catalogs_manufacturers WHERE tenant_id=$1 ORDER BY name`, tenantID)
 		if err != nil {
-			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
 		}
 		defer rows.Close()
 		type MF struct {
-			ID string `json:"id"`; Name string `json:"name"`; LogoURL string `json:"logo_url"`
-			Website string `json:"website"`; Country string `json:"country"`; Contact string `json:"contact"`
-			Status string `json:"status"`; Notes string `json:"notes"`; CreatedAt string `json:"created_at"`
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			LogoURL   string `json:"logo_url"`
+			Website   string `json:"website"`
+			Country   string `json:"country"`
+			Contact   string `json:"contact"`
+			Status    string `json:"status"`
+			Notes     string `json:"notes"`
+			CreatedAt string `json:"created_at"`
 		}
 		list := []MF{}
 		for rows.Next() {
-			var m MF; var ca interface{}
+			var m MF
+			var ca interface{}
 			if err := rows.Scan(&m.ID, &m.Name, &m.LogoURL, &m.Website, &m.Country, &m.Contact, &m.Status, &m.Notes, &ca); err == nil {
-				m.CreatedAt = fmt.Sprintf("%v", ca); list = append(list, m)
+				m.CreatedAt = fmt.Sprintf("%v", ca)
+				list = append(list, m)
 			}
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"manufacturers": list})
 	case http.MethodPost:
 		var b struct {
-			Name string `json:"name"`; LogoURL string `json:"logo_url"`; Website string `json:"website"`
-			Country string `json:"country"`; Contact string `json:"contact"`; Notes string `json:"notes"`
+			Name    string `json:"name"`
+			LogoURL string `json:"logo_url"`
+			Website string `json:"website"`
+			Country string `json:"country"`
+			Contact string `json:"contact"`
+			Notes   string `json:"notes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Name == "" {
-			http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest); return
+			http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest)
+			return
 		}
 		newID := uuid.New().String()
 		_, err := h.DB.Exec(
@@ -1510,33 +1550,52 @@ func (h *DCIMHandler) HandleManufacturers(w http.ResponseWriter, r *http.Request
 			newID, tenantID, b.Name, b.LogoURL, b.Website, b.Country, b.Contact, b.Notes)
 		if err != nil {
 			if strings.Contains(err.Error(), "unique") {
-				http.Error(w, `{"error":"manufacturer already exists"}`, http.StatusConflict); return
+				http.Error(w, `{"error":"manufacturer already exists"}`, http.StatusConflict)
+				return
 			}
-			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
 		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"id": newID, "name": b.Name})
 	case http.MethodPut:
-		if mfID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		if mfID == "" {
+			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+			return
+		}
 		var b struct {
-			Name string `json:"name"`; LogoURL string `json:"logo_url"`; Website string `json:"website"`
-			Country string `json:"country"`; Contact string `json:"contact"`; Notes string `json:"notes"`
-			Status string `json:"status"`
+			Name    string `json:"name"`
+			LogoURL string `json:"logo_url"`
+			Website string `json:"website"`
+			Country string `json:"country"`
+			Contact string `json:"contact"`
+			Notes   string `json:"notes"`
+			Status  string `json:"status"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+			return
 		}
 		_, err := h.DB.Exec(
 			`UPDATE catalogs_manufacturers SET name=$1,logo_url=NULLIF($2,''),website=NULLIF($3,''),
 			 country=NULLIF($4,''),contact=NULLIF($5,''),notes=NULLIF($6,''),
 			 status=COALESCE(NULLIF($7,''),'active'),updated_at=now() WHERE id=$8 AND tenant_id=$9`,
 			b.Name, b.LogoURL, b.Website, b.Country, b.Contact, b.Notes, b.Status, mfID, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": mfID, "status": "updated"})
 	case http.MethodDelete:
-		if mfID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		if mfID == "" {
+			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+			return
+		}
 		_, err := h.DB.Exec(`UPDATE catalogs_manufacturers SET status='inactive',updated_at=now() WHERE id=$1 AND tenant_id=$2`, mfID, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": mfID, "status": "deactivated"})
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -1548,12 +1607,15 @@ func (h *DCIMHandler) HandleProviders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_, tenantID, _, err := h.getSessionContext(r)
 	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized); return
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
 	}
 	path := r.URL.Path
 	pvID := ""
 	pfx := "/api/dcim/catalogs/providers/"
-	if len(path) > len(pfx) { pvID = path[len(pfx):] }
+	if len(path) > len(pfx) {
+		pvID = path[len(pfx):]
+	}
 	switch r.Method {
 	case http.MethodGet:
 		rows, err := h.DB.Query(
@@ -1561,52 +1623,86 @@ func (h *DCIMHandler) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			        COALESCE(contact_name,''),COALESCE(email,''),COALESCE(phone,''),
 			        COALESCE(website,''),status,COALESCE(notes,''),created_at
 			 FROM catalogs_providers WHERE tenant_id=$1 ORDER BY legal_name`, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		defer rows.Close()
 		type PV struct {
-			ID string `json:"id"`; ProviderType string `json:"provider_type"`; LegalName string `json:"legal_name"`
-			TradeName string `json:"trade_name"`; TaxID string `json:"tax_id"`; ContactName string `json:"contact_name"`
-			Email string `json:"email"`; Phone string `json:"phone"`; Website string `json:"website"`
-			Status string `json:"status"`; Notes string `json:"notes"`; CreatedAt string `json:"created_at"`
+			ID           string `json:"id"`
+			ProviderType string `json:"provider_type"`
+			LegalName    string `json:"legal_name"`
+			TradeName    string `json:"trade_name"`
+			TaxID        string `json:"tax_id"`
+			ContactName  string `json:"contact_name"`
+			Email        string `json:"email"`
+			Phone        string `json:"phone"`
+			Website      string `json:"website"`
+			Status       string `json:"status"`
+			Notes        string `json:"notes"`
+			CreatedAt    string `json:"created_at"`
 		}
 		list := []PV{}
 		for rows.Next() {
-			var p PV; var ca interface{}
+			var p PV
+			var ca interface{}
 			if err := rows.Scan(&p.ID, &p.ProviderType, &p.LegalName, &p.TradeName, &p.TaxID,
 				&p.ContactName, &p.Email, &p.Phone, &p.Website, &p.Status, &p.Notes, &ca); err == nil {
-				p.CreatedAt = fmt.Sprintf("%v", ca); list = append(list, p)
+				p.CreatedAt = fmt.Sprintf("%v", ca)
+				list = append(list, p)
 			}
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"providers": list})
 	case http.MethodPost:
 		var b struct {
-			ProviderType string `json:"provider_type"`; LegalName string `json:"legal_name"`
-			TradeName string `json:"trade_name"`; TaxID string `json:"tax_id"`
-			ContactName string `json:"contact_name"`; Email string `json:"email"`
-			Phone string `json:"phone"`; Website string `json:"website"`; Notes string `json:"notes"`
+			ProviderType string `json:"provider_type"`
+			LegalName    string `json:"legal_name"`
+			TradeName    string `json:"trade_name"`
+			TaxID        string `json:"tax_id"`
+			ContactName  string `json:"contact_name"`
+			Email        string `json:"email"`
+			Phone        string `json:"phone"`
+			Website      string `json:"website"`
+			Notes        string `json:"notes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.LegalName == "" {
-			http.Error(w, `{"error":"legal_name is required"}`, http.StatusBadRequest); return
+			http.Error(w, `{"error":"legal_name is required"}`, http.StatusBadRequest)
+			return
 		}
-		if b.ProviderType == "" { b.ProviderType = "integrator" }
+		if b.ProviderType == "" {
+			b.ProviderType = "integrator"
+		}
 		newID := uuid.New().String()
 		_, err := h.DB.Exec(
 			`INSERT INTO catalogs_providers (id,tenant_id,provider_type,legal_name,trade_name,tax_id,contact_name,email,phone,website,notes)
 			 VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),NULLIF($11,''))`,
 			newID, tenantID, b.ProviderType, b.LegalName, b.TradeName, b.TaxID, b.ContactName, b.Email, b.Phone, b.Website, b.Notes)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"id": newID, "legal_name": b.LegalName})
 	case http.MethodPut:
-		if pvID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		if pvID == "" {
+			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+			return
+		}
 		var b struct {
-			ProviderType string `json:"provider_type"`; LegalName string `json:"legal_name"`
-			TradeName string `json:"trade_name"`; TaxID string `json:"tax_id"`
-			ContactName string `json:"contact_name"`; Email string `json:"email"`
-			Phone string `json:"phone"`; Website string `json:"website"`; Notes string `json:"notes"`; Status string `json:"status"`
+			ProviderType string `json:"provider_type"`
+			LegalName    string `json:"legal_name"`
+			TradeName    string `json:"trade_name"`
+			TaxID        string `json:"tax_id"`
+			ContactName  string `json:"contact_name"`
+			Email        string `json:"email"`
+			Phone        string `json:"phone"`
+			Website      string `json:"website"`
+			Notes        string `json:"notes"`
+			Status       string `json:"status"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+			return
 		}
 		_, err := h.DB.Exec(
 			`UPDATE catalogs_providers SET provider_type=COALESCE(NULLIF($1,''),'integrator'),legal_name=$2,
@@ -1615,12 +1711,21 @@ func (h *DCIMHandler) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			 notes=NULLIF($9,''),status=COALESCE(NULLIF($10,''),'active'),updated_at=now()
 			 WHERE id=$11 AND tenant_id=$12`,
 			b.ProviderType, b.LegalName, b.TradeName, b.TaxID, b.ContactName, b.Email, b.Phone, b.Website, b.Notes, b.Status, pvID, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": pvID, "status": "updated"})
 	case http.MethodDelete:
-		if pvID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		if pvID == "" {
+			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+			return
+		}
 		_, err := h.DB.Exec(`UPDATE catalogs_providers SET status='inactive',updated_at=now() WHERE id=$1 AND tenant_id=$2`, pvID, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": pvID, "status": "deactivated"})
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -1632,12 +1737,15 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	_, tenantID, _, err := h.getSessionContext(r)
 	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized); return
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
 	}
 	path := r.URL.Path
 	ruleID := ""
 	pfx := "/api/dcim/catalogs/naming-rules/"
-	if len(path) > len(pfx) { ruleID = path[len(pfx):] }
+	if len(path) > len(pfx) {
+		ruleID = path[len(pfx):]
+	}
 	switch r.Method {
 	case http.MethodGet:
 		rows, err := h.DB.Query(
@@ -1649,20 +1757,33 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			 FROM naming_rules nr
 			 JOIN asset_types at ON at.code = nr.asset_type_code
 			 WHERE nr.tenant_id=$1 ORDER BY at.name`, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		defer rows.Close()
 		type Rule struct {
-			ID string `json:"id"`; AssetTypeCode string `json:"asset_type_code"`; AssetTypeName string `json:"asset_type_name"`
-			Prefix string `json:"prefix"`; Separator string `json:"separator"`
-			IncludeBranch bool `json:"include_branch"`; IncludeLocation bool `json:"include_location"`
-			SeqDigits int `json:"seq_digits"`; ResetPerLocation bool `json:"reset_per_location"`
-			LastSeq int `json:"last_seq"`; UpdatedAt string `json:"updated_at"`; NextCode string `json:"next_code_preview"`
-			CustomSegment1 string `json:"custom_segment_1"`; CustomSegment2 string `json:"custom_segment_2"`
-			CustomSegment1Label string `json:"custom_segment_1_label"`; CustomSegment2Label string `json:"custom_segment_2_label"`
+			ID                  string `json:"id"`
+			AssetTypeCode       string `json:"asset_type_code"`
+			AssetTypeName       string `json:"asset_type_name"`
+			Prefix              string `json:"prefix"`
+			Separator           string `json:"separator"`
+			IncludeBranch       bool   `json:"include_branch"`
+			IncludeLocation     bool   `json:"include_location"`
+			SeqDigits           int    `json:"seq_digits"`
+			ResetPerLocation    bool   `json:"reset_per_location"`
+			LastSeq             int    `json:"last_seq"`
+			UpdatedAt           string `json:"updated_at"`
+			NextCode            string `json:"next_code_preview"`
+			CustomSegment1      string `json:"custom_segment_1"`
+			CustomSegment2      string `json:"custom_segment_2"`
+			CustomSegment1Label string `json:"custom_segment_1_label"`
+			CustomSegment2Label string `json:"custom_segment_2_label"`
 		}
 		list := []Rule{}
 		for rows.Next() {
-			var rule Rule; var ua interface{}
+			var rule Rule
+			var ua interface{}
 			if err := rows.Scan(&rule.ID, &rule.AssetTypeCode, &rule.AssetTypeName,
 				&rule.Prefix, &rule.Separator, &rule.IncludeBranch, &rule.IncludeLocation,
 				&rule.SeqDigits, &rule.ResetPerLocation, &rule.LastSeq, &ua,
@@ -1684,16 +1805,25 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"naming_rules": list})
 	case http.MethodPut:
-		if ruleID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		if ruleID == "" {
+			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+			return
+		}
 		var b struct {
-			Prefix string `json:"prefix"`; Separator string `json:"separator"`
-			IncludeBranch *bool `json:"include_branch"`; IncludeLocation *bool `json:"include_location"`
-			SeqDigits *int `json:"seq_digits"`; ResetPerLocation *bool `json:"reset_per_location"`
-			CustomSegment1 *string `json:"custom_segment_1"`; CustomSegment2 *string `json:"custom_segment_2"`
-			CustomSegment1Label *string `json:"custom_segment_1_label"`; CustomSegment2Label *string `json:"custom_segment_2_label"`
+			Prefix              string  `json:"prefix"`
+			Separator           string  `json:"separator"`
+			IncludeBranch       *bool   `json:"include_branch"`
+			IncludeLocation     *bool   `json:"include_location"`
+			SeqDigits           *int    `json:"seq_digits"`
+			ResetPerLocation    *bool   `json:"reset_per_location"`
+			CustomSegment1      *string `json:"custom_segment_1"`
+			CustomSegment2      *string `json:"custom_segment_2"`
+			CustomSegment1Label *string `json:"custom_segment_1_label"`
+			CustomSegment2Label *string `json:"custom_segment_2_label"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+			return
 		}
 		_, err := h.DB.Exec(
 			`UPDATE naming_rules
@@ -1712,7 +1842,10 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			b.Prefix, b.Separator, b.IncludeBranch, b.IncludeLocation, b.SeqDigits, b.ResetPerLocation,
 			b.CustomSegment1, b.CustomSegment2, b.CustomSegment1Label, b.CustomSegment2Label,
 			ruleID, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": ruleID, "status": "updated"})
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -1724,12 +1857,15 @@ func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Type", "application/json")
 	_, tenantID, branchID, err := h.getSessionContext(r)
 	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized); return
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
 	}
 	path := r.URL.Path
 	locID := ""
 	pfx := "/api/dcim/catalogs/locations/"
-	if len(path) > len(pfx) { locID = path[len(pfx):] }
+	if len(path) > len(pfx) {
+		locID = path[len(pfx):]
+	}
 	switch r.Method {
 	case http.MethodGet:
 		rows, err := h.DB.Query(
@@ -1740,61 +1876,95 @@ func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Reque
 			 WHERE l.tenant_id=$1 AND l.branch_id=$2
 			 GROUP BY l.id,l.name,l.floor,l.room,l.zone,l.description,l.created_at
 			 ORDER BY l.name`, tenantID, branchID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		defer rows.Close()
 		type Loc struct {
-			ID string `json:"id"`; Name string `json:"name"`; Floor string `json:"floor"`
-			Room string `json:"room"`; Zone string `json:"zone"`; Description string `json:"description"`
-			CreatedAt string `json:"created_at"`; AssetCount int `json:"asset_count"`
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Floor       string `json:"floor"`
+			Room        string `json:"room"`
+			Zone        string `json:"zone"`
+			Description string `json:"description"`
+			CreatedAt   string `json:"created_at"`
+			AssetCount  int    `json:"asset_count"`
 		}
 		list := []Loc{}
 		for rows.Next() {
-			var l Loc; var ca interface{}
+			var l Loc
+			var ca interface{}
 			if err := rows.Scan(&l.ID, &l.Name, &l.Floor, &l.Room, &l.Zone, &l.Description, &ca, &l.AssetCount); err == nil {
-				l.CreatedAt = fmt.Sprintf("%v", ca); list = append(list, l)
+				l.CreatedAt = fmt.Sprintf("%v", ca)
+				list = append(list, l)
 			}
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"locations": list})
 	case http.MethodPost:
 		var b struct {
-			Name string `json:"name"`; Floor string `json:"floor"`; Room string `json:"room"`
-			Zone string `json:"zone"`; Description string `json:"description"`
+			Name        string `json:"name"`
+			Floor       string `json:"floor"`
+			Room        string `json:"room"`
+			Zone        string `json:"zone"`
+			Description string `json:"description"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Name == "" {
-			http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest); return
+			http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest)
+			return
 		}
 		newID := uuid.New().String()
 		_, err := h.DB.Exec(
 			`INSERT INTO locations (id,tenant_id,branch_id,name,floor,room,zone,description)
 			 VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))`,
 			newID, tenantID, branchID, b.Name, b.Floor, b.Room, b.Zone, b.Description)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"id": newID, "name": b.Name})
 	case http.MethodPut:
-		if locID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		if locID == "" {
+			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+			return
+		}
 		var b struct {
-			Name string `json:"name"`; Floor string `json:"floor"`; Room string `json:"room"`
-			Zone string `json:"zone"`; Description string `json:"description"`
+			Name        string `json:"name"`
+			Floor       string `json:"floor"`
+			Room        string `json:"room"`
+			Zone        string `json:"zone"`
+			Description string `json:"description"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+			return
 		}
 		_, err := h.DB.Exec(
 			`UPDATE locations SET name=$1,floor=NULLIF($2,''),room=NULLIF($3,''),zone=NULLIF($4,''),
 			 description=NULLIF($5,''),updated_at=now() WHERE id=$6 AND tenant_id=$7`,
 			b.Name, b.Floor, b.Room, b.Zone, b.Description, locID, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": locID, "status": "updated"})
 	case http.MethodDelete:
-		if locID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		if locID == "" {
+			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+			return
+		}
 		var count int
 		h.DB.QueryRow(`SELECT COUNT(*) FROM assets WHERE location_id=$1 AND tenant_id=$2`, locID, tenantID).Scan(&count)
 		if count > 0 {
-			http.Error(w, fmt.Sprintf(`{"error":"cannot delete: location has %d assets assigned"}`, count), http.StatusConflict); return
+			http.Error(w, fmt.Sprintf(`{"error":"cannot delete: location has %d assets assigned"}`, count), http.StatusConflict)
+			return
 		}
 		_, err := h.DB.Exec(`DELETE FROM locations WHERE id=$1 AND tenant_id=$2`, locID, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": locID, "status": "deleted"})
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
@@ -1807,12 +1977,15 @@ func (h *DCIMHandler) HandleModels(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_, tenantID, _, err := h.getSessionContext(r)
 	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized); return
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
 	}
 	path := r.URL.Path
 	modelID := ""
 	pfx := "/api/dcim/catalogs/models/"
-	if len(path) > len(pfx) { modelID = path[len(pfx):] }
+	if len(path) > len(pfx) {
+		modelID = path[len(pfx):]
+	}
 
 	switch r.Method {
 	case http.MethodGet:
@@ -1835,21 +2008,25 @@ func (h *DCIMHandler) HandleModels(w http.ResponseWriter, r *http.Request) {
 				 WHERE m.tenant_id=$1 AND m.status='active'
 				 ORDER BY mf.name, m.name`, tenantID)
 		}
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		defer rows.Close()
 		type Model struct {
-			ID             string `json:"id"`
-			ManufacturerID string `json:"manufacturer_id"`
+			ID               string `json:"id"`
+			ManufacturerID   string `json:"manufacturer_id"`
 			ManufacturerName string `json:"manufacturer_name"`
-			Name           string `json:"name"`
-			PartNumber     string `json:"part_number"`
-			Description    string `json:"description"`
-			Status         string `json:"status"`
-			CreatedAt      string `json:"created_at"`
+			Name             string `json:"name"`
+			PartNumber       string `json:"part_number"`
+			Description      string `json:"description"`
+			Status           string `json:"status"`
+			CreatedAt        string `json:"created_at"`
 		}
 		list := []Model{}
 		for rows.Next() {
-			var m Model; var ca interface{}
+			var m Model
+			var ca interface{}
 			if err := rows.Scan(&m.ID, &m.ManufacturerID, &m.ManufacturerName,
 				&m.Name, &m.PartNumber, &m.Description, &m.Status, &ca); err == nil {
 				m.CreatedAt = fmt.Sprintf("%v", ca)
@@ -1866,25 +2043,33 @@ func (h *DCIMHandler) HandleModels(w http.ResponseWriter, r *http.Request) {
 			Description    string `json:"description"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil || b.Name == "" || b.ManufacturerID == "" {
-			http.Error(w, `{"error":"manufacturer_id and name are required"}`, http.StatusBadRequest); return
+			http.Error(w, `{"error":"manufacturer_id and name are required"}`, http.StatusBadRequest)
+			return
 		}
 		// Verificar que el fabricante pertenece al tenant
 		var mfCount int
 		h.DB.QueryRow(`SELECT COUNT(*) FROM catalogs_manufacturers WHERE id=$1 AND tenant_id=$2`, b.ManufacturerID, tenantID).Scan(&mfCount)
 		if mfCount == 0 {
-			http.Error(w, `{"error":"manufacturer not found"}`, http.StatusNotFound); return
+			http.Error(w, `{"error":"manufacturer not found"}`, http.StatusNotFound)
+			return
 		}
 		newID := uuid.New().String()
 		_, err := h.DB.Exec(
 			`INSERT INTO catalogs_models (id, tenant_id, manufacturer_id, name, part_number, description)
 			 VALUES ($1, $2, $3, $4, NULLIF($5,''), NULLIF($6,''))`,
 			newID, tenantID, b.ManufacturerID, b.Name, b.PartNumber, b.Description)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(map[string]string{"id": newID, "name": b.Name})
 
 	case http.MethodPut:
-		if modelID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		if modelID == "" {
+			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+			return
+		}
 		var b struct {
 			Name        string `json:"name"`
 			PartNumber  string `json:"part_number"`
@@ -1892,7 +2077,8 @@ func (h *DCIMHandler) HandleModels(w http.ResponseWriter, r *http.Request) {
 			Status      string `json:"status"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest); return
+			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+			return
 		}
 		_, err := h.DB.Exec(
 			`UPDATE catalogs_models SET
@@ -1903,15 +2089,24 @@ func (h *DCIMHandler) HandleModels(w http.ResponseWriter, r *http.Request) {
 			 updated_at=now()
 			 WHERE id=$5 AND tenant_id=$6`,
 			b.Name, b.PartNumber, b.Description, b.Status, modelID, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": modelID, "status": "updated"})
 
 	case http.MethodDelete:
-		if modelID == "" { http.Error(w, `{"error":"id required"}`, http.StatusBadRequest); return }
+		if modelID == "" {
+			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+			return
+		}
 		_, err := h.DB.Exec(
 			`UPDATE catalogs_models SET status='inactive', updated_at=now() WHERE id=$1 AND tenant_id=$2`,
 			modelID, tenantID)
-		if err != nil { http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError); return }
+		if err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"id": modelID, "status": "deactivated"})
 
 	default:
