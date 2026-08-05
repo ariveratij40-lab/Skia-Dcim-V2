@@ -837,6 +837,12 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
+	if branchID == "" {
+		if qerr := h.DB.QueryRow(`SELECT id FROM branches WHERE tenant_id = $1 ORDER BY created_at LIMIT 1`, tenantID).Scan(&branchID); qerr != nil {
+			http.Error(w, `{"error":"branch context is required"}`, http.StatusBadRequest)
+			return
+		}
+	}
 
 	var req CreateAssetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -862,7 +868,7 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ─── INICIO DE TRANSACCIÓN POLIMÓRFICA (INV-DCM-0013) ───────────────────────
-	tx, err := h.DB.Begin()
+	tx, err := BeginTenantTx(r.Context(), h.DB, tenantID, branchID)
 	if err != nil {
 		http.Error(w, `{"error":"could not begin transaction"}`, http.StatusInternalServerError)
 		return
