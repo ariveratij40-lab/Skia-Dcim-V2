@@ -341,7 +341,7 @@ func TestRLS_NoCrossTenantLeak(t *testing.T) {
 func setupSessionSchema(t *testing.T, adminDB *sql.DB, restrictedRole string) {
 	t.Helper()
 
-	for _, tbl := range []string{"sessions", "users", "branches", "tenants"} {
+	for _, tbl := range []string{"sessions", "user_branches", "users", "branches", "tenants"} {
 		if _, err := adminDB.Exec(`DROP TABLE IF EXISTS ` + tbl + ` CASCADE`); err != nil {
 			t.Fatalf("no se pudo limpiar %s: %v", tbl, err)
 		}
@@ -362,6 +362,16 @@ func setupSessionSchema(t *testing.T, adminDB *sql.DB, restrictedRole string) {
 		t.Fatalf("no se pudo crear users: %v", err)
 	}
 	if _, err := adminDB.Exec(`
+		CREATE TABLE user_branches (
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			branch_id UUID NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+			UNIQUE(user_id, branch_id)
+		)
+	`); err != nil {
+		t.Fatalf("no se pudo crear user_branches: %v", err)
+	}
+	if _, err := adminDB.Exec(`
 		CREATE TABLE sessions (
 			id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -374,7 +384,7 @@ func setupSessionSchema(t *testing.T, adminDB *sql.DB, restrictedRole string) {
 		t.Fatalf("no se pudo crear sessions: %v", err)
 	}
 
-	for _, tbl := range []string{"tenants", "branches", "users", "sessions"} {
+	for _, tbl := range []string{"tenants", "branches", "users", "user_branches", "sessions"} {
 		grant := fmt.Sprintf(`GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO "%s"`, tbl, restrictedRole)
 		if _, err := adminDB.Exec(grant); err != nil {
 			t.Fatalf("no se pudo otorgar privilegios sobre %s al rol restringido %q: %v", tbl, restrictedRole, err)
@@ -422,6 +432,13 @@ func TestRequireTenantTx_EndToEnd(t *testing.T) {
 	if err := adminDB.QueryRow(`INSERT INTO users (email) VALUES ('e2e@rbac.test') RETURNING id`).Scan(&userID); err != nil {
 		t.Fatalf("no se pudo crear usuario: %v", err)
 	}
+	if _, err := adminDB.Exec(
+		`INSERT INTO user_branches (user_id, branch_id) VALUES ($1, $2)`,
+		userID, branchA,
+	); err != nil {
+		t.Fatalf("no se pudo autorizar usuario en branch: %v", err)
+	}
+
 	if _, err := adminDB.Exec(
 		`INSERT INTO sessions (user_id, tenant_id, branch_id, token, expires_at) VALUES ($1,$2,$3,'tok-e2e', extract(epoch from now())::bigint + 3600)`,
 		userID, tenantA, branchA,

@@ -74,3 +74,48 @@ func TenantDBFromContext(ctx context.Context) (TenantDB, bool) {
 	tdb, ok := ctx.Value(tenantDBCtxKey{}).(TenantDB)
 	return tdb, ok
 }
+
+// ============================================================
+// Identidad de tenant/branch en el contexto -- complementa a TenantDB.
+//
+// Varios handlers migrados (updateAsset, deleteAsset, HandleRFID,
+// HandleLocationsManage) necesitan tenant_id/branch_id como valores planos
+// para construir cláusulas WHERE explícitas -- no alcanza con que la
+// transacción tenga app.tenant_id seteado internamente, porque hoy (RLS
+// apagado en staging tras C-6) esa cláusula WHERE explícita es la ÚNICA
+// defensa real de aislamiento para tablas sin política RLS activa (p.ej.
+// `locations`). Sin esto, cada handler tendría que volver a resolver la
+// sesión por su cuenta (como hacía DCIMHandler.getSessionContext, con su
+// propia lógica de sucursal divergente de ExtractSessionContextSecure --
+// ver hallazgo de esta ronda) solo para obtener estos dos strings.
+// ============================================================
+
+type tenantIdentityCtxKey struct{}
+
+// tenantIdentity son los IDs ya validados y autorizados por
+// ExtractSessionContextSecure para este request -- nunca tomados de un
+// header o del body.
+type tenantIdentity struct {
+	UserID   string
+	TenantID string
+	BranchID string
+}
+
+// withTenantIdentity inyecta user_id/tenant_id/branch_id en el contexto.
+// No exportada: solo RequireTenantTx debe poder ponerlos.
+func withTenantIdentity(ctx context.Context, userID, tenantID, branchID string) context.Context {
+	return context.WithValue(ctx, tenantIdentityCtxKey{}, tenantIdentity{UserID: userID, TenantID: tenantID, BranchID: branchID})
+}
+
+// TenantIdentityFromContext devuelve el user_id/tenant_id/branch_id ya
+// resueltos y autorizados para este request. Igual que TenantDBFromContext,
+// ok=false significa que el handler se está ejecutando sin pasar por
+// RequireTenantTx -- debe responder 500 explícito, no adivinar ni volver a
+// consultar la sesión por su cuenta.
+func TenantIdentityFromContext(ctx context.Context) (userID, tenantID, branchID string, ok bool) {
+	v, ok := ctx.Value(tenantIdentityCtxKey{}).(tenantIdentity)
+	if !ok {
+		return "", "", "", false
+	}
+	return v.UserID, v.TenantID, v.BranchID, true
+}

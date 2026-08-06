@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
 )
@@ -47,7 +48,7 @@ func RequireTenantTx(database *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessCtx := ExtractSessionContextSecure(r, database)
 		if !sessCtx.Valid || sessCtx.TenantID == "" {
-			jsonErr(w, "Unauthorized", http.StatusUnauthorized)
+			respondSessionInvalid(w, sessCtx)
 			return
 		}
 
@@ -60,6 +61,7 @@ func RequireTenantTx(database *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 
 		sw := &statusCapturingWriter{ResponseWriter: w}
 		ctx := withTenantDB(r.Context(), tx)
+		ctx = withTenantIdentity(ctx, sessCtx.UserID, sessCtx.TenantID, sessCtx.BranchID)
 		req := r.WithContext(ctx)
 
 		committed := false
@@ -96,6 +98,46 @@ func RequireTenantTx(database *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		committed = true
+	}
+}
+
+// respondSessionInvalid traduce sessCtx.Reason (ExtractSessionContextSecure,
+// import_handlers.go) al código HTTP correcto, en vez de responder 401 para
+// cualquier motivo de invalidez. Distinguir importa porque no todos los
+// motivos son "no autenticado":
+//
+//   - Sin cookie / token inválido o expirado / tenant inexistente -> 401:
+//     el cliente debe volver a autenticarse.
+//   - Sucursal explícita en la sesión pero no autorizada para el usuario,
+//     o usuario sin ninguna sucursal autorizada en el tenant -> 403: está
+//     autenticado, pero no autorizado para operar aquí.
+//   - Ambigüedad de sucursal (varias autorizadas, ninguna seleccionada) ->
+//     409, con la lista de opciones en el cuerpo, para que el frontend
+//     pueda ofrecer un selector en vez de mostrar un error genérico.
+//   - Error de base de datos durante la resolución -> 500.
+func respondSessionInvalid(w http.ResponseWriter, sessCtx *SessionContextSecure) {
+	w.Header().Set("Content-Type", "application/json")
+	switch sessCtx.Reason {
+	case SessionReasonBranchSelectionNeeded:
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":              "branch_selection_required",
+			"message":            sessCtx.Error,
+			"available_branches": sessCtx.AvailableBranches,
+		})
+	case SessionReasonBranchNotAuthorized, SessionReasonNoBranchesAssigned:
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "forbidden",
+			"message": sessCtx.Error,
+		})
+	case SessionReasonDatabaseError:
+		log.Printf("RequireTenantTx: error de base de datos resolviendo sesión: %s", sessCtx.Error)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
+	default: // SessionReasonNoCookie, SessionReasonInvalidToken, SessionReasonNoTenant, SessionReasonTenantNotFound, o vacío
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
 	}
 }
 

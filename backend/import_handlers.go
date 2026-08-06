@@ -18,7 +18,7 @@ import (
 //
 // http.HandleFunc("/api/import/inventory", handleImportInventorySecure)
 // http.HandleFunc("/api/import/inventory/", handleImportInventoryDetail)
-// 
+//
 // ============================================================
 
 // ImportResponse es la respuesta estándar de importación
@@ -39,6 +39,31 @@ type ErrorInfo struct {
 // EXTRACCIÓN DE CONTEXTO DESDE SESIÓN
 // ============================================================
 
+// Razones por las que ExtractSessionContextSecure puede devolver
+// Valid=false -- permiten al llamador (en particular RequireTenantTx)
+// responder con el código HTTP correcto en vez de un 401 genérico para
+// todo. Los llamadores existentes que solo miran `.Valid`/`.Error` siguen
+// funcionando exactamente igual que antes: para ellos, cualquier valor de
+// Reason sigue significando "no autorizado" -- Reason es aditivo, no
+// reemplaza a Valid/Error.
+const (
+	SessionReasonNoCookie              = "no_session_cookie"
+	SessionReasonInvalidToken          = "invalid_or_expired_session"
+	SessionReasonDatabaseError         = "database_error"
+	SessionReasonNoTenant              = "session_has_no_tenant"
+	SessionReasonTenantNotFound        = "tenant_not_found"
+	SessionReasonBranchNotAuthorized   = "branch_not_authorized"
+	SessionReasonNoBranchesAssigned    = "no_branches_assigned"
+	SessionReasonBranchSelectionNeeded = "branch_selection_required"
+)
+
+// BranchOption identifica una sucursal candidata cuando el usuario debe
+// elegir explícitamente entre varias (SessionReasonBranchSelectionNeeded).
+type BranchOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 // SessionContextSecure extrae contexto seguro desde sesión
 type SessionContextSecure struct {
 	UserID   string
@@ -47,16 +72,49 @@ type SessionContextSecure struct {
 	Email    string
 	Valid    bool
 	Error    string
+
+	// Reason clasifica por qué Valid=false (ver constantes arriba). Vacío
+	// cuando Valid=true.
+	Reason string
+
+	// AvailableBranches se llena solo cuando
+	// Reason == SessionReasonBranchSelectionNeeded: las sucursales
+	// autorizadas entre las que el usuario debe elegir.
+	AvailableBranches []BranchOption
 }
 
 // ExtractSessionContextSecure obtiene contexto desde cookie de sesión
-// NO obtiene del cliente, SOLO desde sesión autenticada
+// NO obtiene del cliente, SOLO desde sesión autenticada.
+//
+// Resolución de sucursal (unificada en esta ronda, reemplaza la lógica de
+// fallback que antes vivía duplicada y con distinto comportamiento en
+// DCIMHandler.getSessionContext, dcim_assets.go):
+//
+//  1. Si la sesión ya trae branch_id: se valida que exista, pertenezca al
+//     tenant, Y que el usuario esté autorizado para ella vía user_branches
+//     (antes solo se validaba pertenencia al tenant, no autorización del
+//     usuario -- esa validación faltante se corrige aquí).
+//  2. Si la sesión NO trae branch_id, se consultan las sucursales
+//     autorizadas del usuario dentro del tenant (JOIN user_branches):
+//     - exactamente 1  -> se resuelve automáticamente, Valid=true.
+//     - 0               -> Valid=false, SessionReasonNoBranchesAssigned.
+//     - 2 o más         -> Valid=false, SessionReasonBranchSelectionNeeded,
+//     con AvailableBranches poblado para que el llamador pueda ofrecer
+//     un selector en vez de fallar en seco.
+//
+// Los llamadores que solo miran `.Valid`/`.Error` (import_upload_handlers.go,
+// inventory_clear_handler.go, los dos usos internos de este archivo) no
+// requieren cambios: para ellos, cualquier Valid=false sigue significando
+// "no autorizado", y el caso de auto-resolución de sucursal única es un
+// caso que antes fallaba (branch_id vacío) y ahora tiene éxito -- una
+// mejora estrictamente aditiva, no una regresión.
 func ExtractSessionContextSecure(r *http.Request, db *sql.DB) *SessionContextSecure {
 	ctx := &SessionContextSecure{Valid: false}
 	// Obtener cookie de sesión
 	sessionCookie, err := r.Cookie("session_token")
 	if err != nil {
 		ctx.Error = "No session cookie found"
+		ctx.Reason = SessionReasonNoCookie
 		log.Printf("DEBUG: No session cookie found: %v", err)
 		return ctx
 	}
@@ -64,12 +122,11 @@ func ExtractSessionContextSecure(r *http.Request, db *sql.DB) *SessionContextSec
 	log.Printf("DEBUG: Session token: %s", sessionToken)
 	if sessionToken == "" {
 		ctx.Error = "Empty session token"
+		ctx.Reason = SessionReasonNoCookie
 		return ctx
 	}
 
 	// Validar sesión en BD
-	// Consulta simplificada: sessions ya contiene tenant_id y branch_id
-	// Solo necesitamos validar el token y que no haya expirado
 	query := `
 		SELECT s.user_id, s.tenant_id, s.branch_id, u.email
 		FROM sessions s
@@ -84,55 +141,107 @@ func ExtractSessionContextSecure(r *http.Request, db *sql.DB) *SessionContextSec
 
 	if err == sql.ErrNoRows {
 		ctx.Error = "Session not found or expired"
+		ctx.Reason = SessionReasonInvalidToken
 		log.Printf("DEBUG: Session not found for token: %s", sessionToken)
 		return ctx
 	}
 
 	if err != nil {
 		ctx.Error = fmt.Sprintf("Database error: %v", err)
+		ctx.Reason = SessionReasonDatabaseError
 		log.Printf("Error validating session: %v", err)
 		return ctx
 	}
 
-	// Validar que tenant_id y branch_id no sean nulos
 	if tenantID == "" {
 		ctx.Error = "Session has no tenant assigned"
+		ctx.Reason = SessionReasonNoTenant
 		return ctx
 	}
 
-	if branchID == nil || *branchID == "" {
-		ctx.Error = "Session has no branch assigned"
-		return ctx
-	}
-
-	// Validar que tenant existe
 	var tenantExists bool
 	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM tenants WHERE id = $1)", tenantID).Scan(&tenantExists)
 	if err != nil || !tenantExists {
 		ctx.Error = "Tenant not found"
+		ctx.Reason = SessionReasonTenantNotFound
 		return ctx
 	}
 
-	// Validar que branch existe y pertenece al tenant
-	var branchExists bool
-	err = db.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM branches WHERE id = $1 AND tenant_id = $2)",
-		*branchID, tenantID,
-	).Scan(&branchExists)
-	if err != nil || !branchExists {
-		ctx.Error = "Branch not found or doesn't belong to tenant"
-		return ctx
-	}
-
-	// Contexto válido
 	ctx.UserID = userID
 	ctx.TenantID = tenantID
-	ctx.BranchID = *branchID // Desreferenciar el pointer
 	ctx.Email = email
-	ctx.Valid = true
-	log.Printf("DEBUG: Session valid - TenantID: %s, UserID: %s, BranchID: %s", tenantID, userID, *branchID)
 
-	return ctx
+	if branchID != nil && *branchID != "" {
+		var authorized bool
+		err = db.QueryRow(
+			`SELECT EXISTS(
+				SELECT 1 FROM branches b
+				JOIN user_branches ub ON ub.branch_id = b.id
+				WHERE b.id = $1 AND b.tenant_id = $2 AND ub.user_id = $3
+			)`,
+			*branchID, tenantID, userID,
+		).Scan(&authorized)
+		if err != nil {
+			ctx.Error = fmt.Sprintf("Database error validando sucursal: %v", err)
+			ctx.Reason = SessionReasonDatabaseError
+			return ctx
+		}
+		if !authorized {
+			ctx.Error = "Branch not found, doesn't belong to tenant, or user not authorized for it"
+			ctx.Reason = SessionReasonBranchNotAuthorized
+			return ctx
+		}
+		ctx.BranchID = *branchID
+		ctx.Valid = true
+		log.Printf("DEBUG: Session valid - TenantID: %s, UserID: %s, BranchID: %s (branch explícito en sesión)", tenantID, userID, *branchID)
+		return ctx
+	}
+
+	// La sesión no trae branch_id: resolver según cuántas sucursales
+	// autorizadas tiene el usuario dentro de este tenant.
+	rows, err := db.Query(
+		`SELECT b.id, b.name FROM branches b
+		 JOIN user_branches ub ON ub.branch_id = b.id
+		 WHERE ub.user_id = $1 AND b.tenant_id = $2
+		 ORDER BY b.name`,
+		userID, tenantID,
+	)
+	if err != nil {
+		ctx.Error = fmt.Sprintf("Database error resolviendo sucursales: %v", err)
+		ctx.Reason = SessionReasonDatabaseError
+		return ctx
+	}
+	defer rows.Close()
+
+	var options []BranchOption
+	for rows.Next() {
+		var opt BranchOption
+		if scanErr := rows.Scan(&opt.ID, &opt.Name); scanErr == nil {
+			options = append(options, opt)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		ctx.Error = fmt.Sprintf("Database error leyendo sucursales: %v", err)
+		ctx.Reason = SessionReasonDatabaseError
+		return ctx
+	}
+
+	switch len(options) {
+	case 0:
+		ctx.Error = "User has no authorized branches in this tenant"
+		ctx.Reason = SessionReasonNoBranchesAssigned
+		return ctx
+	case 1:
+		ctx.BranchID = options[0].ID
+		ctx.Valid = true
+		log.Printf("DEBUG: Session valid - TenantID: %s, UserID: %s, BranchID: %s (auto-resuelto: única sucursal autorizada)", tenantID, userID, options[0].ID)
+		return ctx
+	default:
+		ctx.Error = "User has multiple authorized branches; branch selection required"
+		ctx.Reason = SessionReasonBranchSelectionNeeded
+		ctx.AvailableBranches = options
+		return ctx
+	}
 }
 
 // ============================================================
@@ -185,8 +294,8 @@ func handleImportInventorySecure(w http.ResponseWriter, r *http.Request) {
 	// Validar MIME type
 	contentType := handler.Header.Get("Content-Type")
 	allowedMimes := map[string]bool{
-		"text/csv":                           true,
-		"application/vnd.ms-excel":           true,
+		"text/csv":                 true,
+		"application/vnd.ms-excel": true,
 		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true,
 		"application/json": true,
 		"application/pdf":  true,
@@ -299,16 +408,16 @@ func handleImportInventoryDetail(w http.ResponseWriter, r *http.Request, session
 	`
 
 	var importData struct {
-		ID           string    `json:"id"`
-		Filename     string    `json:"filename"`
-		FileType     string    `json:"file_type"`
-		Status       string    `json:"status"`
-		TotalRows    int       `json:"total_rows"`
-		ValidRows    int       `json:"valid_rows"`
-		ErrorRows    int       `json:"error_rows"`
-		DuplicateRows int      `json:"duplicate_rows"`
-		CreatedAt    time.Time `json:"created_at"`
-		UpdatedAt    time.Time `json:"updated_at"`
+		ID            string    `json:"id"`
+		Filename      string    `json:"filename"`
+		FileType      string    `json:"file_type"`
+		Status        string    `json:"status"`
+		TotalRows     int       `json:"total_rows"`
+		ValidRows     int       `json:"valid_rows"`
+		ErrorRows     int       `json:"error_rows"`
+		DuplicateRows int       `json:"duplicate_rows"`
+		CreatedAt     time.Time `json:"created_at"`
+		UpdatedAt     time.Time `json:"updated_at"`
 	}
 
 	err := db.QueryRow(query, importID, ctx.TenantID, ctx.BranchID).Scan(
@@ -353,12 +462,12 @@ func handleImportInventoryDetail(w http.ResponseWriter, r *http.Request, session
 	response := ImportResponse{
 		Success: true,
 		Data: map[string]interface{}{
-			"import":  importData,
-			"errors":  errors,
+			"import": importData,
+			"errors": errors,
 			"summary": map[string]interface{}{
-				"total":     importData.TotalRows,
-				"valid":     importData.ValidRows,
-				"errors":    importData.ErrorRows,
+				"total":      importData.TotalRows,
+				"valid":      importData.ValidRows,
+				"errors":     importData.ErrorRows,
 				"duplicates": importData.DuplicateRows,
 			},
 		},
@@ -498,7 +607,6 @@ func handleImportInventoryRows(w http.ResponseWriter, r *http.Request, sessionCt
 // - Valida permisos
 // - Verifica que pertenezca al tenant
 // - Verifica que no haya errores críticos
-
 
 // ============================================================
 // FUNCIONES HELPER
@@ -669,8 +777,6 @@ func validateImportIDFormat(id string) error {
 	return nil
 }
 
-
 // ============================================================
 // DISPATCHER: Resuelve subrutas de importación
 // ============================================================
-

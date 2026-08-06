@@ -248,16 +248,22 @@ func (h *DCIMHandler) HandleAssetByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		// C-6: getAsset usa el TenantDB del contexto. updateAsset/deleteAsset
-		// (PUT/DELETE) TODAVIA usan h.DB directamente -- quedan pendientes
-		// en el checklist de migración (ver informe de auditoría, C-6).
+		// C-6: GET/PUT/DELETE de un activo individual usan el TenantDB del
+		// contexto (getAsset/updateAsset/deleteAsset, todas migradas).
 		RequireTenantTx(h.DB, func(w http.ResponseWriter, r *http.Request) {
 			h.getAsset(w, r, assetID)
 		})(w, r)
 	case http.MethodPut:
-		h.updateAsset(w, r, assetID)
+		// C-6: updateAsset ahora usa el TenantDB del contexto (ver
+		// migración de esta ronda, junto con deleteAsset/HandleRFID/
+		// HandleLocationsManage).
+		RequireTenantTx(h.DB, func(w http.ResponseWriter, r *http.Request) {
+			h.updateAsset(w, r, assetID)
+		})(w, r)
 	case http.MethodDelete:
-		h.deleteAsset(w, r, assetID)
+		RequireTenantTx(h.DB, func(w http.ResponseWriter, r *http.Request) {
+			h.deleteAsset(w, r, assetID)
+		})(w, r)
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
@@ -1133,15 +1139,27 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 // updateAsset — PUT /api/dcim/assets/{id}
 // ==========================================
 func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetID string) {
-	userID, tenantID, branchID, err := h.getSessionContext(r)
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	// C-6: tenantID/branchID/userID vienen del contexto que RequireTenantTx
+	// ya validó (ExtractSessionContextSecure, con la resolución de
+	// sucursal unificada de esta ronda) -- no se vuelve a consultar la
+	// sesión con h.getSessionContext (que tenía su propia lógica de
+	// fallback de sucursal, distinta y ahora reemplazada en el origen).
+	userID, tenantID, branchID, ok := TenantIdentityFromContext(r.Context())
+	if !ok {
+		log.Printf("updateAsset: falta identidad de tenant en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
+		return
+	}
+	tdb, ok := TenantDBFromContext(r.Context())
+	if !ok {
+		log.Printf("updateAsset: falta TenantDB en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// Verificar que el activo pertenece al tenant+branch
 	var exists bool
-	h.DB.QueryRow(
+	tdb.QueryRowContext(r.Context(),
 		`SELECT EXISTS(SELECT 1 FROM assets WHERE id=$1 AND tenant_id=$2 AND branch_id=$3)`,
 		assetID, tenantID, branchID,
 	).Scan(&exists)
@@ -1258,7 +1276,7 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 		` AND tenant_id = $` + itoa(idx+1) +
 		` AND branch_id = $` + itoa(idx+2)
 
-	_, err = h.DB.Exec(query, args...)
+	_, err := tdb.ExecContext(r.Context(), query, args...)
 	if err != nil {
 		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 		return
@@ -1271,13 +1289,20 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 // deleteAsset — DELETE /api/dcim/assets/{id}
 // ==========================================
 func (h *DCIMHandler) deleteAsset(w http.ResponseWriter, r *http.Request, assetID string) {
-	_, tenantID, branchID, err := h.getSessionContext(r)
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	_, tenantID, branchID, ok := TenantIdentityFromContext(r.Context())
+	if !ok {
+		log.Printf("deleteAsset: falta identidad de tenant en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
+		return
+	}
+	tdb, ok := TenantDBFromContext(r.Context())
+	if !ok {
+		log.Printf("deleteAsset: falta TenantDB en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
 		return
 	}
 
-	result, err := h.DB.Exec(
+	result, err := tdb.ExecContext(r.Context(),
 		`DELETE FROM assets WHERE id = $1 AND tenant_id = $2 AND branch_id = $3`,
 		assetID, tenantID, branchID,
 	)
@@ -1313,9 +1338,16 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
-	_, tenantID, _, err := h.getSessionContext(r)
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	_, tenantID, _, ok := TenantIdentityFromContext(r.Context())
+	if !ok {
+		log.Printf("HandleRFID: falta identidad de tenant en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
+		return
+	}
+	tdb, ok := TenantDBFromContext(r.Context())
+	if !ok {
+		log.Printf("HandleRFID: falta TenantDB en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
 		return
 	}
 	// Extraer el código del path: /api/dcim/rfid/{code}
@@ -1345,7 +1377,8 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var asset RFIDAsset
-	err = h.DB.QueryRow(`
+	var err error
+	err = tdb.QueryRowContext(r.Context(), `
 		SELECT a.id, a.internal_code, a.name,
 		       at.code, at.name,
 		       a.status, a.manufacturer, a.model, a.serial_number,
@@ -1379,7 +1412,7 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 		var portCount, uplinkCount int
 		var managementIP *string
 		var rackUnit *int
-		err = h.DB.QueryRow(
+		err = tdb.QueryRowContext(r.Context(),
 			`SELECT port_count, COALESCE(uplink_count,0), management_ip, rack_unit FROM switches WHERE asset_id = $1`,
 			asset.ID,
 		).Scan(&portCount, &uplinkCount, &managementIP, &rackUnit)
@@ -1393,7 +1426,7 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 		var totalU, usedU int
 		var heightMM, widthMM, depthMM *int
 		var powerKW *float64
-		err = h.DB.QueryRow(
+		err = tdb.QueryRowContext(r.Context(),
 			`SELECT total_u, used_u, height_mm, width_mm, depth_mm, power_kw FROM racks WHERE asset_id = $1`,
 			asset.ID,
 		).Scan(&totalU, &usedU, &heightMM, &widthMM, &depthMM, &powerKW)
@@ -1408,7 +1441,7 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 	case "MDF", "IDF":
 		var mdfType string
 		var rackCount, ppCount, swCount, upsCount int
-		err = h.DB.QueryRow(
+		err = tdb.QueryRowContext(r.Context(),
 			`SELECT type, COALESCE(rack_count,0), COALESCE(patch_panel_count,0), COALESCE(switch_count,0), COALESCE(ups_count,0) FROM mdf_idf WHERE asset_id = $1`,
 			asset.ID,
 		).Scan(&mdfType, &rackCount, &ppCount, &swCount, &upsCount)
@@ -1423,7 +1456,7 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 		var capacityKVA *float64
 		var batteryMin *int
 		var mgmtIP *string
-		err = h.DB.QueryRow(
+		err = tdb.QueryRowContext(r.Context(),
 			`SELECT capacity_kva, battery_runtime_min, management_ip FROM ups WHERE asset_id = $1`,
 			asset.ID,
 		).Scan(&capacityKVA, &batteryMin, &mgmtIP)
@@ -1442,7 +1475,7 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 		PerformedAt string  `json:"performed_at"`
 		PerformedBy *string `json:"performed_by_name"`
 	}
-	logRows, err := h.DB.Query(`
+	logRows, err := tdb.QueryContext(r.Context(), `
 		SELECT al.id, al.event_type, al.notes, al.performed_at,
 		       u.full_name
 		FROM asset_logs al
@@ -1467,7 +1500,7 @@ func (h *DCIMHandler) HandleRFID(w http.ResponseWriter, r *http.Request) {
 
 	// Registrar el escaneo en asset_logs (INV-TRK-0001: toda reasignación queda registrada)
 	scanID := uuid.New().String()
-	_, _ = h.DB.Exec(`
+	_, _ = tdb.ExecContext(r.Context(), `
 		INSERT INTO asset_logs (id, tenant_id, asset_id, event_type, new_value, notes)
 		VALUES ($1, $2, $3, 'rfid_scan', $4, 'Escaneo vía portal web')`,
 		scanID, tenantID, asset.ID, code,
@@ -1855,9 +1888,16 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 // HandleLocationsManage — /api/dcim/catalogs/locations y /api/dcim/catalogs/locations/{id}
 func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_, tenantID, branchID, err := h.getSessionContext(r)
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	_, tenantID, branchID, ok := TenantIdentityFromContext(r.Context())
+	if !ok {
+		log.Printf("HandleLocationsManage: falta identidad de tenant en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
+		return
+	}
+	tdb, ok := TenantDBFromContext(r.Context())
+	if !ok {
+		log.Printf("HandleLocationsManage: falta TenantDB en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
 		return
 	}
 	path := r.URL.Path
@@ -1868,7 +1908,7 @@ func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Reque
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := h.DB.Query(
+		rows, err := tdb.QueryContext(r.Context(),
 			`SELECT l.id, l.name, COALESCE(l.floor,''), COALESCE(l.room,''), COALESCE(l.zone,''),
 			        COALESCE(l.description,''), l.created_at, COUNT(a.id) as asset_count
 			 FROM locations l
@@ -1914,7 +1954,7 @@ func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		newID := uuid.New().String()
-		_, err := h.DB.Exec(
+		_, err := tdb.ExecContext(r.Context(),
 			`INSERT INTO locations (id,tenant_id,branch_id,name,floor,room,zone,description)
 			 VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''))`,
 			newID, tenantID, branchID, b.Name, b.Floor, b.Room, b.Zone, b.Description)
@@ -1940,7 +1980,7 @@ func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Reque
 			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
 			return
 		}
-		_, err := h.DB.Exec(
+		_, err := tdb.ExecContext(r.Context(),
 			`UPDATE locations SET name=$1,floor=NULLIF($2,''),room=NULLIF($3,''),zone=NULLIF($4,''),
 			 description=NULLIF($5,''),updated_at=now() WHERE id=$6 AND tenant_id=$7`,
 			b.Name, b.Floor, b.Room, b.Zone, b.Description, locID, tenantID)
@@ -1955,12 +1995,12 @@ func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		var count int
-		h.DB.QueryRow(`SELECT COUNT(*) FROM assets WHERE location_id=$1 AND tenant_id=$2`, locID, tenantID).Scan(&count)
+		tdb.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM assets WHERE location_id=$1 AND tenant_id=$2`, locID, tenantID).Scan(&count)
 		if count > 0 {
 			http.Error(w, fmt.Sprintf(`{"error":"cannot delete: location has %d assets assigned"}`, count), http.StatusConflict)
 			return
 		}
-		_, err := h.DB.Exec(`DELETE FROM locations WHERE id=$1 AND tenant_id=$2`, locID, tenantID)
+		_, err := tdb.ExecContext(r.Context(), `DELETE FROM locations WHERE id=$1 AND tenant_id=$2`, locID, tenantID)
 		if err != nil {
 			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 			return

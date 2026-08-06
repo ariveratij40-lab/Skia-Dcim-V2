@@ -1,21 +1,45 @@
 # C-6 — checklist de migración a `TenantDB` (RequireTenantTx)
 
-Estado: **listAssets** y **getAsset** (`dcim_assets.go`) ya migrados y probados
-en este patch. El resto de rutas que tocan `assets`/`asset_logs`/
-`asset_relationships` sigue usando `h.DB`/`db` directo — **no reactivar
-`FORCE ROW LEVEL SECURITY` en esas 3 tablas hasta cerrar el Grupo A.**
+Estado: **listAssets, getAsset, updateAsset, deleteAsset, HandleRFID y
+HandleLocationsManage** (`dcim_assets.go`) ya migrados y con pruebas de
+integración para `listAssets`/`getAsset` (el resto no tiene aún prueba de
+integración dedicada, solo compilación/lectura de código — ver limitación
+de entorno más abajo). Antes de migrar estos cuatro últimos se descubrió y
+corrigió un hallazgo aparte: `DCIMHandler.getSessionContext` tenía su
+propia lógica de resolución de sucursal (fallback si `branch_id` venía
+vacío en la sesión), distinta de `ExtractSessionContextSecure` (la que usa
+`RequireTenantTx`, que exigía `branch_id` ya presente sin fallback).
+Migrar estos handlers tal cual habría sido una regresión real para
+usuarios con sesión sin sucursal asignada directamente (p.ej. multi-tenant
+sin auto-selección en login). Se corrigió en el origen
+(`ExtractSessionContextSecure`, `import_handlers.go`): ahora, si la sesión
+no trae `branch_id`, resuelve automáticamente cuando el usuario tiene
+exactamente una sucursal autorizada (`user_branches`), exige selección
+explícita si tiene varias (`RequireTenantTx` responde `409` con la lista),
+y rechaza con `403` si no tiene ninguna. Si la sesión SÍ trae `branch_id`,
+ahora también se valida que el usuario esté autorizado para ella (antes
+solo se validaba que perteneciera al tenant, no la autorización del
+usuario). Ver `session_context_resolution_integration_test.go` (5 pruebas
+de `ExtractSessionContextSecure` + 2 de `RequireTenantTx` para los códigos
+409/403).
+
+El resto de rutas que tocan `assets`/`asset_logs`/`asset_relationships`
+(dashboard.go, ai_chat.go, duplicate_detector.go, import_upload_handlers.go,
+infraestructura.go, inventory_clear_handler.go, rack_layout.go) sigue
+usando `h.DB`/`db` directo — **no reactivar `FORCE ROW LEVEL SECURITY` en
+esas 3 tablas hasta cerrar el resto del Grupo A.**
 
 ## Grupo A — bloqueante para reactivar el piloto de RLS (assets/asset_logs/asset_relationships)
 
 Organizado por archivo. Cada línea es, al momento de este commit, una
 llamada a `h.DB.*`/`db.*` que tocaría una tabla con RLS.
 
-- **dcim_assets.go**
-  - `updateAsset` (PUT /api/dcim/assets/{id}): `EXISTS` de verificación (línea ~1119), `UPDATE assets` (línea ~1230).
-  - `deleteAsset` (DELETE /api/dcim/assets/{id}): `DELETE FROM assets` (línea ~1255).
-  - `HandleRFID` (GET, lookup por tag RFID): `SELECT ... FROM assets` y `SELECT ... FROM asset_logs` (líneas ~1327, ~1422).
-  - `HandleLocationsManage` (borrado de ubicación): `SELECT COUNT(*) FROM assets WHERE location_id=...` antes de permitir el borrado (línea ~1792).
-  - **`createAsset` (POST) NO entra en este grupo**: ya usa `BeginTenantTx` propio. Si se decide unificarlo bajo `RequireTenantTx` más adelante, hay que quitarle su `BeginTenantTx`/`Commit`/`Rollback` interno primero (ver nota de "transacciones anidadas" más abajo) — es un cambio de mayor riesgo por la lógica de tablas satélite (`racks`, `switches`, `ups`, `pdus`, `patch_panels`, `mdf_idf`) y no se hizo en este pase.
+- **dcim_assets.go — CERRADO en esta ronda**
+  - ~~`updateAsset` (PUT /api/dcim/assets/{id})~~: migrado a `TenantDBFromContext`/`TenantIdentityFromContext`.
+  - ~~`deleteAsset` (DELETE /api/dcim/assets/{id})~~: migrado.
+  - ~~`HandleRFID` (GET, lookup por tag RFID)~~: migrado (8 sitios: lookup del activo, 4 tablas satélite, últimos logs, registro del escaneo).
+  - ~~`HandleLocationsManage`~~: migrado (el guard de borrado que cuenta `assets` por ubicación).
+  - **`createAsset` (POST) sigue sin entrar en este grupo**: ya usa `BeginTenantTx` propio. Si se decide unificarlo bajo `RequireTenantTx` más adelante, hay que quitarle su `BeginTenantTx`/`Commit`/`Rollback` interno primero (ver nota de "transacciones anidadas" más abajo) — es un cambio de mayor riesgo por la lógica de tablas satélite (`racks`, `switches`, `ups`, `pdus`, `patch_panels`, `mdf_idf`) y no se hizo en este pase.
 
 - **dashboard.go** (`handleDashboardStats`): dos `COUNT(*) FROM assets` (líneas ~108, ~115) y una consulta de listado (línea ~226) que alimentan el widget de resumen — es probablemente la ruta más visible si queda rota.
 
