@@ -28,6 +28,35 @@ func BeginTenantTx(ctx context.Context, database *sql.DB, tenantID, branchID str
 	return tx, nil
 }
 
+// BeginTenantTxWithScope es como BeginTenantTx, pero además puede setear
+// app.branch_scope_all='true' para representar "todas las sucursales del
+// tenant" ante políticas RLS que lo soporten explícitamente (ver
+// migrations/016_assets_branch_scope_all.sql).
+//
+// scopeAll NUNCA debe derivarse de "branchID está vacío" -- eso es
+// exactamente lo que esta función evita hacer a propósito: branchID vacío
+// simplemente no setea app.branch_id (igual que BeginTenantTx), y sin
+// scopeAll=true tampoco setea app.branch_scope_all, así que una política
+// que la vea ausente sigue interpretándola como "sin sucursal" (fail-closed
+// para filas con branch_id no nulo), no como "todas". El llamador (ver
+// ResolveBranchScope en role_scope.go) es responsable de haber verificado
+// el rol del usuario ANTES de pasar scopeAll=true -- esta función no hace
+// ninguna verificación de autorización por su cuenta, solo setea el valor
+// de sesión que ya fue decidido.
+func BeginTenantTxWithScope(ctx context.Context, database *sql.DB, tenantID, branchID string, scopeAll bool) (*sql.Tx, error) {
+	tx, err := BeginTenantTx(ctx, database, tenantID, branchID)
+	if err != nil {
+		return nil, err
+	}
+	if scopeAll {
+		if _, err = tx.ExecContext(ctx, `SELECT set_config('app.branch_scope_all', 'true', true)`); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+	}
+	return tx, nil
+}
+
 // ============================================================
 // TenantDB — interfaz restringida para consultas tenant-scoped
 // (cierre de C-6: el mecanismo de contexto de tenant existía pero

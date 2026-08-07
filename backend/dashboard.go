@@ -50,8 +50,8 @@ type DashboardResponse struct {
 	Stats          DashboardStats    `json:"stats"`
 	RecentTickets  []DashboardTicket `json:"recentTickets"`
 	CriticalAssets []DashboardAsset  `json:"criticalAssets"`
-	IsEmpty        bool              `json:"isEmpty"`   // true si el tenant no tiene datos
-	UserName       string            `json:"userName"`  // nombre del usuario para el saludo
+	IsEmpty        bool              `json:"isEmpty"`  // true si el tenant no tiene datos
+	UserName       string            `json:"userName"` // nombre del usuario para el saludo
 }
 
 func handleDashboardStats(w http.ResponseWriter, r *http.Request) {
@@ -71,13 +71,13 @@ func handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var userID, userName string
-	var tenantIDNull sql.NullString
+	var tenantIDNull, branchIDNull sql.NullString
 	err := db.QueryRow(
-		`SELECT u.id, u.name, s.tenant_id
+		`SELECT u.id, u.name, s.tenant_id, s.branch_id
 		 FROM sessions s JOIN users u ON s.user_id = u.id
 		 WHERE s.token = $1 AND s.expires_at > $2`,
 		token, time.Now().Unix(),
-	).Scan(&userID, &userName, &tenantIDNull)
+	).Scan(&userID, &userName, &tenantIDNull, &branchIDNull)
 	if err != nil {
 		jsonErr(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -103,18 +103,101 @@ func handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		UserName:       userName,
 	}
 
-	// ---- Activos totales del tenant ----
-	db.QueryRow(
-		`SELECT COUNT(*) FROM assets WHERE tenant_id = $1 AND status != 'decommissioned'`,
-		tenantID,
-	).Scan(&resp.Stats.ActivosTotal)
+	// ---- Activos (C-6: única tabla de este handler protegida por RLS) ----
+	// handleDashboardStats es deliberadamente tolerante a la ausencia de
+	// tenant (ver comentario de cabecera: onboarding, nunca 401) -- no se
+	// puede envolver con RequireTenantTx, porque ese middleware exige una
+	// sesión con tenant+branch ya resueltos ANTES de que este handler
+	// tenga oportunidad de decidir "está bien, mostrar el estado vacío".
+	// En vez de eso, se abre una transacción con contexto de tenant SOLO
+	// para las consultas que tocan `assets` (conteo total, conteo del mes
+	// anterior, y el listado de activos críticos más abajo). El resto de
+	// este handler (tickets, mdf_idf, racks, switches, ups, user_tenants)
+	// no tiene RLS activo hoy y sigue leyendo de `db` directo -- ver Grupo
+	// B en docs/C6_pending_tenant_context_migration.md.
+	// C-6 (ronda 2026-08-07): la política real de `assets` es tenant+
+	// sucursal, no solo tenant -- agregar "todo el tenant" a ciegas (como
+	// hacía esta misma sección en la ronda anterior) subestimaría los
+	// conteos en cuanto RLS se reactive. Se resuelve el rol del usuario y
+	// solo se activa el alcance global (BeginTenantTxWithScope) para
+	// roles autorizados (hoy: "admin"); el resto queda acotado a la
+	// sucursal de su propia sesión, igual que el resto del backend.
+	dashboardBranchID := branchIDNull.String
+	dashboardScopeAll := false
+	if roleTx, roleTxErr := BeginTenantTx(r.Context(), db, tenantID, dashboardBranchID); roleTxErr == nil {
+		if role, roleErr := resolveUserRole(r.Context(), roleTx, userID, tenantID); roleErr == nil && globalScopeRoles[role] {
+			dashboardScopeAll = true
+		}
+		_ = roleTx.Rollback()
+	} else {
+		log.Printf("handleDashboardStats: no se pudo resolver rol para alcance de activos (tenant=%s): %v", tenantID, roleTxErr)
+	}
 
-	// Activos creados el mes anterior (para calcular delta)
-	lastMonth := time.Now().AddDate(0, -1, 0)
-	db.QueryRow(
-		`SELECT COUNT(*) FROM assets WHERE tenant_id = $1 AND created_at >= $2`,
-		tenantID, lastMonth,
-	).Scan(&resp.Stats.ActivosMesAntes)
+	assetsTx, assetsTxErr := BeginTenantTxWithScope(r.Context(), db, tenantID, dashboardBranchID, dashboardScopeAll)
+	if assetsTxErr != nil {
+		log.Printf("handleDashboardStats: no se pudo abrir contexto de tenant para activos (tenant=%s): %v", tenantID, assetsTxErr)
+		// No es fatal para el resto del dashboard: se continúa con los
+		// contadores de activos en 0 en vez de romper todo el endpoint
+		// (misma filosofía de tolerancia que el resto de este handler).
+	} else {
+		assetsCommitted := false
+		func() {
+			defer func() {
+				if !assetsCommitted {
+					_ = assetsTx.Rollback()
+				}
+			}()
+
+			assetsTx.QueryRowContext(r.Context(),
+				`SELECT COUNT(*) FROM assets WHERE tenant_id = $1 AND status != 'decommissioned'`,
+				tenantID,
+			).Scan(&resp.Stats.ActivosTotal)
+
+			lastMonth := time.Now().AddDate(0, -1, 0)
+			assetsTx.QueryRowContext(r.Context(),
+				`SELECT COUNT(*) FROM assets WHERE tenant_id = $1 AND created_at >= $2`,
+				tenantID, lastMonth,
+			).Scan(&resp.Stats.ActivosMesAntes)
+
+			// ---- Activos críticos (status = maintenance o con alerta) ----
+			// Migrado aquí (antes vivía más abajo, sobre `db` directo) para
+			// que comparta la misma transacción con contexto de tenant que
+			// las dos consultas de arriba -- sigue siendo la tabla `assets`.
+			critRows, critErr := assetsTx.QueryContext(r.Context(),
+				`SELECT a.name, at.name as type_name, a.status,
+				        COALESCE(l.name, 'Sin ubicación') as location
+				 FROM assets a
+				 LEFT JOIN asset_types at ON at.id = a.asset_type_id
+				 LEFT JOIN locations l ON l.id = a.location_id
+				 WHERE a.tenant_id = $1
+				   AND a.status IN ('maintenance', 'inactive')
+				 ORDER BY a.updated_at DESC
+				 LIMIT 4`,
+				tenantID,
+			)
+			if critErr == nil {
+				for critRows.Next() {
+					var a DashboardAsset
+					var typeName sql.NullString
+					critRows.Scan(&a.Name, &typeName, &a.Status, &a.Location)
+					a.Type = typeName.String
+					if a.Status == "maintenance" {
+						a.Status = "Atención"
+					} else if a.Status == "inactive" {
+						a.Status = "Inactivo"
+					}
+					resp.CriticalAssets = append(resp.CriticalAssets, a)
+				}
+				critRows.Close()
+			}
+
+			if cErr := assetsTx.Commit(); cErr != nil {
+				log.Printf("handleDashboardStats: error en commit de contexto de tenant (tenant=%s): %v", tenantID, cErr)
+				return
+			}
+			assetsCommitted = true
+		}()
+	}
 
 	// ---- Tickets abiertos ----
 	// La tabla tickets puede no existir si no se ha creado aún
@@ -216,35 +299,6 @@ func handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 			ticketRows.Scan(&t.ID, &t.Title, &t.Priority, &t.Status, &createdAt)
 			t.Time = timeAgo(createdAt)
 			resp.RecentTickets = append(resp.RecentTickets, t)
-		}
-	}
-
-	// ---- Activos críticos (status = maintenance o con alerta) ----
-	assetRows, err := db.Query(
-		`SELECT a.name, at.name as type_name, a.status,
-		        COALESCE(l.name, 'Sin ubicación') as location
-		 FROM assets a
-		 LEFT JOIN asset_types at ON at.id = a.asset_type_id
-		 LEFT JOIN locations l ON l.id = a.location_id
-		 WHERE a.tenant_id = $1
-		   AND a.status IN ('maintenance', 'inactive')
-		 ORDER BY a.updated_at DESC
-		 LIMIT 4`,
-		tenantID,
-	)
-	if err == nil {
-		defer assetRows.Close()
-		for assetRows.Next() {
-			var a DashboardAsset
-			var typeName sql.NullString
-			assetRows.Scan(&a.Name, &typeName, &a.Status, &a.Location)
-			a.Type = typeName.String
-			if a.Status == "maintenance" {
-				a.Status = "Atención"
-			} else if a.Status == "inactive" {
-				a.Status = "Inactivo"
-			}
-			resp.CriticalAssets = append(resp.CriticalAssets, a)
 		}
 	}
 

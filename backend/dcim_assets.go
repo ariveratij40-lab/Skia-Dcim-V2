@@ -1994,8 +1994,22 @@ func (h *DCIMHandler) HandleLocationsManage(w http.ResponseWriter, r *http.Reque
 			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
 			return
 		}
+		// C-6 (ronda 2026-08-07): esta guardia es una regla de integridad
+		// del TENANT COMPLETO, sin importar el rol ni la sucursal de quien
+		// pide el borrado -- no debe depender de RLS acotado a la sesión
+		// (a diferencia de RFID/dashboard, que sí varían por rol). Usa la
+		// función SECURITY DEFINER assets_count_in_location_all_branches
+		// (migrations/016_assets_branch_scope_all.sql), que cuenta activos
+		// de TODAS las sucursales sin exponer las filas, con los
+		// privilegios de su dueño (BYPASSRLS) en vez de los del llamador.
 		var count int
-		tdb.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM assets WHERE location_id=$1 AND tenant_id=$2`, locID, tenantID).Scan(&count)
+		if err := tdb.QueryRowContext(r.Context(),
+			`SELECT assets_count_in_location_all_branches($1, $2)`, locID, tenantID,
+		).Scan(&count); err != nil {
+			log.Printf("HandleLocationsManage: error verificando activos en todas las sucursales (location=%s, tenant=%s): %v", locID, tenantID, err)
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
 		if count > 0 {
 			http.Error(w, fmt.Sprintf(`{"error":"cannot delete: location has %d assets assigned"}`, count), http.StatusConflict)
 			return
