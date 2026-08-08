@@ -9,12 +9,43 @@ import (
 
 // ============================================================
 // DETECTOR DE DUPLICADOS Y MÓDULO UPSERT
+//
+// ESTADO (C-6, ronda 2026-08-07): FUERA DE ALCANCE OPERATIVO -- verificado
+// que ninguna función de este archivo tiene un llamador vivo. La única
+// que las invoca es ProcessImportAsync (background_processor.go), y esa
+// función a su vez no está registrada en ninguna ruta de main.go ni
+// llamada desde ningún otro lugar del repo (grep exhaustivo sobre
+// backend/*.go, sin resultados fuera de estos dos archivos). Tampoco lo
+// están HandleJobWebSocket/HandleGetJobStatus/HandleListActiveJobs/
+// ProcessImportWithSimulation, del mismo archivo -- todo indica un
+// pipeline de importación asíncrona vía WebSocket que quedó reemplazado
+// por el flujo real (import_upload_handlers.go) sin borrar el código
+// anterior.
+//
+// Decisión explícita del usuario: NO migrar a TenantDBFromContext ahora
+// (no hay ninguna ruta activa que ejercite este código, así que no
+// bloquea la reactivación de RLS), pero TAMPOCO eliminarlo todavía -- se
+// deja documentado como código legado, por si alguien quiere recuperar
+// la funcionalidad. Si esto vuelve a registrarse como ruta o job activo
+// en el futuro, DEBE migrarse a TenantDBFromContext (siguiendo el mismo
+// patrón que dcim_assets.go/dashboard.go/ai_chat.go) ANTES de habilitarlo
+// -- no basta con que "ya estuviera migrado antes", porque nunca lo
+// estuvo: solo usó `db *sql.DB` crudo desde que se escribió.
+//
+// SÍ se corrigió, en esta misma ronda, un bug de aislamiento
+// independiente de RLS/migración: updateAsset (más abajo) filtraba su
+// UPDATE solo por `WHERE id = $10`, sin tenant_id/branch_id. No era
+// explotable hoy (el único llamador, UpsertAsset, siempre pasa un
+// assetID que ya salió de una búsqueda de DetectDuplicates filtrada por
+// tenant_id/branch_id), pero es una defensa en profundidad razonable
+// para código que, aunque hoy no se ejecute, sigue siendo código real que
+// alguien podría reactivar.
 // ============================================================
 
 type DuplicateMatch struct {
-	ExistingAssetID  string
-	MatchFields      []string
-	MatchConfidence  float64
+	ExistingAssetID   string
+	MatchFields       []string
+	MatchConfidence   float64
 	ExistingAssetData map[string]interface{}
 }
 
@@ -104,15 +135,15 @@ func DetectDuplicates(db *sql.DB, tenantID string, branchID string, assetType st
 
 			// Calcular confianza de coincidencia
 			confidence := calculateMatchConfidence(field, assetData, map[string]interface{}{
-				"id":              id,
-				"name":            name,
-				"serial_number":   serialNumber,
-				"internal_code":   internalCode,
-				"rfid_tag":        rfidTag,
-				"model":           model,
-				"manufacturer":    manufacturer,
-				"status":          status,
-				"location_id":     locationID,
+				"id":            id,
+				"name":          name,
+				"serial_number": serialNumber,
+				"internal_code": internalCode,
+				"rfid_tag":      rfidTag,
+				"model":         model,
+				"manufacturer":  manufacturer,
+				"status":        status,
+				"location_id":   locationID,
 			})
 
 			if confidence > 70 { // Umbral de confianza
@@ -219,10 +250,10 @@ func getSearchFieldsForAssetType(assetType string) []string {
 // ============================================================
 
 type UpsertResult struct {
-	AssetID   string
-	Action    string // "inserted" o "updated"
-	IsNew     bool
-	Changes   map[string]interface{}
+	AssetID string
+	Action  string // "inserted" o "updated"
+	IsNew   bool
+	Changes map[string]interface{}
 }
 
 func UpsertAsset(db *sql.DB, tenantID string, branchID string, assetType string, assetData map[string]interface{}) (*UpsertResult, error) {
@@ -246,8 +277,9 @@ func UpsertAsset(db *sql.DB, tenantID string, branchID string, assetType string,
 			}
 		}
 
-		// Actualizar el activo existente
-		err := updateAsset(db, bestMatch.ExistingAssetID, assetData)
+		// Actualizar el activo existente (tenant_id/branch_id explícitos --
+		// ver corrección 2026-08-07 en la definición de updateAsset).
+		err := updateAsset(db, tenantID, branchID, bestMatch.ExistingAssetID, assetData)
 		if err != nil {
 			return nil, err
 		}
@@ -330,7 +362,21 @@ func insertAsset(db *sql.DB, tenantID string, branchID string, assetType string,
 // FUNCIÓN: ACTUALIZAR ACTIVO EXISTENTE
 // ============================================================
 
-func updateAsset(db *sql.DB, assetID string, assetData map[string]interface{}) error {
+// updateAsset -- CORRECCIÓN 2026-08-07 (C-6, hallazgo independiente de
+// RLS): la versión original filtraba solo por `WHERE id = $10`, sin
+// tenant_id ni branch_id. Hoy no era explotable porque el único llamador
+// (UpsertAsset) siempre pasa un assetID que ya salió de
+// DetectDuplicates, cuya propia consulta SÍ filtra por tenant_id/
+// branch_id -- pero es frágil: cualquier otro llamador futuro (o un bug
+// en DetectDuplicates) habría permitido actualizar un activo de OTRO
+// tenant/sucursal sin que esta función lo evitara por su cuenta. Se
+// agregan tenant_id/branch_id como parámetros explícitos y como
+// condición WHERE adicional -- defensa en profundidad, independiente de
+// si esta función corre dentro de una transacción con contexto RLS o no.
+// Decisión del usuario: corregir esto ahora mismo aunque el archivo
+// completo quede fuera de alcance operativo (ver nota de cabecera del
+// archivo) -- es un bug de aislamiento real, aunque no explotable hoy.
+func updateAsset(db *sql.DB, tenantID string, branchID string, assetID string, assetData map[string]interface{}) error {
 	query := `
 		UPDATE assets SET
 			name = COALESCE($1, name),
@@ -343,7 +389,7 @@ func updateAsset(db *sql.DB, assetID string, assetData map[string]interface{}) e
 			location_id = COALESCE($8, location_id),
 			metadata = jsonb_set(metadata, '{}', $9::jsonb),
 			updated_at = NOW()
-		WHERE id = $10
+		WHERE id = $10 AND tenant_id = $11 AND branch_id = $12
 	`
 
 	_, err := db.Exec(
@@ -358,6 +404,8 @@ func updateAsset(db *sql.DB, assetID string, assetData map[string]interface{}) e
 		assetData["ubicacion"],
 		assetData,
 		assetID,
+		tenantID,
+		branchID,
 	)
 
 	if err != nil {

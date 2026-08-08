@@ -94,26 +94,57 @@ func handleImportUploadChunk(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "chunk_received"})
 }
 
+// handleImportUploadProcess -- CORRECCIÓN 2026-08-07 (hallazgo Crítico,
+// independiente de RLS): antes de este fix, el job de importación se
+// creaba con session.BranchID (correcto), pero ese valor se perdía en el
+// camino -- processImportFileAsync ni siquiera lo recibía como parámetro,
+// y el INSERT INTO assets usaba un UUID de sucursal HARDCODEADO (la
+// sucursal "Sede Principal - Miami" del tenant semilla original,
+// migrations/002_seed.sql). Efecto: todo activo importado por cualquier
+// tenant/usuario quedaba asignado a esa sucursal ajena -- corrupción de
+// datos activa ya, sin depender de que RLS esté encendido. Corrección
+// estructural acordada con el usuario:
+//  1. Rechazar el job aquí mismo si tenant_id o branch_id de la sesión ya
+//     validada vienen vacíos -- nunca crear un import_jobs sin ambos.
+//  2. La sucursal usada es SIEMPRE session.BranchID, la misma que
+//     ExtractSessionContextSecure ya resolvió y autorizó (existencia en
+//     `branches` + autorización en `user_branches` para este usuario,
+//     ver import_handlers.go) -- nunca un valor por defecto, nunca "la
+//     primera sucursal disponible".
+//  3. Ese mismo branch_id se propaga explícitamente hasta
+//     processImportFileAsync (nuevo parámetro) y de ahí a cada INSERT en
+//     `assets`.
 func handleImportUploadProcess(w http.ResponseWriter, r *http.Request) {
 	session := ExtractSessionContextSecure(r, db)
 	if !session.Valid {
 		http.Error(w, "Unauthorized: "+session.Error, http.StatusUnauthorized)
 		return
 	}
+	// Defensa explícita (además de session.Valid): un job de importación
+	// nunca debe crearse sin tenant_id NI branch_id ya resueltos y
+	// autorizados. No debería poder ocurrir que session.Valid=true con
+	// alguno de los dos vacío (ExtractSessionContextSecure ya lo exige),
+	// pero esta ruta escribe directamente en `assets` más adelante -- vale
+	// la pena no confiar ciegamente en ese invariante ajeno.
+	if session.TenantID == "" || session.BranchID == "" {
+		log.Printf("handleImportUploadProcess: sesión válida pero tenant_id/branch_id vacíos (tenant=%q, branch=%q) -- rechazando job", session.TenantID, session.BranchID)
+		http.Error(w, "Unauthorized: sesión sin tenant o sucursal válidos", http.StatusUnauthorized)
+		return
+	}
 
 	// Leer JSON del body
 	var requestBody struct {
-		UploadID   string `json:"uploadId"`
-		FileName   string `json:"fileName"`
-		TotalChunks int `json:"totalChunks"`
+		UploadID    string `json:"uploadId"`
+		FileName    string `json:"fileName"`
+		TotalChunks int    `json:"totalChunks"`
 	}
-	
+
 	err := json.NewDecoder(r.Body).Decode(&requestBody)
 	if err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	
+
 	uploadID := requestBody.UploadID
 	fileName := requestBody.FileName
 	totalChunksInt := requestBody.TotalChunks
@@ -142,13 +173,13 @@ func handleImportUploadProcess(w http.ResponseWriter, r *http.Request) {
 	// Iniciar procesamiento asincrónico
 	jobUUID := uuid.New().String()
 	fileType := detectFileType(fileName)
-	
+
 	// Validar que el tipo de archivo sea soportado
 	if fileType == "unknown" {
 		http.Error(w, "Unsupported file type. Please upload PDF, Excel, CSV, or Word files.", http.StatusBadRequest)
 		return
 	}
-	
+
 	var dbJobID int64
 	err = db.QueryRow(`
 		INSERT INTO import_jobs (job_uuid, tenant_id, user_id, branch_id, file_name, file_type, status, progress, message, created_at)
@@ -162,8 +193,9 @@ func handleImportUploadProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Procesar en background
-	go processImportFileAsync(dbJobID, filePath, fileName, session.TenantID, jobUUID)
+	// Procesar en background -- branchID explícito, ver corrección
+	// 2026-08-07 en la cabecera de esta función.
+	go processImportFileAsync(dbJobID, filePath, fileName, session.TenantID, session.BranchID, jobUUID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"jobId": jobUUID})
@@ -200,19 +232,31 @@ func handleImportUploadStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":          status,
-		"progress":        progress,
-		"message":         message,
-		"itemsExtracted":  itemsExtracted,
-		"result":          resultJSON,
+		"status":         status,
+		"progress":       progress,
+		"message":        message,
+		"itemsExtracted": itemsExtracted,
+		"result":         resultJSON,
 	})
 }
 
 // ─── Processing ──────────────────────────────────────────────────────────────
 
-func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID string, jobUUID string) {
+// processImportFileAsync -- ver corrección 2026-08-07 en la cabecera de
+// handleImportUploadProcess: branchID ahora es un parámetro explícito, y
+// se valida aquí también (defensa en profundidad -- esta función podría
+// llamarse desde otro lugar en el futuro sin pasar por
+// handleImportUploadProcess, y no debe confiar ciegamente en que quien la
+// llama ya validó tenant/sucursal).
+func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID string, branchID string, jobUUID string) {
 	log.Printf("DEBUG: processImportFileAsync started - dbJobID=%d, filePath=%s, fileName=%s", dbJobID, filePath, fileName)
 	defer os.Remove(filePath)
+
+	if tenantID == "" || branchID == "" {
+		log.Printf("ERROR: processImportFileAsync llamado sin tenant_id/branch_id (tenant=%q, branch=%q, job=%d) -- se rechaza el job en vez de asignar un valor por defecto", tenantID, branchID, dbJobID)
+		updateImportJobError(dbJobID, "Import rejected: missing tenant or branch context")
+		return // el defer de más arriba ya limpia filePath
+	}
 
 	// Verificar que el archivo existe
 	if _, err := os.Stat(filePath); err != nil {
@@ -352,8 +396,11 @@ func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID s
 		importUUID := uuid.New().String()
 		internalCode := fmt.Sprintf("IMP-%s", importUUID[:8])
 
-		// 3. Obtener branch_id (usamos el primero disponible o uno por defecto)
-		branchID := "550e8400-e29b-41d4-a716-446655440201"
+		// 3. branch_id: el validado por ExtractSessionContextSecure y
+		// propagado explícitamente desde handleImportUploadProcess -- ver
+		// corrección 2026-08-07. Ya NO se usa un UUID por defecto ni "el
+		// primero disponible": ambos habrían repetido el mismo problema de
+		// asignación incorrecta de sucursal que este fix corrige.
 
 		// 4. Insertar en assets
 		_, err = db.Exec(`
@@ -380,7 +427,7 @@ func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID s
 
 	resultJSON, _ := json.Marshal(result)
 
-		_, err = db.Exec(`
+	_, err = db.Exec(`
 			UPDATE import_jobs
 			SET status = 'done', progress = 100, message = 'Import completed', result_json = $1, items_extracted = $2, updated_at = NOW()
 			WHERE id = $3
@@ -395,35 +442,35 @@ func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID s
 
 func parsePDFSimple(filePath string) ([]map[string]interface{}, string, error) {
 	log.Printf("DEBUG: parsePDFSimple called with filePath=%s", filePath)
-	
+
 	// Verificar que el archivo existe
 	if _, err := os.Stat(filePath); err != nil {
 		log.Printf("ERROR: File does not exist: %s - %v", filePath, err)
 		return nil, "", fmt.Errorf("file not found: %v", err)
 	}
-	
+
 	cmd := exec.Command("pdftotext", "-layout", filePath, "-")
 	log.Printf("DEBUG: Executing pdftotext command: %v", cmd.Args)
-	
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	
+
 	err := cmd.Run()
 	if err != nil {
 		log.Printf("ERROR: pdftotext failed: %v", err)
 		log.Printf("DEBUG: pdftotext stderr: %s", stderr.String())
 		return nil, "", fmt.Errorf("pdftotext failed: %s", stderr.String())
 	}
-	
+
 	output := stdout.Bytes()
 
 	text := string(output)
 	log.Printf("DEBUG: pdftotext extracted %d characters", len(text))
-	
+
 	items := extractStructuredItemsFromText(text)
 	log.Printf("DEBUG: extractStructuredItemsFromText returned %d items", len(items))
-	
+
 	return items, "inventory", nil
 }
 

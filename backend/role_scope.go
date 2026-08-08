@@ -114,6 +114,7 @@ func RequireTenantTxScoped(database *sql.DB, next http.HandlerFunc) http.Handler
 		sw := &statusCapturingWriter{ResponseWriter: w}
 		ctx := withTenantDB(r.Context(), tx)
 		ctx = withTenantIdentity(ctx, sessCtx.UserID, sessCtx.TenantID, sessCtx.BranchID)
+		ctx = withTenantScope(ctx, scopeAll)
 		req := r.WithContext(ctx)
 
 		committed := false

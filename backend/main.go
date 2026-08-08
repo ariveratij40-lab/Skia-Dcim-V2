@@ -1,12 +1,12 @@
 package main
 
 import (
-	"github.com/google/uuid"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
@@ -47,8 +47,8 @@ type Branch struct {
 type Session struct {
 	ID        string `json:"id"`
 	UserID    string `json:"user_id"`
-	TenantID string `json:"tenantId"`
-	BranchID string `json:"branchId"`
+	TenantID  string `json:"tenantId"`
+	BranchID  string `json:"branchId"`
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expires_at"`
 }
@@ -185,7 +185,7 @@ func main() {
 	// Infraestructura DCIM — endpoints por módulo
 	http.HandleFunc("/api/infra/mdf-idf", handleMdfIdf)
 	http.HandleFunc("/api/infra/mdf-idf/check", handleMdfIdfCheck) // validación de duplicados en tiempo real
-	http.HandleFunc("/api/infra/mdf-idf/", handleEnsureRack) // /api/infra/mdf-idf/{id}/ensure-rack
+	http.HandleFunc("/api/infra/mdf-idf/", handleEnsureRack)       // /api/infra/mdf-idf/{id}/ensure-rack
 	http.HandleFunc("/api/infra/cert-evaluations", handleCertEvaluations)
 	http.HandleFunc("/api/infra/cert-evaluations/", handleCertEvaluationItem)
 	http.HandleFunc("/api/infra/racks", handleRacks)
@@ -222,8 +222,15 @@ func main() {
 	http.HandleFunc("/api/admin/feature-flags", handleAdminFeatureFlags)
 
 	// Rutas Asistente IA
-	http.HandleFunc("/api/ai/chat", handleAIChat)
-	http.HandleFunc("/api/ai/history", handleAIChatHistory)
+	// handleAIChat va con RequireTenantTxScoped (C-6, 2026-08-07): el
+	// conteo de `assets` en el contexto de la IA debe respetar
+	// app.branch_scope_all como cualquier otra consulta RLS-sensible
+	// (ver ai_chat.go/getTenantContext). handleAIChatHistory no toca
+	// `assets` ni ninguna tabla con RLS, pero se migra a RequireTenantTx
+	// de todas formas para no dejar una segunda resolución de sesión ad
+	// hoc en el mismo archivo.
+	http.HandleFunc("/api/ai/chat", RequireTenantTxScoped(db, handleAIChat))
+	http.HandleFunc("/api/ai/history", RequireTenantTx(db, handleAIChatHistory))
 	http.HandleFunc("/api/ai/process-pdf", handleProcessPDFWithAI)
 
 	// Rutas de Importación
@@ -386,7 +393,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	if len(tenants) == 1 {
 		autoTenantID = tenants[0].ID
 	}
-	
+
 	// Obtener branch del usuario
 	autoBranchID := ""
 	if autoTenantID != "" {
@@ -403,7 +410,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Branch found for user %s: %s", userID, autoBranchID)
 		}
 	}
-	
+
 	// Guardar sesión en DB con tenant_id y branch_id automático cuando aplica
 	if autoTenantID != "" && autoBranchID != "" {
 		_, err = db.Exec(

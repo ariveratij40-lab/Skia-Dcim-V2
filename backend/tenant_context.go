@@ -148,3 +148,40 @@ func TenantIdentityFromContext(ctx context.Context) (userID, tenantID, branchID 
 	}
 	return v.UserID, v.TenantID, v.BranchID, true
 }
+
+// ============================================================
+// Alcance de sucursal (branch_scope_all) en el contexto -- aditivo,
+// separado de tenantIdentity a propósito (bloque ai_chat/duplicate
+// detector/import, ronda 2026-08-07).
+//
+// La mayoría de los handlers (los que pasan por RequireTenantTx, no por
+// RequireTenantTxScoped) nunca necesitan saber si su transacción tiene
+// app.branch_scope_all='true' -- ya está reflejado en lo que la propia
+// base de datos les deja ver/escribir vía RLS. Pero algunos handlers
+// (p.ej. handleAIChat) necesitan el valor explícito para decidir qué
+// decirle al usuario ("estos números son de tu sucursal" vs "de todo el
+// tenant"), no solo para filtrar filas. Se agrega como valor de contexto
+// nuevo en lugar de ampliar la tupla de 4 valores de TenantIdentity
+// (que ya tiene 4 sitios de llamada existentes) para no tocar código que
+// no lo necesita.
+// ============================================================
+
+type tenantScopeCtxKey struct{}
+
+// withTenantScope inyecta si la transacción actual fue abierta con
+// app.branch_scope_all='true'. No exportada: solo RequireTenantTxScoped
+// debe poder ponerla.
+func withTenantScope(ctx context.Context, scopeAll bool) context.Context {
+	return context.WithValue(ctx, tenantScopeCtxKey{}, scopeAll)
+}
+
+// TenantScopeFromContext devuelve si la request actual tiene
+// app.branch_scope_all='true' activo. ok=false significa que el handler
+// no pasó por RequireTenantTxScoped (p.ej. pasó por RequireTenantTx
+// normal, que nunca activa este alcance) -- en ese caso el llamador debe
+// tratarlo como scopeAll=false, nunca asumir alcance global por defecto
+// ante la ausencia del valor.
+func TenantScopeFromContext(ctx context.Context) (scopeAll bool, ok bool) {
+	v, ok := ctx.Value(tenantScopeCtxKey{}).(bool)
+	return v, ok
+}

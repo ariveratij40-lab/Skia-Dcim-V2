@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -28,10 +29,10 @@ type ChatRequest struct {
 }
 
 type OpenAIRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	Stream   bool          `json:"stream"`
-	MaxTokens int          `json:"max_tokens,omitempty"`
+	Model     string        `json:"model"`
+	Messages  []ChatMessage `json:"messages"`
+	Stream    bool          `json:"stream"`
+	MaxTokens int           `json:"max_tokens,omitempty"`
 }
 
 type OpenAIResponse struct {
@@ -51,68 +52,125 @@ type OpenAIResponse struct {
 // ==========================================
 
 type TenantContext struct {
-	TenantName   string
-	UserName     string
-	TotalRacks   int
-	TotalNodos   int
-	TotalSwitches int
-	TotalPP      int
-	TotalUPS     int
-	TotalMDF     int
-	TotalIDF     int
-	TotalActivos int
-	TotalPlanos  int
-	TicketsAbiertos int
-	TicketsCriticos int
-	NodosSinFluke   int
-	NodosSinPanduit int
+	TenantName        string
+	UserName          string
+	TotalRacks        int
+	TotalNodos        int
+	TotalSwitches     int
+	TotalPP           int
+	TotalUPS          int
+	TotalMDF          int
+	TotalIDF          int
+	TotalActivos      int
+	TotalPlanos       int
+	TicketsAbiertos   int
+	TicketsCriticos   int
+	NodosSinFluke     int
+	NodosSinPanduit   int
 	RacksSinCapacidad int
 }
 
-func getTenantContext(tenantID string) TenantContext {
-	ctx := TenantContext{}
+// getTenantContext arma el resumen que se le da al asistente de IA.
+//
+// Alcance de `assets` (C-6, ronda 2026-08-07 -- decisión explícita del
+// usuario): a diferencia de las otras 8 métricas de esta función, que son
+// tenant-wide porque sus tablas no tienen RLS (racks/switches/nodos/
+// patch_panels/ups_pdus/mdf_idf/floor_plans -- limitación temporal
+// documentada, no una decisión de que "deban" ser tenant-wide para
+// siempre), `assets` SÍ tiene política RLS branch-aware
+// (migrations/015_assets_rls.sql, ampliada en 016). El conteo de activos
+// debe seguir el alcance real de la transacción de quien pregunta:
+//   - usuario de sucursal: cuenta solo su sucursal (RLS lo filtra solo).
+//   - admin/gestor con app.branch_scope_all='true' (ver
+//     RequireTenantTxScoped/role_scope.go): cuenta todo el tenant.
+//   - sin contexto de tenant válido: cero, nunca "todo el tenant" por
+//     omisión.
+//
+// Por eso esta consulta específica va por `tdb` (la transacción con
+// contexto de tenant que abrió el middleware), NO por `db` crudo -- si en
+// algún momento se reactiva RLS sobre `assets`, este número queda
+// automáticamente correcto sin tocar este archivo de nuevo. Las otras 8
+// consultas siguen en `tdb` también (mismo *sql.Tx, no hay motivo para
+// mezclar conexiones), pero su resultado no cambiaría aunque fueran por
+// `db` porque esas tablas no tienen RLS hoy.
+func getTenantContext(ctx context.Context, tdb TenantDB, tenantID string) TenantContext {
+	tc := TenantContext{}
 
 	// Nombre del tenant
-	db.QueryRow(`SELECT name FROM tenants WHERE id = $1`, tenantID).Scan(&ctx.TenantName)
+	tdb.QueryRowContext(ctx, `SELECT name FROM tenants WHERE id = $1`, tenantID).Scan(&tc.TenantName)
 
-	// Conteos de infraestructura
+	// Conteos de infraestructura sin RLS (tenant-wide hoy, limitación
+	// documentada -- ver comentario de la función).
 	tables := map[string]*int{
-		`SELECT COUNT(*) FROM racks WHERE tenant_id = $1`:         &ctx.TotalRacks,
-		`SELECT COUNT(*) FROM nodes WHERE tenant_id = $1`:         &ctx.TotalNodos,
-		`SELECT COUNT(*) FROM switches WHERE tenant_id = $1`:      &ctx.TotalSwitches,
-		`SELECT COUNT(*) FROM patch_panels WHERE tenant_id = $1`:  &ctx.TotalPP,
-		`SELECT COUNT(*) FROM ups_pdus WHERE tenant_id = $1`:      &ctx.TotalUPS,
-		`SELECT COUNT(*) FROM mdf_idf WHERE tenant_id = $1 AND type = 'MDF'`: &ctx.TotalMDF,
-		`SELECT COUNT(*) FROM mdf_idf WHERE tenant_id = $1 AND type = 'IDF'`: &ctx.TotalIDF,
-		`SELECT COUNT(*) FROM assets WHERE tenant_id = $1`:        &ctx.TotalActivos,
-		`SELECT COUNT(*) FROM floor_plans WHERE tenant_id = $1`:   &ctx.TotalPlanos,
+		`SELECT COUNT(*) FROM racks WHERE tenant_id = $1`:                    &tc.TotalRacks,
+		`SELECT COUNT(*) FROM nodes WHERE tenant_id = $1`:                    &tc.TotalNodos,
+		`SELECT COUNT(*) FROM switches WHERE tenant_id = $1`:                 &tc.TotalSwitches,
+		`SELECT COUNT(*) FROM patch_panels WHERE tenant_id = $1`:             &tc.TotalPP,
+		`SELECT COUNT(*) FROM ups_pdus WHERE tenant_id = $1`:                 &tc.TotalUPS,
+		`SELECT COUNT(*) FROM mdf_idf WHERE tenant_id = $1 AND type = 'MDF'`: &tc.TotalMDF,
+		`SELECT COUNT(*) FROM mdf_idf WHERE tenant_id = $1 AND type = 'IDF'`: &tc.TotalIDF,
+		`SELECT COUNT(*) FROM floor_plans WHERE tenant_id = $1`:              &tc.TotalPlanos,
+	}
+	for query, dest := range tables {
+		tdb.QueryRowContext(ctx, query, tenantID).Scan(dest)
 	}
 
-	for query, dest := range tables {
-		db.QueryRow(query, tenantID).Scan(dest)
-	}
+	// assets: branch-aware vía RLS -- ver comentario de la función.
+	tdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM assets WHERE tenant_id = $1`, tenantID).Scan(&tc.TotalActivos)
 
 	// Tickets
-	db.QueryRow(`SELECT COUNT(*) FROM tickets WHERE tenant_id = $1 AND status NOT IN ('cerrado','resuelto')`, tenantID).Scan(&ctx.TicketsAbiertos)
-	db.QueryRow(`SELECT COUNT(*) FROM tickets WHERE tenant_id = $1 AND priority = 'critica' AND status NOT IN ('cerrado','resuelto')`, tenantID).Scan(&ctx.TicketsCriticos)
+	tdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM tickets WHERE tenant_id = $1 AND status NOT IN ('cerrado','resuelto')`, tenantID).Scan(&tc.TicketsAbiertos)
+	tdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM tickets WHERE tenant_id = $1 AND priority = 'critica' AND status NOT IN ('cerrado','resuelto')`, tenantID).Scan(&tc.TicketsCriticos)
 
 	// Normativa
-	db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE tenant_id = $1 AND (fluke_pdf IS NULL OR fluke_pdf = '')`, tenantID).Scan(&ctx.NodosSinFluke)
-	db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE tenant_id = $1 AND (panduit_pdf IS NULL OR panduit_pdf = '')`, tenantID).Scan(&ctx.NodosSinPanduit)
+	tdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE tenant_id = $1 AND (fluke_pdf IS NULL OR fluke_pdf = '')`, tenantID).Scan(&tc.NodosSinFluke)
+	tdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE tenant_id = $1 AND (panduit_pdf IS NULL OR panduit_pdf = '')`, tenantID).Scan(&tc.NodosSinPanduit)
 
-	return ctx
+	return tc
 }
 
-func buildSystemPrompt(ctx TenantContext, userName string) string {
+// resolveAssetScopeLabel describe, en lenguaje natural, el alcance real
+// bajo el que se contaron los activos -- para que el propio asistente se
+// lo diga al usuario (decisión explícita del usuario, C-6 2026-08-07:
+// "la respuesta debería incluir el alcance utilizado"). No es una cadena
+// libre construida a partir de datos de sesión sin validar: branchID y
+// scopeAll ya vienen de TenantIdentityFromContext/TenantScopeFromContext,
+// es decir, ya pasaron por ExtractSessionContextSecure + resolveUserRole.
+func resolveAssetScopeLabel(ctx context.Context, tdb TenantDB, branchID string, scopeAll bool) string {
+	if scopeAll {
+		return "tenant completo"
+	}
+	if branchID == "" {
+		return "sin sucursal asignada"
+	}
+	var name string
+	if err := tdb.QueryRowContext(ctx, `SELECT name FROM branches WHERE id = $1`, branchID).Scan(&name); err != nil || name == "" {
+		return "sucursal no identificada"
+	}
+	return "sucursal " + name
+}
+
+// scopeLabel describe bajo qué alcance se contaron los activos (ver
+// resolveAssetScopeLabel) -- decisión explícita del usuario (C-6,
+// 2026-08-07): el asistente debe declarar el alcance, no solo el número,
+// justamente porque el resto de las métricas de este prompt SON
+// tenant-wide (limitación temporal, no garantía de alcance) y los activos
+// pueden no serlo.
+func buildSystemPrompt(ctx TenantContext, userName string, scopeLabel string) string {
 	return fmt.Sprintf(`Eres SKIA AI, el asistente inteligente de SKIA DCIM — una plataforma de gestión de infraestructura de telecomunicaciones y redes.
 
 Estás hablando con %s en la organización "%s".
 
 ESTADO ACTUAL DE LA INFRAESTRUCTURA:
 - Racks: %d | Nodos/Puntos de red: %d | Switches: %d | Patch Panels: %d
-- UPS/PDUs: %d | MDF: %d | IDF: %d | Activos: %d | Planos: %d
+- UPS/PDUs: %d | MDF: %d | IDF: %d | Planos: %d
+- Activos: %d (alcance: %s)
 - Tickets abiertos: %d (críticos: %d)
 - Nodos sin Prueba Fluke: %d | Nodos sin Certificado Panduit: %d
+
+NOTA SOBRE ALCANCE DE DATOS:
+- El conteo de "Activos" refleja el alcance indicado arriba (una sucursal específica, o el tenant completo si quien pregunta tiene permiso de alcance global). Si el alcance es una sucursal, acláralo si el usuario pregunta por el total de la organización.
+- El resto de las métricas (racks, nodos, switches, etc.) son del tenant completo independientemente del alcance de activos.
 
 CAPACIDADES:
 - Puedes responder preguntas sobre el estado de la infraestructura usando los datos anteriores
@@ -131,7 +189,8 @@ INSTRUCCIONES:
 		userName,
 		ctx.TenantName,
 		ctx.TotalRacks, ctx.TotalNodos, ctx.TotalSwitches, ctx.TotalPP,
-		ctx.TotalUPS, ctx.TotalMDF, ctx.TotalIDF, ctx.TotalActivos, ctx.TotalPlanos,
+		ctx.TotalUPS, ctx.TotalMDF, ctx.TotalIDF, ctx.TotalPlanos,
+		ctx.TotalActivos, scopeLabel,
 		ctx.TicketsAbiertos, ctx.TicketsCriticos,
 		ctx.NodosSinFluke, ctx.NodosSinPanduit,
 		time.Now().Format("02/01/2006 15:04"),
@@ -304,6 +363,15 @@ func streamResponse(body io.Reader, w http.ResponseWriter) (string, error) {
 // Handler principal /api/ai/chat
 // ==========================================
 
+// handleAIChat se registra en main.go envuelto en RequireTenantTxScoped
+// (no RequireTenantTx): necesita saber si el usuario tiene
+// app.branch_scope_all='true' para poder decirle al asistente -- y al
+// propio usuario, en la respuesta -- bajo qué alcance está contando
+// activos (ver getTenantContext/resolveAssetScopeLabel). Antes de esta
+// migración (C-6, ronda 2026-08-07) este handler resolvía la sesión por
+// su cuenta con una consulta ad hoc a `sessions`/`users`, divergente de
+// ExtractSessionContextSecure -- el mismo patrón de riesgo que ya se
+// corrigió en dcim_assets.go.
 func handleAIChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
@@ -314,24 +382,23 @@ func handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Autenticación
-	sessionToken := extractSessionToken(r)
-	if sessionToken == "" {
-		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+	tdb, ok := TenantDBFromContext(r.Context())
+	if !ok {
+		log.Printf("handleAIChat: falta contexto de tenant -- ¿se registró sin RequireTenantTxScoped?")
+		jsonErr(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-
-	var userID, userName, tenantID string
-	err := db.QueryRow(
-		`SELECT u.id, u.name, s.tenant_id
-		 FROM sessions s JOIN users u ON s.user_id = u.id
-		 WHERE s.token = $1 AND s.expires_at > $2`,
-		sessionToken, time.Now().Unix(),
-	).Scan(&userID, &userName, &tenantID)
-
-	if err != nil {
-		http.Error(w, `{"error":"Invalid session"}`, http.StatusUnauthorized)
+	userID, tenantID, branchID, ok := TenantIdentityFromContext(r.Context())
+	if !ok {
+		log.Printf("handleAIChat: falta identidad de tenant -- ¿se registró sin RequireTenantTxScoped?")
+		jsonErr(w, "Internal error", http.StatusInternalServerError)
 		return
+	}
+	scopeAll, _ := TenantScopeFromContext(r.Context()) // ok=false → false, nunca alcance global por defecto
+
+	var userName string
+	if err := tdb.QueryRowContext(r.Context(), `SELECT name FROM users WHERE id = $1`, userID).Scan(&userName); err != nil {
+		log.Printf("handleAIChat: no se pudo resolver nombre de usuario %s: %v", userID, err)
 	}
 
 	// Parsear request
@@ -341,9 +408,11 @@ func handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Construir contexto del tenant
-	tenantCtx := getTenantContext(tenantID)
-	systemPrompt := buildSystemPrompt(tenantCtx, userName)
+	// Construir contexto del tenant (assets respeta el alcance real de la
+	// sesión -- ver getTenantContext)
+	tenantCtx := getTenantContext(r.Context(), tdb, tenantID)
+	scopeLabel := resolveAssetScopeLabel(r.Context(), tdb, branchID, scopeAll)
+	systemPrompt := buildSystemPrompt(tenantCtx, userName, scopeLabel)
 
 	// Prepend system message
 	messages := append([]ChatMessage{
@@ -415,8 +484,9 @@ func handleAIChat(w http.ResponseWriter, r *http.Request) {
 	if !wantsStream {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
-			"content": content,
-			"model":   model,
+			"content":     content,
+			"model":       model,
+			"asset_scope": scopeLabel,
 		})
 	}
 }
@@ -425,25 +495,26 @@ func handleAIChat(w http.ResponseWriter, r *http.Request) {
 // Handler para obtener historial de chat
 // ==========================================
 
+// handleAIChatHistory se registra en main.go envuelto en RequireTenantTx
+// (no necesita Scoped -- ai_chat_history no tiene RLS ni concepto de
+// sucursal; migrado igual para no mantener una segunda resolución de
+// sesión ad hoc divergente de ExtractSessionContextSecure en el mismo
+// archivo que handleAIChat).
 func handleAIChatHistory(w http.ResponseWriter, r *http.Request) {
-	sessionToken := extractSessionToken(r)
-	if sessionToken == "" {
-		http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+	tdb, ok := TenantDBFromContext(r.Context())
+	if !ok {
+		log.Printf("handleAIChatHistory: falta contexto de tenant -- ¿se registró sin RequireTenantTx?")
+		jsonErr(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	userID, tenantID, _, ok := TenantIdentityFromContext(r.Context())
+	if !ok {
+		log.Printf("handleAIChatHistory: falta identidad de tenant -- ¿se registró sin RequireTenantTx?")
+		jsonErr(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
-	var userID, tenantID string
-	err := db.QueryRow(
-		`SELECT u.id, s.tenant_id FROM sessions s JOIN users u ON s.user_id = u.id
-		 WHERE s.token = $1 AND s.expires_at > $2`,
-		sessionToken, time.Now().Unix(),
-	).Scan(&userID, &tenantID)
-	if err != nil {
-		http.Error(w, `{"error":"Invalid session"}`, http.StatusUnauthorized)
-		return
-	}
-
-	rows, err := db.Query(
+	rows, err := tdb.QueryContext(r.Context(),
 		`SELECT user_message, assistant_message, model, created_at
 		 FROM ai_chat_history
 		 WHERE tenant_id = $1 AND user_id = $2
