@@ -128,7 +128,31 @@ La recomendación de contención o rotación expresa una medida futura condicion
 
 - Origen de evidencia: `HTTP STAGING`, `STAGING VPS`.
 - Estado: `BLOQUEADO`.
-- Evidencia resumida: no se hicieron login, creación de sesión, acceso tenant/branch ni Redis autenticado. Los dos Redis respondieron `NOAUTH` al ping sin credenciales.
+- Evidencia resumida: no se hicieron login, creación de sesión, acceso tenant/branch ni Redis autenticado. El inventario solo contiene un actor no clasificado como prueba, un tenant y una branch. Los dos Redis respondieron `NOAUTH` al ping sin credenciales.
 - Riesgo: crítico; autenticación, cookies reales, aislamiento funcional y persistencia de sesión siguen sin probarse.
 - Recomendación: diseñar una ronda autorizada con cuentas de prueba y provisión segura de credenciales.
 - Fase correctiva sugerida: según resultados.
+
+## SEC-014 — Endpoints críticos observados fallan cerrados sin sesión
+
+- Origen de evidencia: `HTTP STAGING`.
+- Estado: `APROBADO`.
+- Evidencia resumida: `/api/auth/me`, `/api/auth/tenants`, `/api/dcim/assets` y `/api/import/recent` respondieron `401` sin cookie de sesión.
+- Riesgo: medio; la muestra no cubre todas las rutas ni demuestra aislamiento con sesión válida.
+- Recomendación: ampliar la matriz únicamente con fixtures autorizados.
+- Fase correctiva sugerida: según cobertura posterior.
+
+## SEC-015 — Cobertura insuficiente para aislamiento tenant/branch
+
+- Origen de evidencia: `POSTGRES STAGING`, `HTTP STAGING`.
+- Estado: `BLOQUEADO`.
+- Evidencia resumida: hay un actor, un tenant y una branch; no existe un par de control para cruces. No se recuperaron passwords ni se reutilizaron sesiones existentes.
+- Riesgo: crítico; no se puede determinar si la aplicación permite algún cruce autenticado.
+- Recomendación: aprobar y aprovisionar fixtures segregados, sin tocar usuarios reales.
+- Fase correctiva sugerida: fase de fixtures y validación de aislamiento por aprobar.
+
+## Clasificación de aislamiento
+
+**C) Pruebas insuficientes/BLOQUEADAS.**
+
+La aplicación demostró bloqueo sin sesión en cuatro endpoints, pero no fue posible ejecutar cruces autenticados. RLS está deshabilitado según el catálogo PostgreSQL observado en ronda 3, por lo que no hay defensa en profundidad demostrada. No se declara SKIA seguro.

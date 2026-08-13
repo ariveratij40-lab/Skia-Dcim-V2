@@ -91,7 +91,7 @@
 
 - Origen de evidencia: `HTTP STAGING`, `POSTGRES STAGING`.
 - Estado: `BLOQUEADO`.
-- Evidencia resumida: no se suministraron cuentas/fixtures; no se creó sesión ni contexto tenant/branch runtime.
+- Evidencia resumida: no se suministraron cuentas/fixtures; el inventario solo contiene un actor no clasificado como prueba, un tenant y una branch. No se creó sesión ni contexto tenant/branch runtime.
 - Riesgo: crítico.
 - Recomendación: autorizar una ronda específica con identidades de prueba segregadas.
 - Fase correctiva sugerida: según resultados.
@@ -104,3 +104,22 @@
 - Riesgo: medio/alto; se observan múltiples archivos Compose, redes y directorios de proyecto.
 - Recomendación: generar en una fase autorizada una vista estructural redactada o un manifest seguro.
 - Fase correctiva sugerida: `PHASE-CORR-DEPLOYMENT-TRACEABILITY`.
+
+### B-007 — Fixtures insuficientes para cruces
+
+- Origen de evidencia: `POSTGRES STAGING`, `HTTP STAGING`.
+- Estado: `BLOQUEADO`.
+- Evidencia resumida: se requieren al menos dos tenants/branches de control y actores con permisos diferenciados; staging solo ofrece una combinación utilizable para inventario y ninguna credencial de prueba autorizada.
+- Riesgo: crítico.
+- Recomendación: definir una fase de fixtures con rollback, datos exclusivamente de prueba y entrega segura de credenciales.
+- Fase correctiva sugerida: fase de fixtures por aprobar.
+
+## Estado final de bloqueos PHASE-001
+
+- Login correcto/incorrecto: `BLOQUEADO`.
+- Sesión válida, logout y expiración/revocación: `BLOQUEADO`.
+- Selección tenant/branch: `BLOQUEADO`.
+- Cruces tenant/branch: `BLOQUEADO`.
+- Consulta autenticada de activos: `BLOQUEADO`.
+- Correlación aplicación–RLS: `BLOQUEADO`.
+- Acceso sin sesión en endpoints muestreados: `APROBADO` con HTTP `401`.

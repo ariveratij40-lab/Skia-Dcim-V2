@@ -178,3 +178,52 @@ No existe un único “SHA del VPS” que represente todos los servicios. El SHA
 ## Conclusión de ronda 3
 
 La auditoría remota de solo lectura se ejecutó correctamente. Los servicios básicos están disponibles, pero la trazabilidad Git/despliegue, el estado efectivo de RLS, los errores de migración/esquema y la ausencia de una revisión fuente verificable para el frontend impiden aprobar técnicamente a SKIA para avanzar.
+
+## Ronda 4 — Autenticación y aislamiento funcional
+
+### Descubrimiento seguro
+
+- Origen de evidencia: `POSTGRES STAGING`, `STAGING VPS`.
+- Estado: `APROBADO`.
+- Evidencia resumida: existe un actor lógico (`actor_1`) con rol `admin`, asociado a `tenant_1` y `branch_1`. El correo no coincide con patrones demo/test. No se encontraron fixtures ni cuentas de prueba autorizadas. No se leyeron passwords, tokens, cookies ni IDs completos.
+- Cobertura: 1 actor, 1 tenant y 1 branch.
+
+El inventario no ofrece dos tenants o dos branches para probar cruces y el único actor no está clasificado como cuenta de prueba. Recuperar o resetear su contraseña está fuera de alcance. Por ello no se ejecutaron login, logout autenticado, selección de contexto ni consultas autenticadas.
+
+### BL-014 — Acceso sin sesión falla cerrado
+
+- Origen de evidencia: `HTTP STAGING`.
+- Estado: `APROBADO`.
+- Evidencia resumida: GET sin cookies a `/api/auth/me`, `/api/auth/tenants`, `/api/dcim/assets` y `/api/import/recent` respondió `401` en los cuatro casos. No se conservaron ni mostraron cuerpos completos.
+- Riesgo: medio; confirma únicamente ausencia de acceso anónimo en esos endpoints.
+- Recomendación: conservar como smoke test; validar rutas restantes en una futura matriz autenticada.
+- Fase correctiva sugerida: según cobertura posterior.
+
+### BL-015 — Sesiones existentes observables solo de forma agregada
+
+- Origen de evidencia: `POSTGRES STAGING`.
+- Estado: `APROBADO`.
+- Evidencia resumida: 16 sesiones históricas, 14 expiradas y 2 no expiradas; ninguna carece de tenant o branch. No se leyeron tokens, session IDs ni usuarios asociados.
+- Riesgo: medio; la presencia de sesiones no autoriza su uso y no prueba validación/revocación HTTP.
+- Recomendación: usar exclusivamente cuentas/fixtures de prueba suministrados expresamente en una futura ronda.
+- Fase correctiva sugerida: no aplica.
+
+### BL-016 — Login y aislamiento cruzado bloqueados por falta de fixtures
+
+- Origen de evidencia: `HTTP STAGING`, `POSTGRES STAGING`.
+- Estado: `BLOQUEADO`.
+- Evidencia resumida: no existe una cuenta de prueba utilizable sin recuperar credenciales; solo hay un tenant y una branch. No se intentó login, reset, reutilización de sesión ni modificación de usuarios.
+- Riesgo: crítico; no se demostró el comportamiento funcional tenant/branch ni la relación entre filtros de aplicación y RLS.
+- Recomendación: crear/proveer mediante una fase autorizada al menos dos tenants, dos branches por alcance relevante y actores segregados, con credenciales entregadas fuera del repositorio.
+- Fase correctiva sugerida: fase de fixtures y validación de aislamiento por aprobar.
+
+## Clasificación final de aislamiento
+
+**C) Pruebas insuficientes/BLOQUEADAS.**
+
+La aplicación bloquea los accesos sin sesión observados, pero no fue posible demostrar ni refutar cruces tenant/branch. PostgreSQL continúa mostrando RLS deshabilitado en las tablas auditadas, por lo que tampoco existe defensa en profundidad demostrada a nivel BD. Esta conclusión no permite declarar seguro el sistema.
+
+## Conclusión de ejecución de PHASE-001
+
+- **PHASE-001 ejecutada y auditada correctamente:** sí para las rondas autorizadas. Las pruebas no posibles quedaron explícitamente `BLOQUEADO` y no se ocultaron fallos.
+- **SKIA técnicamente aprobado para avanzar:** no. Persisten RLS no habilitado, falta de trazabilidad del despliegue, divergencia de esquema, suite Go fallida y pruebas autenticadas/aislamiento cruzado sin ejecutar.

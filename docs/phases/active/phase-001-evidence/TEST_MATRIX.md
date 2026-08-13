@@ -1,4 +1,4 @@
-# PHASE-001 — Matriz de pruebas (rondas 1, 2 y 3)
+# PHASE-001 — Matriz de pruebas (rondas 1, 2, 3 y 4)
 
 | ID | Prueba | Origen | Estado | Evidencia resumida | Riesgo | Recomendación | Fase correctiva sugerida |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -35,7 +35,23 @@
 | T-031 | Headers de seguridad frontend | HTTP STAGING | FALLIDO | HEAD respondió `200`; no se observaron HSTS, CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy ni Permissions-Policy en los headers filtrados. | Alto | Confirmar política objetivo y endurecer en fase autorizada. | `PHASE-CORR-WEB-SECURITY` |
 | T-032 | CORS health público | HTTP STAGING | FALLIDO | Origen permitido recibe credenciales y origen explícitamente no permitido recibe `Access-Control-Allow-Origin: *`. | Medio/alto | Definir y probar política explícita en fase autorizada. | `PHASE-CORR-WEB-SECURITY` |
 | T-033 | Logs mínimos de arranque | STAGING VPS | FALLIDO | API inicia, pero falla migración por permisos; se observan errores de columnas/funciones ausentes y Server Actions. | Alto | Clasificar y corregir en fases separadas. | `PHASE-CORR-MIGRATION-GOVERNANCE`, `PHASE-CORR-FRONTEND-DEPLOYMENT` |
+| T-034 | Descubrimiento de actores/contextos de prueba | POSTGRES STAGING | FALLIDO | Solo existen `actor_1`, `tenant_1` y `branch_1`; el actor no coincide con patrón demo/test y no hay fixtures detectables. No se leyeron credenciales ni IDs completos. | Alto | Proveer fixtures segregados mediante fase autorizada. | Fase de fixtures por aprobar |
+| T-035 | Login correcto | HTTP STAGING | BLOQUEADO | Actor de prueba sin credenciales utilizables no disponible. | Alto | Proveer credenciales de fixture fuera del repositorio. | Según resultados |
+| T-036 | Login incorrecto | HTTP STAGING | BLOQUEADO | No se inició el flujo de login al no existir un actor de prueba autorizado; se evitó afectar rate limits/logs de un usuario real. | Medio | Ejecutar con fixture autorizado. | Según resultados |
+| T-037 | Sesión válida y `/api/auth/me` | HTTP STAGING | BLOQUEADO | No se creó ni reutilizó sesión; las sesiones existentes no fueron leídas. | Alto | Ejecutar con fixture autorizado. | Según resultados |
+| T-038 | Logout y sesión revocada/expirada | HTTP STAGING | BLOQUEADO | No existe sesión de prueba autorizada. La DB solo se consultó de forma agregada. | Medio/alto | Ejecutar con fixture autorizado. | Según resultados |
+| T-039 | Acceso sin sesión a contexto/datos | HTTP STAGING | APROBADO | GET a `/api/auth/me`, `/api/auth/tenants`, `/api/dcim/assets` y `/api/import/recent` respondió `401`. | Medio | Ampliar cobertura futura sin asumir protección de todas las rutas. | Según resultados |
+| T-040 | Selección válida de tenant | HTTP STAGING | BLOQUEADO | Requiere login de prueba; no disponible. | Alto | Ejecutar con fixture autorizado. | Según resultados |
+| T-041 | Selección válida de branch | HTTP STAGING | BLOQUEADO | Requiere login y tenant de prueba; no disponibles. | Alto | Ejecutar con fixture autorizado. | Según resultados |
+| T-042 | Tenant ajeno / cruce tenant | HTTP STAGING | BLOQUEADO | Solo existe un tenant y no hay segundo actor/tenant de control. | Crítico | Preparar al menos dos tenants segregados. | Fase de fixtures por aprobar |
+| T-043 | Branch ajena / cruce branch | HTTP STAGING | BLOQUEADO | Solo existe una branch y no hay branch de control. | Crítico | Preparar al menos dos branches con accesos distintos. | Fase de fixtures por aprobar |
+| T-044 | Consulta de activos autorizada | HTTP STAGING | BLOQUEADO | No existe sesión de prueba autorizada. | Alto | Ejecutar con fixture y datos de prueba. | Según resultados |
+| T-045 | Fail-closed sin contexto tenant/branch | HTTP STAGING | BLOQUEADO | El acceso totalmente sin sesión devuelve `401`, pero no pudo crearse una sesión válida carente de contexto sin escribir datos. | Alto | Diseñar fixture específico y no modificar usuarios reales. | Según resultados |
+| T-046 | Correlación aplicación–RLS | HTTP STAGING / POSTGRES STAGING | BLOQUEADO | No hubo consulta autenticada que correlacionar. RLS permanece estáticamente observado como deshabilitado. | Crítico | Ejecutar trazabilidad con fixture y consultas de catálogo autorizadas. | `PHASE-CORR-RLS-ENABLEMENT` / fase de fixtures |
+| T-047 | Resumen agregado de sesiones | POSTGRES STAGING | APROBADO | 16 sesiones: 14 expiradas, 2 no expiradas, 0 sin tenant y 0 sin branch; sin leer tokens/IDs. | Medio | No reutilizar sesiones existentes; usar fixtures autorizados. | No aplica |
 
 ## Regla de interpretación
 
 Los estados locales no demuestran el comportamiento del VPS. Una prueba `FALLIDO` puede constituir evidencia válida de PHASE-001; no implica que SKIA esté aprobado para avanzar.
+
+Clasificación de aislamiento de ronda 4: **C — pruebas insuficientes/BLOQUEADAS**. Los `401` sin sesión no demuestran bloqueo de cruces autenticados y RLS no aporta defensa en profundidad efectiva según la evidencia de ronda 3.
