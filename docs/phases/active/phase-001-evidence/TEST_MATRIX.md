@@ -1,4 +1,4 @@
-# PHASE-001 — Matriz de pruebas (rondas 1 y 2)
+# PHASE-001 — Matriz de pruebas (rondas 1, 2 y 3)
 
 | ID | Prueba | Origen | Estado | Evidencia resumida | Riesgo | Recomendación | Fase correctiva sugerida |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -21,6 +21,20 @@
 | T-017 | `go env GOMOD GOVERSION` | LOCAL | APROBADO | `go env GOMOD GOVERSION`; <0.01 s; exit `0`; resolvió `backend/go.mod` y `go1.26.5`. | Bajo | Conservar como evidencia del módulo evaluado. | No aplica |
 | T-018 | Build local backend | LOCAL | APROBADO | `env GOCACHE=/private/tmp/skia-phase001-go-cache go build -trimpath -o /private/tmp/skia-phase001-backend-audit .`; ~5.32 s; exit `0`. El binario no se ejecutó y fue eliminado. | Bajo/medio | Repetir luego en contenedor canónico; no extrapolar al VPS. | No aplica |
 | T-019 | Integridad de `go.mod`/`go.sum` | LOCAL | APROBADO | Hashes idénticos antes/después de pruebas y build; Git no reporta cambios. El build y la compilación de tests resolvieron los checksums requeridos antes del fallo en runtime del test. | Bajo | Mantener control tras futuras validaciones. | No aplica |
+| T-020 | Checkout Git del VPS | STAGING VPS | FALLIDO | `/opt/apps/skia/staging`: remoto `skia-platform`, rama `main`, SHA `cc80606…`, múltiples cambios locales y archivos no rastreados. | Crítico | Convergencia y despliegue inmutable en fase autorizada. | `PHASE-CORR-DEPLOYMENT-TRACEABILITY` |
+| T-021 | Release fuente de API | STAGING VPS | APROBADO | Label de Compose apunta a `/opt/apps/skia/releases/d155910`; checkout limpio en SHA completo `d155910c231e96446672508534ccec83bf0d830f`. | Medio | Añadir revisión OCI verificable a futuras imágenes. | `PHASE-CORR-DEPLOYMENT-TRACEABILITY` |
+| T-022 | Fuente exacta de frontend desplegado | STAGING VPS | BLOQUEADO | La imagen web no tiene etiqueta OCI de revisión y fue creada desde el checkout staging; no puede asociarse de forma probatoria a un SHA. | Alto | Incorporar revisión de fuente a la imagen/manifest de release. | `PHASE-CORR-DEPLOYMENT-TRACEABILITY` |
+| T-023 | Estado de contenedores SKIA | STAGING VPS | APROBADO | API, PostgreSQL, web y Redis aparecen running/healthy; pgAdmin running sin healthcheck; reinicios `0`. | Medio | Resolver duplicidad de Redis/redes y definir Compose canónico. | `PHASE-CORR-DEPLOYMENT-TRACEABILITY` |
+| T-024 | Identidad PostgreSQL | POSTGRES STAGING | APROBADO | Consulta administrativa de solo lectura: DB `skia_db`, PostgreSQL `16.14`; API observada en `pg_stat_activity` como `skia_runtime`. | Bajo | Conservar evidencia y separar usuario auditor del runtime. | No aplica |
+| T-025 | Estado efectivo RLS | POSTGRES STAGING | FALLIDO | `assets`, `asset_logs` y `asset_relationships`: políticas presentes y `relforcerowsecurity=true`, pero `relrowsecurity=false`. | Crítico | Habilitar/verificar RLS solo mediante fase correctiva y rollback aprobados. | `PHASE-CORR-RLS-ENABLEMENT` |
+| T-026 | Contexto tenant/branch de sesión administrativa | POSTGRES STAGING | APROBADO | `current_setting(..., true)` devolvió valores vacíos en la sesión de auditoría; no se ejecutó cambio de contexto. | Bajo | Validar contexto runtime mediante pruebas autenticadas posteriores. | Según resultados |
+| T-027 | Redis sin credenciales | STAGING VPS | BLOQUEADO | Ambos contenedores están healthy; `redis-cli ping` sin password respondió `NOAUTH`. No se leyó/reutilizó secreto. | Medio | Proveer mecanismo de ping autenticado seguro si se requiere evidencia adicional. | No aplica |
+| T-028 | Health API interno | HTTP STAGING | APROBADO | GET no autenticado respondió HTTP `200`, JSON. | Bajo | Mantener como smoke test. | No aplica |
+| T-029 | Frontend público | HTTP STAGING | APROBADO | GET no autenticado respondió HTTP `200`, HTML. | Bajo | No equivale a prueba funcional. | No aplica |
+| T-030 | Health API público | HTTP STAGING | APROBADO | GET no autenticado respondió HTTP `200`, JSON. | Bajo | Mantener como smoke test. | No aplica |
+| T-031 | Headers de seguridad frontend | HTTP STAGING | FALLIDO | HEAD respondió `200`; no se observaron HSTS, CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy ni Permissions-Policy en los headers filtrados. | Alto | Confirmar política objetivo y endurecer en fase autorizada. | `PHASE-CORR-WEB-SECURITY` |
+| T-032 | CORS health público | HTTP STAGING | FALLIDO | Origen permitido recibe credenciales y origen explícitamente no permitido recibe `Access-Control-Allow-Origin: *`. | Medio/alto | Definir y probar política explícita en fase autorizada. | `PHASE-CORR-WEB-SECURITY` |
+| T-033 | Logs mínimos de arranque | STAGING VPS | FALLIDO | API inicia, pero falla migración por permisos; se observan errores de columnas/funciones ausentes y Server Actions. | Alto | Clasificar y corregir en fases separadas. | `PHASE-CORR-MIGRATION-GOVERNANCE`, `PHASE-CORR-FRONTEND-DEPLOYMENT` |
 
 ## Regla de interpretación
 

@@ -2,13 +2,13 @@
 
 ## Bloqueantes
 
-### B-001 — Acceso a staging no autorizado/provisto
+### B-001 — Acceso de solo lectura a staging
 
 - Origen de evidencia: `STAGING VPS`, `POSTGRES STAGING`, `HTTP STAGING`.
-- Estado: `BLOQUEADO`.
-- Evidencia resumida: el repositorio local no concede acceso a SSH, Docker/Redis/PostgreSQL del VPS, logs, archivos o servicios reales.
-- Riesgo: crítico; impide validar el estado efectivo.
-- Recomendación: proporcionar un mecanismo expresamente autorizado y de mínimo privilegio. No buscar ni reutilizar credenciales existentes.
+- Estado: `APROBADO`.
+- Evidencia resumida: acceso SSH mediante ssh-agent autorizado; Docker metadata, SELECTs PostgreSQL, HTTP y logs mínimos fueron consultados sin `sudo` ni escrituras.
+- Riesgo: bajo para la ronda completada; la autorización no se extiende a cambios ni autenticación funcional.
+- Recomendación: mantener mínimo privilegio y autorizaciones por ronda. No buscar ni reutilizar credenciales existentes.
 - Fase correctiva sugerida: no aplica.
 
 ### B-002 — Runner local incompleto para frontend y contenedores
@@ -66,3 +66,41 @@
 - Riesgo: medio/alto; falta de reproducibilidad, tamaño y posible inclusión de metadatos/cadenas sensibles.
 - Recomendación: verificar procedencia y política de artefactos en fase autorizada.
 - Fase correctiva sugerida: `PHASE-CORR-REPOSITORY-HYGIENE`.
+
+## Bloqueantes restantes de staging
+
+### B-003 — SHA fuente exacto del frontend
+
+- Origen de evidencia: `STAGING VPS`.
+- Estado: `BLOQUEADO`.
+- Evidencia resumida: imagen sin etiqueta de revisión y checkout fuente con cambios locales; no existe asociación probatoria a un commit.
+- Riesgo: alto.
+- Recomendación: añadir metadatos de revisión y releases inmutables en fase autorizada.
+- Fase correctiva sugerida: `PHASE-CORR-DEPLOYMENT-TRACEABILITY`.
+
+### B-004 — Redis autenticado
+
+- Origen de evidencia: `STAGING VPS`.
+- Estado: `BLOQUEADO`.
+- Evidencia resumida: contenedores healthy; ping sin credenciales devuelve `NOAUTH`. No se accedió a passwords.
+- Riesgo: medio.
+- Recomendación: proveer un mecanismo autenticado seguro si se requiere validar `PING`.
+- Fase correctiva sugerida: no aplica.
+
+### B-005 — Pruebas funcionales autenticadas y aislamiento
+
+- Origen de evidencia: `HTTP STAGING`, `POSTGRES STAGING`.
+- Estado: `BLOQUEADO`.
+- Evidencia resumida: no se suministraron cuentas/fixtures; no se creó sesión ni contexto tenant/branch runtime.
+- Riesgo: crítico.
+- Recomendación: autorizar una ronda específica con identidades de prueba segregadas.
+- Fase correctiva sugerida: según resultados.
+
+### B-006 — Configuración efectiva de Compose
+
+- Origen de evidencia: `STAGING VPS`.
+- Estado: `BLOQUEADO`.
+- Evidencia resumida: no se ejecutó `docker compose config` porque expandiría archivos `.env` y podría revelar secretos.
+- Riesgo: medio/alto; se observan múltiples archivos Compose, redes y directorios de proyecto.
+- Recomendación: generar en una fase autorizada una vista estructural redactada o un manifest seguro.
+- Fase correctiva sugerida: `PHASE-CORR-DEPLOYMENT-TRACEABILITY`.

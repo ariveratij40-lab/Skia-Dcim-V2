@@ -96,3 +96,39 @@ La recomendación de contención o rotación expresa una medida futura condicion
 - Riesgo: crítico; no se validaron login, logout, selección de tenant/branch ni accesos cruzados.
 - Recomendación: suministrar cuentas de prueba y mecanismo HTTP autorizado.
 - Fase correctiva sugerida: según resultados.
+
+## SEC-010 — RLS no habilitado efectivamente en tablas con políticas
+
+- Origen de evidencia: `POSTGRES STAGING`.
+- Estado: `FALLIDO`.
+- Evidencia resumida: `assets`, `asset_logs` y `asset_relationships` tienen políticas y `FORCE RLS`, pero el catálogo informa `relrowsecurity=false`. `skia_runtime` no es superusuario ni tiene BYPASSRLS y mantiene conexiones activas/inactivas contra la DB.
+- Riesgo: crítico; las consultas runtime pueden no estar sujetas a las políticas de aislamiento esperadas.
+- Recomendación: validar impacto y proponer habilitación controlada con rollback en una fase autorizada; no modificar RLS durante PHASE-001.
+- Fase correctiva sugerida: `PHASE-CORR-RLS-ENABLEMENT`.
+
+## SEC-011 — Headers de seguridad no observados en frontend público
+
+- Origen de evidencia: `HTTP STAGING`.
+- Estado: `FALLIDO`.
+- Evidencia resumida: la respuesta HEAD `200` no mostró HSTS, CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy ni Permissions-Policy en los headers auditados.
+- Riesgo: alto; faltan capas defensivas del navegador en la respuesta observada.
+- Recomendación: definir política de headers y verificar compatibilidad antes de implementarla.
+- Fase correctiva sugerida: `PHASE-CORR-WEB-SECURITY`.
+
+## SEC-012 — Backups de archivos `.env` presentes en el VPS
+
+- Origen de evidencia: `STAGING VPS`.
+- Estado: `FALLIDO`.
+- Evidencia resumida: el staging contiene `.env`, `.env.staging` y múltiples backups de `.env`, incluido uno bajo `_backups/`. Solo se registraron nombres; no se leyó contenido.
+- Riesgo: crítico; copias redundantes amplían superficie de exposición y dificultan rotación/trazabilidad.
+- Recomendación: inventariar propietarios/permisos y definir retención en fase autorizada sin leer ni copiar secretos durante PHASE-001.
+- Fase correctiva sugerida: `PHASE-CORR-SECRETS`.
+
+## SEC-013 — Verificación autenticada pendiente
+
+- Origen de evidencia: `HTTP STAGING`, `STAGING VPS`.
+- Estado: `BLOQUEADO`.
+- Evidencia resumida: no se hicieron login, creación de sesión, acceso tenant/branch ni Redis autenticado. Los dos Redis respondieron `NOAUTH` al ping sin credenciales.
+- Riesgo: crítico; autenticación, cookies reales, aislamiento funcional y persistencia de sesión siguen sin probarse.
+- Recomendación: diseñar una ronda autorizada con cuentas de prueba y provisión segura de credenciales.
+- Fase correctiva sugerida: según resultados.

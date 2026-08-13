@@ -1,4 +1,4 @@
-# PHASE-001 — Baseline report (rondas 1 y 2)
+# PHASE-001 — Baseline report (rondas 1, 2 y 3)
 
 ## Control de ejecución
 
@@ -124,3 +124,57 @@ La inspección de nombres, sin leer ni reproducir valores, identificó:
 ## Conclusión de ronda 2
 
 Las validaciones locales fueron ejecutadas y documentadas correctamente. El backend compila, pero la suite Go predeterminada falla. El frontend y los contenedores no fueron construidos. SKIA no queda técnicamente aprobado para avanzar: persisten hallazgos `FALLIDO` y validaciones de staging `BLOQUEADO`/`NO EJECUTADO`.
+
+## Ronda 3 — Staging VPS
+
+### Identidad de código observada
+
+| Referencia | Repositorio/ruta | SHA | Observación |
+| --- | --- | --- | --- |
+| GitHub `main` / baseline PHASE-001 | `ariveratij40-lab/Skia-Dcim-V2` | `214e84da113cdb46f9309e72d7f5748a3d1ddca3` | Baseline autorizado. |
+| Evidencia local publicada | `phase/001-execution` | `b0462252eb44e8f6723026172c1f6db92e9c0cbd` | Añade evidencia; no es código desplegado. |
+| Checkout esperado del VPS | `/opt/apps/skia/staging` | `cc80606e744bf64e1534c4b6818d0ff2e29b5031` | Rama `main`, remoto `ariveratij40-lab/skia-platform`, árbol ampliamente modificado/no rastreado. |
+| Release usado por API | `/opt/apps/skia/releases/d155910` | `d155910c231e96446672508534ccec83bf0d830f` | Checkout Git limpio; Compose label del contenedor API apunta a este release. |
+| Fuente exacta de imagen web | Imagen `staging-skia_web_staging` | No demostrable | Sin etiqueta OCI de revisión; Compose label apunta al checkout staging. |
+
+No existe un único “SHA del VPS” que represente todos los servicios. El SHA demostrable de la API desplegada es `d155910c231e96446672508534ccec83bf0d830f`; el frontend no expone una revisión fuente verificable.
+
+### BL-010 — Checkout operativo diverge del repositorio canónico
+
+- Origen de evidencia: `STAGING VPS`.
+- Estado: `FALLIDO`.
+- Evidencia resumida: `/opt/apps/skia/staging` usa el remoto `ariveratij40-lab/skia-platform`, SHA `cc80606…`, y contiene numerosos cambios staged/unstaged/untracked. No coincide con GitHub `main` ni con el baseline PHASE-001.
+- Riesgo: crítico; no hay trazabilidad reproducible entre fuente canónica, checkout y servicios desplegados.
+- Recomendación: diseñar una fase de convergencia y despliegue inmutable; no modificar el checkout durante PHASE-001.
+- Fase correctiva sugerida: `PHASE-CORR-DEPLOYMENT-TRACEABILITY`.
+
+### BL-011 — Servicios SKIA activos, sanos según Docker y sin reinicios
+
+- Origen de evidencia: `STAGING VPS`.
+- Estado: `APROBADO`.
+- Evidencia resumida: API, PostgreSQL, web y dos Redis aparecen `running/healthy`; pgAdmin está `running` sin healthcheck; todos muestran `RestartCount=0`.
+- Riesgo: medio; existen dos Redis y dos redes/configuraciones de Compose, lo que incrementa ambigüedad operativa.
+- Recomendación: documentar cuál Redis y Compose son canónicos para cada servicio.
+- Fase correctiva sugerida: `PHASE-CORR-DEPLOYMENT-TRACEABILITY`.
+
+### BL-012 — Health HTTP básico disponible
+
+- Origen de evidencia: `HTTP STAGING`.
+- Estado: `APROBADO`.
+- Evidencia resumida: API interna `http://127.0.0.1:8080/api/health`, frontend público y health público respondieron HTTP `200`.
+- Riesgo: medio; solo demuestra disponibilidad no autenticada, no corrección funcional.
+- Recomendación: conservar como smoke test y no extrapolar a login, tenant, branch o RLS.
+- Fase correctiva sugerida: no aplica.
+
+### BL-013 — Errores operativos visibles en logs
+
+- Origen de evidencia: `STAGING VPS`.
+- Estado: `FALLIDO`.
+- Evidencia resumida: el API registra fallo de migración por permisos sobre `public`; API/PostgreSQL registran columnas/funciones ausentes; web registra Server Actions no encontradas.
+- Riesgo: alto; indica divergencia de esquema y posibles despliegues frontend no coherentes.
+- Recomendación: convertir cada error reproducible en fase correctiva después de cerrar la auditoría.
+- Fase correctiva sugerida: `PHASE-CORR-MIGRATION-GOVERNANCE` y `PHASE-CORR-FRONTEND-DEPLOYMENT`.
+
+## Conclusión de ronda 3
+
+La auditoría remota de solo lectura se ejecutó correctamente. Los servicios básicos están disponibles, pero la trazabilidad Git/despliegue, el estado efectivo de RLS, los errores de migración/esquema y la ausencia de una revisión fuente verificable para el frontend impiden aprobar técnicamente a SKIA para avanzar.

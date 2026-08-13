@@ -69,8 +69,35 @@ Archivos observados:
 ### M-006 — Estado efectivo de migraciones y RLS
 
 - Origen de evidencia: `POSTGRES STAGING`.
-- Estado: `BLOQUEADO`.
-- Evidencia resumida: no hay acceso autorizado a PostgreSQL staging.
-- Riesgo: crítico; se desconoce qué SQL/versiones/políticas están realmente aplicados.
-- Recomendación: consultar `schema_migrations`, catálogo de políticas, atributos del rol y esquema con acceso autorizado de solo lectura.
-- Fase correctiva sugerida: según hallazgos.
+- Estado: `FALLIDO`.
+- Evidencia resumida: `schema_migrations` existe y registra `006`, `007`, `008`, `009`, `011`, `012`, dos variantes `013`, dos variantes `014` y `015_email_verification`. No existe una correspondencia uno-a-uno con los SQL versionados del repositorio canónico.
+- Riesgo: crítico; el esquema efectivo combina migraciones de orígenes/numeraciones distintos.
+- Recomendación: construir una matriz de equivalencia y un baseline de esquema antes de cualquier migración nueva.
+- Fase correctiva sugerida: `PHASE-CORR-MIGRATION-GOVERNANCE`.
+
+### M-007 — Migración automática falla bajo el rol runtime
+
+- Origen de evidencia: `STAGING VPS`, `POSTGRES STAGING`.
+- Estado: `FALLIDO`.
+- Evidencia resumida: log de arranque del API: creación/acceso a `schema_migrations` denegado para el rol runtime. El servidor continúa arrancando después de registrar el error.
+- Riesgo: crítico; el código intenta migrar con un rol deliberadamente restringido y puede operar sobre un esquema incompleto.
+- Recomendación: separar formalmente migración privilegiada de runtime y definir comportamiento fail-closed/fail-open mediante decisión arquitectónica.
+- Fase correctiva sugerida: `PHASE-CORR-MIGRATION-GOVERNANCE`.
+
+### M-008 — Divergencia de esquema observable
+
+- Origen de evidencia: `STAGING VPS`, `POSTGRES STAGING`.
+- Estado: `FALLIDO`.
+- Evidencia resumida: logs recientes reportan ausencia de `custom_segment_1` y de una función esperada; el API también registra el fallo de lectura asociado.
+- Riesgo: alto; funcionalidades pueden depender de objetos no aplicados.
+- Recomendación: comparar esquema efectivo con el baseline canónico mediante consultas de catálogo antes de proponer corrección.
+- Fase correctiva sugerida: `PHASE-CORR-MIGRATION-GOVERNANCE`.
+
+### M-009 — RLS declarado pero no habilitado
+
+- Origen de evidencia: `POSTGRES STAGING`.
+- Estado: `FALLIDO`.
+- Evidencia resumida: existen tres políticas (`assets`, `asset_logs`, `asset_relationships`) basadas en contexto tenant/branch. Las tablas muestran `relforcerowsecurity=true` y `relrowsecurity=false`; el rol `skia_runtime` tiene SELECT y no posee superuser ni BYPASSRLS.
+- Riesgo: crítico; `FORCE` no sustituye `ENABLE`, por lo que las políticas no aparecen efectivas.
+- Recomendación: tratar como hallazgo de aislamiento crítico; no ejecutar `ALTER TABLE` durante PHASE-001.
+- Fase correctiva sugerida: `PHASE-CORR-RLS-ENABLEMENT`.
