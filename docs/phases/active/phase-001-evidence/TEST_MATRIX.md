@@ -1,0 +1,27 @@
+# PHASE-001 — Matriz de pruebas (rondas 1 y 2)
+
+| ID | Prueba | Origen | Estado | Evidencia resumida | Riesgo | Recomendación | Fase correctiva sugerida |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| T-001 | Verificar rama y SHA autorizados | LOCAL | APROBADO | `HEAD` coincide con `214e84da113cdb46f9309e72d7f5748a3d1ddca3` y la rama sigue `origin/phase/001-execution`. | Bajo | Conservar el SHA en toda evidencia. | No aplica |
+| T-002 | Inspección estática de estructura y manifiestos | LOCAL | APROBADO | Componentes y puntos de entrada inventariados sin modificar archivos evaluados. | Bajo | Mantener inventario actualizado durante la fase. | No aplica |
+| T-003 | `git diff --check` de evidencia | LOCAL | APROBADO | Ejecutado al finalizar la documentación de esta ronda, sin errores de whitespace. | Bajo | Repetir antes de cualquier commit posterior. | No aplica |
+| T-004 | Pruebas Go predeterminadas sin tag de integración | LOCAL | FALLIDO | `env GOCACHE=/private/tmp/skia-phase001-go-cache go test ./...`; ~6.62 s; exit `1`. `TestHandleInventoryImportRoutes_DetailValid` entra en pánico por DB nula en `ExtractSessionContextSecure`. Un primer intento con caché por defecto no ejecutó pruebas por permisos del sandbox. | Alto | Corregir preparación/aislamiento del test en fase autorizada; no ocultar el fallo. | `PHASE-CORR-GO-TESTS` |
+| T-005 | Pruebas Go de integración | POSTGRES STAGING | BLOQUEADO | Requieren `TEST_DATABASE_URL` y, en varios casos, un rol administrativo separado; no hay acceso autorizado. | Alto | Proveer base de prueba aislada y credenciales seguras, no necesariamente staging real. | Según resultados |
+| T-006 | Build de aplicación Next.js (`npm run build`) | LOCAL | BLOQUEADO | No fue ejecutado: Node/npm y `node_modules` no están disponibles; no se instalaron dependencias. No existe evidencia empírica de éxito o fallo. | Medio | Usar runner/CI autorizado. | Según resultados |
+| T-007 | Build de imagen Docker frontend | CONTAINER LOCAL | BLOQUEADO | Docker no está disponible y no se ejecutó `docker build`. La inspección estática detecta que el Dockerfile referencia `next.config.js`, ausente en el baseline; es un fallo estático de reproducibilidad, no un resultado empírico. | Alto | Ejecutar en runner Docker autorizado y mantener separado el resultado empírico. | `PHASE-CORR-FRONTEND-BUILD` |
+| T-008 | Build de imagen backend | CONTAINER LOCAL | NO EJECUTADO | Docker no está disponible; el Dockerfile descarga módulos y paquetes de red. | Medio | Ejecutar en runner autorizado con red controlada. | Según resultados |
+| T-009 | Configuración efectiva de Compose | CONTAINER LOCAL | NO EJECUTADO | Docker Compose no está disponible y la variable obligatoria de runtime no fue suministrada. | Medio | Validar en runner autorizado con secretos fuera del repositorio. | Según resultados |
+| T-010 | Health check de API real | HTTP STAGING | BLOQUEADO | No hay mecanismo de acceso expresamente autorizado. | Alto | Habilitar acceso HTTP de prueba autorizado. | Según resultados |
+| T-011 | Login, logout, tenant y branch | HTTP STAGING | BLOQUEADO | Requiere staging real y cuentas de prueba suministradas de forma segura. | Alto | Preparar fixtures y autorización. | Según resultados |
+| T-012 | Rol efectivo y RLS | POSTGRES STAGING | BLOQUEADO | El código/configuración sugieren rol restringido, pero no prueban el rol efectivo ni las políticas activas. | Crítico | Consultar metadatos y ejecutar pruebas de aislamiento con acceso autorizado. | Según resultados |
+| T-013 | Redis y persistencia de sesión real | STAGING VPS | BLOQUEADO | No hay acceso a servicios/logs del VPS. | Alto | Validar servicio y flujos sin revelar credenciales. | Según resultados |
+| T-014 | Revisión estática de secretos | LOCAL | FALLIDO | Se detectaron secretos literales versionados; todos se reportan redactados. | Crítico | Contención y rotación en fase autorizada. | `PHASE-CORR-SECRETS` |
+| T-015 | Revisión estática de cookies/CORS/uploads | LOCAL | FALLIDO | Se observan atributos de cookie inconsistentes, fallback CORS `*` y límites de upload no alineados. | Alto | Validar comportamiento HTTP y definir endurecimiento posterior. | `PHASE-CORR-WEB-SECURITY` |
+| T-016 | `go version` | LOCAL | APROBADO | `go version`; ~0.03 s; exit `0`; runner `go1.26.5 darwin/arm64`. | Bajo | Comparar con Go `1.25.0` declarado y con imagen canónica futura. | No aplica |
+| T-017 | `go env GOMOD GOVERSION` | LOCAL | APROBADO | `go env GOMOD GOVERSION`; <0.01 s; exit `0`; resolvió `backend/go.mod` y `go1.26.5`. | Bajo | Conservar como evidencia del módulo evaluado. | No aplica |
+| T-018 | Build local backend | LOCAL | APROBADO | `env GOCACHE=/private/tmp/skia-phase001-go-cache go build -trimpath -o /private/tmp/skia-phase001-backend-audit .`; ~5.32 s; exit `0`. El binario no se ejecutó y fue eliminado. | Bajo/medio | Repetir luego en contenedor canónico; no extrapolar al VPS. | No aplica |
+| T-019 | Integridad de `go.mod`/`go.sum` | LOCAL | APROBADO | Hashes idénticos antes/después de pruebas y build; Git no reporta cambios. El build y la compilación de tests resolvieron los checksums requeridos antes del fallo en runtime del test. | Bajo | Mantener control tras futuras validaciones. | No aplica |
+
+## Regla de interpretación
+
+Los estados locales no demuestran el comportamiento del VPS. Una prueba `FALLIDO` puede constituir evidencia válida de PHASE-001; no implica que SKIA esté aprobado para avanzar.
