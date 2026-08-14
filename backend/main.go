@@ -570,6 +570,60 @@ func handleSelectTenant(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSelectBranch(w http.ResponseWriter, r *http.Request) {
+	handleSelectBranchWithDeps(w, r, branchSelectionDeps{
+		loadSession: func(token string, now int64) (string, string, error) {
+			var userID, tenantID string
+			err := db.QueryRow(
+				"SELECT user_id, tenant_id FROM sessions WHERE token = $1 AND expires_at > $2",
+				token, now,
+			).Scan(&userID, &tenantID)
+			return userID, tenantID, err
+		},
+		userHasBranchAccess: func(userID, tenantID, branchID string) (bool, error) {
+			var allowed bool
+			err := db.QueryRow(
+				`SELECT EXISTS(
+					SELECT 1
+					FROM branches b
+					JOIN user_branches ub ON ub.branch_id = b.id
+					WHERE b.id = $1 AND b.tenant_id = $2 AND ub.user_id = $3
+				)`,
+				branchID, tenantID, userID,
+			).Scan(&allowed)
+			return allowed, err
+		},
+		updateBranch: func(token, userID, tenantID, branchID string, now int64) (bool, error) {
+			result, err := db.Exec(
+				`UPDATE sessions s
+				 SET branch_id = $1
+				 WHERE s.token = $2
+				   AND s.user_id = $3
+				   AND s.tenant_id = $4
+				   AND s.expires_at > $5
+				   AND EXISTS (
+					 SELECT 1
+					 FROM branches b
+					 JOIN user_branches ub ON ub.branch_id = b.id
+					 WHERE b.id = $1 AND b.tenant_id = s.tenant_id AND ub.user_id = s.user_id
+				   )`,
+				branchID, token, userID, tenantID, now,
+			)
+			if err != nil {
+				return false, err
+			}
+			rows, err := result.RowsAffected()
+			return rows == 1, err
+		},
+	})
+}
+
+type branchSelectionDeps struct {
+	loadSession         func(token string, now int64) (userID, tenantID string, err error)
+	userHasBranchAccess func(userID, tenantID, branchID string) (bool, error)
+	updateBranch        func(token, userID, tenantID, branchID string, now int64) (bool, error)
+}
+
+func handleSelectBranchWithDeps(w http.ResponseWriter, r *http.Request, deps branchSelectionDeps) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -588,35 +642,31 @@ func handleSelectBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "BranchID required", http.StatusBadRequest)
 		return
 	}
-	// Obtener tenant_id de la sesión activa
-	var tenantID string
-	err := db.QueryRow(
-		"SELECT tenant_id FROM sessions WHERE token = $1 AND expires_at > $2",
-		sessionToken, time.Now().Unix(),
-	).Scan(&tenantID)
-	if err != nil || tenantID == "" {
+	now := time.Now().Unix()
+	userID, tenantID, err := deps.loadSession(sessionToken, now)
+	if err != nil || userID == "" || tenantID == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// SEGURIDAD CRITICA: verificar que la branch pertenece al tenant de la sesión
-	var belongs bool
-	db.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM branches WHERE id = $1 AND tenant_id = $2)",
-		req.BranchID, tenantID,
-	).Scan(&belongs)
-	if !belongs {
-		log.Printf("SECURITY: tenant %s attempted to access branch %s without permission", tenantID, req.BranchID)
+	allowed, err := deps.userHasBranchAccess(userID, tenantID, req.BranchID)
+	if err != nil {
+		log.Printf("ERROR select-branch authorization check failed")
+		http.Error(w, "Error checking branch access", http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		log.Printf("SECURITY: branch selection denied for authenticated user")
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	// Actualizar sesión con branch_id validado
-	_, err = db.Exec(
-		"UPDATE sessions SET branch_id = $1 WHERE token = $2",
-		req.BranchID, sessionToken,
-	)
+	updated, err := deps.updateBranch(sessionToken, userID, tenantID, req.BranchID, now)
 	if err != nil {
-		log.Printf("ERROR select-branch update session: %v branchID=[%s] token=[%s]", err, req.BranchID, sessionToken)
+		log.Printf("ERROR select-branch update session: %v", err)
 		http.Error(w, "Error updating session", http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
