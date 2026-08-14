@@ -40,7 +40,7 @@ SELECT (:'wrapper_checksum_verified'='SHA256_MATCHED_BY_ROLLBACK_WRAPPER'
         AND :'phase002_environment'='staging'
         AND :'execution_approval'='PHASE002_ROLLBACK_V1_APPROVED'
         AND current_database()=:'expected_db'
-        AND :'expected_role_permission_count' ~ '^[1-9][0-9]*$'
+        AND :'expected_role_permission_count' = '3'
         AND :'expected_session_count' ~ '^[0-9]+$') AS authorized \gset
 \if :authorized
 \else
@@ -75,7 +75,7 @@ BEGIN
   END IF;
 
   FOR table_key,expected_count IN SELECT * FROM (VALUES
-    ('tenants',3),('branches',6),('users',9),('roles',6),('user_tenants',9),
+    ('tenants',3),('branches',6),('users',9),('roles',3),('user_tenants',9),
     ('user_branches',15),('user_roles',9),
     ('role_permissions',current_setting('phase002.expected_role_permission_count')::integer),
     ('sessions',current_setting('phase002.expected_session_count')::integer),
@@ -91,7 +91,7 @@ BEGIN
        (table_name='tenants' AND (exact_id::text NOT LIKE '02000000-0000-4000-8000-%' OR logical_alias !~ '^TEST-TENANT-[ABC]$'))
     OR (table_name='branches' AND (exact_id::text NOT LIKE '02000000-0000-4000-8100-%' OR logical_alias !~ '^TEST-BRANCH-[ABC][12]$'))
     OR (table_name='users' AND (exact_id::text NOT LIKE '02000000-0000-4000-8200-%' OR logical_alias !~ '^phase002-[abc]-(admin|operator|multi)@test[.]invalid$'))
-    OR (table_name='roles' AND (exact_id::text NOT LIKE '02000000-0000-4000-8300-%' OR logical_alias !~ '^(admin|operator):'))
+    OR (table_name='roles' AND (exact_id::text NOT IN ('02000000-0000-4000-8300-0000000000a2','02000000-0000-4000-8300-0000000000b2','02000000-0000-4000-8300-0000000000c2') OR logical_alias !~ '^operator:'))
     OR (table_name='assets' AND logical_alias !~ '^TEST-ASSET-[ABC][12]-[0-9]{3}$')
     OR (table_name='asset_logs' AND logical_alias !~ '^TEST-ASSET-[ABC][12]-[0-9]{3}:log$')
     OR (table_name='asset_relationships' AND logical_alias !~ '^TEST-ASSET-[ABC][12]-001->TEST-ASSET-[ABC][12]-002$')

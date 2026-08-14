@@ -26,9 +26,21 @@
   \echo 'BLOCKED: repo_root missing for external-path guard'
   \quit 20
 \endif
+\if :{?profile_baseline_approval}
+\else
+  \echo 'BLOCKED: PHASE-003 profile baseline approval missing'
+  \quit 20
+\endif
+\if :{?neutral_role_name}
+\else
+  \echo 'BLOCKED: neutral_role_name missing'
+  \quit 20
+\endif
 
 SELECT (:'phase002_environment' = 'staging'
         AND :'execution_approval' = 'PHASE002_FIXTURE_V1_APPROVED'
+        AND :'profile_baseline_approval' = 'PHASE003_OPERATOR_BASELINE_APPROVED'
+        AND :'neutral_role_name' = 'operator'
         AND current_database() = :'expected_db'
         AND left(:'manifest_path',1) = '/'
         AND position(:'repo_root' in :'manifest_path') <> 1) AS authorized \gset
@@ -111,63 +123,60 @@ WITH access(user_id,branch_id) AS (VALUES
 INSERT INTO user_branches(id,user_id,branch_id)
 SELECT md5('phase002:user_branch:'||user_id||':'||branch_id)::uuid,user_id,branch_id FROM access ON CONFLICT DO NOTHING;
 
--- Application authorization uses the exact role names admin/operator. The
--- multi-branch actor reuses operator semantics; branch membership is separate.
+-- PHASE-003 baseline: ADMIN/OPERATOR/MULTI are logical personas, not runtime
+-- role names. All actors in a tenant share one neutral operator role; only
+-- user_branches differs. dcim:view below is normative and NO ENFORCED.
 WITH role_seed(tenant_id,suffix,name,description) AS (VALUES
- ('02000000-0000-4000-8000-00000000000a'::uuid,'a1','admin','PHASE-002 clone of canonical admin permissions'),('02000000-0000-4000-8000-00000000000a','a2','operator','PHASE-002 clone of canonical operator permissions'),
- ('02000000-0000-4000-8000-00000000000b','b1','admin','PHASE-002 clone of canonical admin permissions'),('02000000-0000-4000-8000-00000000000b','b2','operator','PHASE-002 clone of canonical operator permissions'),
- ('02000000-0000-4000-8000-00000000000c','c1','admin','PHASE-002 clone of canonical admin permissions'),('02000000-0000-4000-8000-00000000000c','c2','operator','PHASE-002 clone of canonical operator permissions'))
+ ('02000000-0000-4000-8000-00000000000a'::uuid,'a2','operator','PHASE-002 neutral isolation role; dcim:view NO ENFORCED'),
+ ('02000000-0000-4000-8000-00000000000b','b2','operator','PHASE-002 neutral isolation role; dcim:view NO ENFORCED'),
+ ('02000000-0000-4000-8000-00000000000c','c2','operator','PHASE-002 neutral isolation role; dcim:view NO ENFORCED'))
 INSERT INTO roles(id,tenant_id,name,description,is_global)
 SELECT ('02000000-0000-4000-8300-0000000000'||suffix)::uuid,tenant_id,name,description,false FROM role_seed ON CONFLICT DO NOTHING;
 
 WITH assignment(user_id,tenant_id,role_id) AS (VALUES
- ('02000000-0000-4000-8200-0000000000a1'::uuid,'02000000-0000-4000-8000-00000000000a'::uuid,'02000000-0000-4000-8300-0000000000a1'::uuid),('02000000-0000-4000-8200-0000000000a2','02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8300-0000000000a2'),('02000000-0000-4000-8200-0000000000a3','02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8300-0000000000a2'),
- ('02000000-0000-4000-8200-0000000000b1','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b1'),('02000000-0000-4000-8200-0000000000b2','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b2'),('02000000-0000-4000-8200-0000000000b3','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b2'),
- ('02000000-0000-4000-8200-0000000000c1','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c1'),('02000000-0000-4000-8200-0000000000c2','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c2'),('02000000-0000-4000-8200-0000000000c3','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c2'))
+ ('02000000-0000-4000-8200-0000000000a1'::uuid,'02000000-0000-4000-8000-00000000000a'::uuid,'02000000-0000-4000-8300-0000000000a2'::uuid),('02000000-0000-4000-8200-0000000000a2','02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8300-0000000000a2'),('02000000-0000-4000-8200-0000000000a3','02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8300-0000000000a2'),
+ ('02000000-0000-4000-8200-0000000000b1','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b2'),('02000000-0000-4000-8200-0000000000b2','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b2'),('02000000-0000-4000-8200-0000000000b3','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b2'),
+ ('02000000-0000-4000-8200-0000000000c1','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c2'),('02000000-0000-4000-8200-0000000000c2','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c2'),('02000000-0000-4000-8200-0000000000c3','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c2'))
 INSERT INTO user_roles(id,user_id,tenant_id,role_id)
 SELECT md5('phase002:user_role:'||user_id)::uuid,user_id,tenant_id,role_id FROM assignment ON CONFLICT DO NOTHING;
 
--- Clone the exact permission_id set from deterministic real source roles.
--- The guard below blocks absent or divergent admin/operator semantics.
+-- Assign only the exact PHASE-003 normative catalog permission. It is
+-- deliberately classified NO ENFORCED and is not a CAMPAÑA A security barrier.
 DO $rbac_guard$
-DECLARE admin_variants integer; operator_variants integer; empty_role_sets integer; source_pairs integer;
+DECLARE permission_rows integer; normative_permission_id uuid; permission_global boolean;
 BEGIN
-  WITH role_sets AS (
-    SELECT r.name,count(rp.permission_id) AS permission_count,
-           md5(coalesce(string_agg(rp.permission_id::text,',' ORDER BY rp.permission_id),'')) AS permission_hash
-    FROM roles r LEFT JOIN role_permissions rp ON rp.role_id=r.id
-    WHERE r.name IN ('admin','operator') AND NOT r.is_global
-      AND r.id::text NOT LIKE '02000000-0000-4000-8300-%'
-    GROUP BY r.id,r.name)
-  SELECT count(DISTINCT permission_hash) FILTER (WHERE name='admin'),
-         count(DISTINCT permission_hash) FILTER (WHERE name='operator'),
-         count(*) FILTER (WHERE permission_count=0)
-  INTO admin_variants,operator_variants,empty_role_sets FROM role_sets;
-  IF admin_variants<>1 OR operator_variants<>1 OR empty_role_sets<>0 THEN
-    RAISE EXCEPTION 'safe RBAC equivalence cannot be determined';
+  SELECT count(*),(array_agg(id ORDER BY id))[1],bool_or(is_global)
+    INTO permission_rows,normative_permission_id,permission_global
+    FROM permissions WHERE code='dcim:view';
+  IF permission_rows<>1
+     OR normative_permission_id<>'550e8400-e29b-41d4-a716-446655440401'::uuid
+     OR permission_global THEN
+    RAISE EXCEPTION 'approved normative dcim:view baseline is incompatible';
   END IF;
-  SELECT count(*) INTO source_pairs FROM (
-    SELECT r.tenant_id FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
-    WHERE r.name IN ('admin','operator') AND NOT r.is_global
-      AND r.id::text NOT LIKE '02000000-0000-4000-8300-%'
-    GROUP BY r.tenant_id HAVING count(DISTINCT r.name)=2) pairs;
-  IF source_pairs=0 THEN RAISE EXCEPTION 'no complete real admin/operator source pair'; END IF;
+  IF EXISTS (SELECT 1 FROM roles WHERE id::text LIKE '02000000-0000-4000-8300-%'
+             AND (id::text NOT IN ('02000000-0000-4000-8300-0000000000a2',
+                                   '02000000-0000-4000-8300-0000000000b2',
+                                   '02000000-0000-4000-8300-0000000000c2')
+                  OR name<>'operator' OR is_global)) THEN
+    RAISE EXCEPTION 'canonical fixture role has privileged or unexpected runtime semantics';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM roles r
+    WHERE (r.id='02000000-0000-4000-8300-0000000000a2'::uuid AND r.tenant_id<>'02000000-0000-4000-8000-00000000000a'::uuid)
+       OR (r.id='02000000-0000-4000-8300-0000000000b2'::uuid AND r.tenant_id<>'02000000-0000-4000-8000-00000000000b'::uuid)
+       OR (r.id='02000000-0000-4000-8300-0000000000c2'::uuid AND r.tenant_id<>'02000000-0000-4000-8000-00000000000c'::uuid)
+  ) THEN
+    RAISE EXCEPTION 'canonical neutral role is attached to an unexpected tenant';
+  END IF;
 END $rbac_guard$;
 
 INSERT INTO role_permissions(id,role_id,permission_id)
-SELECT md5('phase002:rp:'||target.id||':'||source_rp.permission_id)::uuid,target.id,source_rp.permission_id
-FROM roles target
-JOIN LATERAL (
-  WITH source_tenant AS (
-    SELECT r.tenant_id FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
-    WHERE r.name IN ('admin','operator') AND NOT r.is_global
-      AND r.id::text NOT LIKE '02000000-0000-4000-8300-%'
-    GROUP BY r.tenant_id HAVING count(DISTINCT r.name)=2 ORDER BY r.tenant_id LIMIT 1)
-  SELECT r.id FROM roles r WHERE r.name=target.name AND NOT r.is_global
-    AND r.tenant_id=(SELECT tenant_id FROM source_tenant)
-) source_role ON true
-JOIN role_permissions source_rp ON source_rp.role_id=source_role.id
-WHERE target.id::text LIKE '02000000-0000-4000-8300-%' ON CONFLICT DO NOTHING;
+SELECT md5('phase002:rp:'||target.id||':'||p.id)::uuid,target.id,p.id
+FROM roles target CROSS JOIN permissions p
+WHERE target.id::text LIKE '02000000-0000-4000-8300-%'
+  AND p.code='dcim:view'
+  AND p.id='550e8400-e29b-41d4-a716-446655440401'::uuid
+  AND NOT p.is_global ON CONFLICT DO NOTHING;
 
 WITH fixture_branches(tenant_id,branch_id,code) AS (VALUES
  ('02000000-0000-4000-8000-00000000000a'::uuid,'02000000-0000-4000-8100-0000000000a1'::uuid,'A1'),('02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8100-0000000000a2','A2'),
@@ -196,26 +205,17 @@ WHERE s.internal_code LIKE 'TEST-ASSET-%' ON CONFLICT DO NOTHING;
 DO $fixture_postcondition$
 DECLARE expected_rp integer; observed_rp integer;
 BEGIN
-  SELECT 3*sum(permission_count) INTO expected_rp FROM (
-    SELECT source.name,count(rp.permission_id) AS permission_count
-    FROM (WITH source_tenant AS (
-            SELECT r.tenant_id FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
-            WHERE r.name IN ('admin','operator') AND NOT r.is_global
-              AND r.id::text NOT LIKE '02000000-0000-4000-8300-%'
-            GROUP BY r.tenant_id HAVING count(DISTINCT r.name)=2 ORDER BY r.tenant_id LIMIT 1)
-          SELECT id,name FROM roles WHERE name IN ('admin','operator') AND NOT is_global
-            AND tenant_id=(SELECT tenant_id FROM source_tenant)) source
-    JOIN role_permissions rp ON rp.role_id=source.id GROUP BY source.name) source_counts;
+  expected_rp := 3;
   SELECT count(*) INTO observed_rp FROM role_permissions rp JOIN roles r ON r.id=rp.role_id
     WHERE r.id::text LIKE '02000000-0000-4000-8300-%';
   IF (SELECT count(*) FROM tenants WHERE id::text LIKE '02000000-0000-4000-8000-%')<>3
     OR (SELECT count(*) FROM branches WHERE id::text LIKE '02000000-0000-4000-8100-%')<>6
     OR (SELECT count(*) FROM users WHERE id::text LIKE '02000000-0000-4000-8200-%')<>9
-    OR (SELECT count(*) FROM roles WHERE id::text LIKE '02000000-0000-4000-8300-%')<>6
+    OR (SELECT count(*) FROM roles WHERE id::text IN ('02000000-0000-4000-8300-0000000000a2','02000000-0000-4000-8300-0000000000b2','02000000-0000-4000-8300-0000000000c2'))<>3
     OR (SELECT count(*) FROM user_tenants ut JOIN users u ON u.id=ut.user_id WHERE u.id::text LIKE '02000000-0000-4000-8200-%')<>9
     OR (SELECT count(*) FROM user_branches ub JOIN users u ON u.id=ub.user_id WHERE u.id::text LIKE '02000000-0000-4000-8200-%')<>15
     OR (SELECT count(*) FROM user_roles ur JOIN users u ON u.id=ur.user_id WHERE u.id::text LIKE '02000000-0000-4000-8200-%')<>9
-    OR expected_rp IS NULL OR observed_rp<>expected_rp
+    OR observed_rp<>expected_rp
     OR (SELECT count(*) FROM assets WHERE internal_code LIKE 'TEST-ASSET-%')<>60
     OR (SELECT count(*) FROM asset_logs l JOIN assets a ON a.id=l.asset_id WHERE a.internal_code LIKE 'TEST-ASSET-%')<>60
     OR (SELECT count(*) FROM asset_relationships ar JOIN assets a ON a.id=ar.source_asset_id WHERE a.internal_code LIKE 'TEST-ASSET-%')<>6 THEN
@@ -230,7 +230,11 @@ BEGIN
     OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
       JOIN user_tenants ut ON ut.user_id=ur.user_id
       WHERE ur.user_id::text LIKE '02000000-0000-4000-8200-%'
-        AND (ur.tenant_id<>r.tenant_id OR ur.tenant_id<>ut.tenant_id))
+        AND (ur.tenant_id<>r.tenant_id OR ur.tenant_id<>ut.tenant_id OR r.name<>'operator' OR r.is_global))
+    OR EXISTS (SELECT 1 FROM role_permissions rp JOIN roles r ON r.id=rp.role_id
+      JOIN permissions p ON p.id=rp.permission_id
+      WHERE r.id::text LIKE '02000000-0000-4000-8300-%'
+        AND (p.code<>'dcim:view' OR p.id<>'550e8400-e29b-41d4-a716-446655440401'::uuid OR p.is_global))
     OR EXISTS (SELECT 1 FROM assets a JOIN branches b ON b.id=a.branch_id
       WHERE a.internal_code LIKE 'TEST-ASSET-%' AND a.tenant_id<>b.tenant_id)
     OR EXISTS (SELECT 1 FROM asset_logs l JOIN assets a ON a.id=l.asset_id

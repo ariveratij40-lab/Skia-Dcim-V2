@@ -12,7 +12,7 @@ mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 [[ "$PHASE002_MANIFEST_PATH" == /* ]] || die "manifest path must be absolute"
 [[ "$(mode "$PHASE002_MANIFEST_PATH")" == 600 ]] || die "manifest mode must be 600"
 [[ "${PHASE002_MANIFEST_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] || die "expected SHA-256 must be 64 lowercase hex characters"
-[[ "${PHASE002_EXPECTED_ROLE_PERMISSION_COUNT:-}" =~ ^[1-9][0-9]*$ ]] || die "exact RBAC permission-row count missing"
+[[ "${PHASE002_EXPECTED_ROLE_PERMISSION_COUNT:-}" == 3 ]] || die "approved RBAC permission-row count must equal 3"
 [[ "${PHASE002_EXPECTED_SESSION_COUNT:-}" =~ ^[0-9]+$ ]] || die "exact session-row count missing"
 [[ -n "${PHASE002_EXPECTED_DB:-}" && -n "${DATABASE_URL:-}" ]] || die "authorized database inputs missing"
 
