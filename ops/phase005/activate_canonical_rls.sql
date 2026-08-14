@@ -45,13 +45,51 @@ SELECT
            ('asset_relationships','source_asset_id','uuid','NO'),
            ('asset_relationships','target_asset_id','uuid','NO')
          ))
-  AND (SELECT count(*) = 3 FROM pg_constraint
-       WHERE contype = 'f' AND connamespace = 'public'::regnamespace
-         AND pg_get_constraintdef(oid, true) IN (
-           'FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE',
-           'FOREIGN KEY (source_asset_id) REFERENCES assets(id) ON DELETE CASCADE',
-           'FOREIGN KEY (target_asset_id) REFERENCES assets(id) ON DELETE CASCADE'
-         )) AS schema_compatible \gset
+  AND EXISTS (
+    SELECT 1 FROM pg_constraint c
+    WHERE c.conname = 'asset_logs_asset_id_fkey'
+      AND c.contype = 'f'
+      AND c.conrelid = 'public.asset_logs'::regclass
+      AND c.confrelid = 'public.assets'::regclass
+      AND c.conkey = ARRAY[(SELECT attnum FROM pg_attribute
+                            WHERE attrelid='public.asset_logs'::regclass
+                              AND attname='asset_id' AND NOT attisdropped)]::smallint[]
+      AND c.confkey = ARRAY[(SELECT attnum FROM pg_attribute
+                             WHERE attrelid='public.assets'::regclass
+                               AND attname='id' AND NOT attisdropped)]::smallint[]
+      AND c.confmatchtype = 's' AND c.confupdtype = 'a' AND c.confdeltype = 'c'
+      AND c.convalidated AND NOT c.condeferrable AND NOT c.condeferred
+  )
+  AND EXISTS (
+    SELECT 1 FROM pg_constraint c
+    WHERE c.conname = 'asset_relationships_source_asset_id_fkey'
+      AND c.contype = 'f'
+      AND c.conrelid = 'public.asset_relationships'::regclass
+      AND c.confrelid = 'public.assets'::regclass
+      AND c.conkey = ARRAY[(SELECT attnum FROM pg_attribute
+                            WHERE attrelid='public.asset_relationships'::regclass
+                              AND attname='source_asset_id' AND NOT attisdropped)]::smallint[]
+      AND c.confkey = ARRAY[(SELECT attnum FROM pg_attribute
+                             WHERE attrelid='public.assets'::regclass
+                               AND attname='id' AND NOT attisdropped)]::smallint[]
+      AND c.confmatchtype = 's' AND c.confupdtype = 'a' AND c.confdeltype = 'c'
+      AND c.convalidated AND NOT c.condeferrable AND NOT c.condeferred
+  )
+  AND EXISTS (
+    SELECT 1 FROM pg_constraint c
+    WHERE c.conname = 'asset_relationships_target_asset_id_fkey'
+      AND c.contype = 'f'
+      AND c.conrelid = 'public.asset_relationships'::regclass
+      AND c.confrelid = 'public.assets'::regclass
+      AND c.conkey = ARRAY[(SELECT attnum FROM pg_attribute
+                            WHERE attrelid='public.asset_relationships'::regclass
+                              AND attname='target_asset_id' AND NOT attisdropped)]::smallint[]
+      AND c.confkey = ARRAY[(SELECT attnum FROM pg_attribute
+                             WHERE attrelid='public.assets'::regclass
+                               AND attname='id' AND NOT attisdropped)]::smallint[]
+      AND c.confmatchtype = 's' AND c.confupdtype = 'a' AND c.confdeltype = 'c'
+      AND c.convalidated AND NOT c.condeferrable AND NOT c.condeferred
+  ) AS schema_compatible \gset
 \if :schema_compatible
 \else
   \echo 'BLOCKED: protected schema/FK baseline differs'
