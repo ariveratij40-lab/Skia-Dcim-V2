@@ -49,7 +49,16 @@ cleanup_failed_manifest() {
 }
 trap cleanup_failed_manifest EXIT
 
-if [[ $(stat -f '%Lp' "$PHASE002_MANIFEST_PATH" 2>/dev/null || stat -c '%a' "$PHASE002_MANIFEST_PATH") != 600 ]]; then
+manifest_mode=$(stat -c '%a' -- "$PHASE002_MANIFEST_PATH" 2>/dev/null || true)
+if [[ ! "$manifest_mode" =~ ^[0-7]{3,4}$ ]]; then
+  manifest_mode=$(stat -f '%Lp' "$PHASE002_MANIFEST_PATH" 2>/dev/null || true)
+fi
+if [[ ! "$manifest_mode" =~ ^[0-7]{3,4}$ ]]; then
+  echo "BLOCKED: no supported stat implementation returned an octal mode" >&2
+  exit 24
+fi
+manifest_mode=${manifest_mode#0}
+if [[ "$manifest_mode" != 600 ]]; then
   echo "BLOCKED: manifest permissions are not 0600" >&2
   exit 24
 fi
