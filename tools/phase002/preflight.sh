@@ -30,6 +30,9 @@ SELECT (current_database() = :'expected_db') AS database_matches \gset
 DO $preflight$
 DECLARE
   missing text;
+  admin_variants integer;
+  operator_variants integer;
+  empty_role_sets integer;
 BEGIN
   SELECT string_agg(required.name, ', ')
     INTO missing
@@ -43,23 +46,61 @@ BEGIN
     RAISE EXCEPTION 'incompatible schema; missing required tables: %', missing;
   END IF;
 
-  IF EXISTS (
-    SELECT 1 FROM tenants WHERE name IN ('TEST-TENANT-A','TEST-TENANT-B','TEST-TENANT-C')
-  ) OR EXISTS (
-    SELECT 1 FROM branches WHERE name IN
-      ('TEST-BRANCH-A1','TEST-BRANCH-A2','TEST-BRANCH-B1','TEST-BRANCH-B2','TEST-BRANCH-C1','TEST-BRANCH-C2')
-  ) OR EXISTS (
-    SELECT 1 FROM users WHERE email LIKE 'phase002-%@test.invalid'
-  ) OR EXISTS (
-    SELECT 1 FROM assets WHERE internal_code LIKE 'TEST-ASSET-%'
+  -- Exact role names are application semantics. Approximate permission-name
+  -- matching is forbidden: all eligible source pairs must be equivalent.
+  WITH role_sets AS (
+    SELECT r.name,count(rp.permission_id) AS permission_count,
+           md5(coalesce(string_agg(rp.permission_id::text,',' ORDER BY rp.permission_id),'')) AS permission_hash
+    FROM roles r LEFT JOIN role_permissions rp ON rp.role_id=r.id
+    WHERE r.name IN ('admin','operator') AND NOT r.is_global
+    GROUP BY r.id,r.name
+  )
+  SELECT count(DISTINCT permission_hash) FILTER (WHERE name='admin'),
+         count(DISTINCT permission_hash) FILTER (WHERE name='operator'),
+         count(*) FILTER (WHERE permission_count=0)
+    INTO admin_variants,operator_variants,empty_role_sets FROM role_sets;
+  IF admin_variants<>1 OR operator_variants<>1 OR empty_role_sets<>0 THEN
+    RAISE EXCEPTION 'RBAC equivalence is absent or ambiguous (admin variants %, operator variants %)',admin_variants,operator_variants;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
+    WHERE r.name IN ('admin','operator') AND NOT r.is_global
+    GROUP BY r.tenant_id HAVING count(DISTINCT r.name)=2
   ) THEN
-    RAISE EXCEPTION 'fixture collision detected; preparation is blocked';
+    RAISE EXCEPTION 'no tenant contains a complete real admin/operator source pair';
+  END IF;
+
+  -- Canonical V1 rows are allowed for idempotent verification/convergence.
+  -- Same aliases bound to any noncanonical ID are foreign collisions.
+  IF EXISTS (SELECT 1 FROM tenants WHERE name IN ('TEST-TENANT-A','TEST-TENANT-B','TEST-TENANT-C') AND id::text NOT LIKE '02000000-0000-4000-8000-%')
+     OR EXISTS (SELECT 1 FROM branches WHERE name LIKE 'TEST-BRANCH-%' AND id::text NOT LIKE '02000000-0000-4000-8100-%')
+     OR EXISTS (SELECT 1 FROM users WHERE email LIKE 'phase002-%@test.invalid' AND id::text NOT LIKE '02000000-0000-4000-8200-%')
+     OR EXISTS (SELECT 1 FROM assets WHERE internal_code LIKE 'TEST-ASSET-%'
+       AND id<>md5('phase002:asset:'||substring(internal_code from 12 for 2)||':'||right(internal_code,3))::uuid) THEN
+    RAISE EXCEPTION 'noncanonical TEST collision detected; preparation is blocked';
   END IF;
 END
 $preflight$;
 
 SELECT current_database() AS database_checked,
        current_user AS runtime_role,
-       'compatible/no TEST collision' AS result;
+       CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE id::text LIKE '02000000-0000-4000-8000-%')
+            THEN 'canonical V1 present: idempotent verification/convergence mode'
+            ELSE 'empty canonical fixture range: preparation mode' END AS fixture_mode;
+WITH source_tenant AS (
+  SELECT r.tenant_id FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
+  WHERE r.name IN ('admin','operator') AND NOT r.is_global
+  GROUP BY r.tenant_id HAVING count(DISTINCT r.name)=2 ORDER BY r.tenant_id LIMIT 1
+), source AS (
+  SELECT r.id,r.tenant_id,r.name,
+         count(rp.permission_id) AS permission_count,
+         md5(string_agg(rp.permission_id::text,',' ORDER BY rp.permission_id)) AS permission_hash
+  FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
+  WHERE r.name IN ('admin','operator') AND NOT r.is_global
+    AND r.tenant_id=(SELECT tenant_id FROM source_tenant)
+  GROUP BY r.id,r.tenant_id,r.name
+)
+SELECT name,id::text AS deterministic_source_role,tenant_id::text AS source_tenant,
+       permission_count,permission_hash FROM source ORDER BY name;
 ROLLBACK;
 SQL

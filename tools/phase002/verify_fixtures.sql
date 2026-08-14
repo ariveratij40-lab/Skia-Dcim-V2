@@ -20,7 +20,7 @@ SELECT 'branches',count(*),6,count(*)=6 FROM branches WHERE id::text LIKE '02000
 UNION ALL
 SELECT 'users',count(*),9,count(*)=9 FROM users WHERE id::text LIKE '02000000-0000-4000-8200-%'
 UNION ALL
-SELECT 'roles',count(*),9,count(*)=9 FROM roles WHERE id::text LIKE '02000000-0000-4000-8300-%'
+SELECT 'roles',count(*),6,count(*)=6 FROM roles WHERE id::text LIKE '02000000-0000-4000-8300-%'
 UNION ALL
 SELECT 'assets',count(*),60,count(*)=60 FROM assets WHERE internal_code LIKE 'TEST-ASSET-%'
 UNION ALL
@@ -46,6 +46,21 @@ GROUP BY u.email,r.name,t.name ORDER BY u.email;
 SELECT count(*)=0 AS no_cross_tenant_fk_mismatch
 FROM assets a JOIN branches b ON b.id=a.branch_id
 WHERE a.internal_code LIKE 'TEST-ASSET-%' AND a.tenant_id<>b.tenant_id;
+
+WITH source_tenant AS (
+  SELECT r.tenant_id FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
+  WHERE r.name IN ('admin','operator') AND NOT r.is_global
+    AND r.id::text NOT LIKE '02000000-0000-4000-8300-%'
+  GROUP BY r.tenant_id HAVING count(DISTINCT r.name)=2 ORDER BY r.tenant_id LIMIT 1
+), role_sets AS (
+  SELECT r.name,r.id,md5(string_agg(rp.permission_id::text,',' ORDER BY rp.permission_id)) AS permission_hash
+  FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
+  WHERE (r.tenant_id=(SELECT tenant_id FROM source_tenant)
+         OR r.id::text LIKE '02000000-0000-4000-8300-%')
+  GROUP BY r.name,r.id)
+SELECT name,count(DISTINCT permission_hash)=1 AS exact_permission_clone,
+       min(permission_hash) AS permission_set_hash
+FROM role_sets GROUP BY name ORDER BY name;
 
 -- Optional client-side capture for exact session IDs created by the HTTP
 -- campaign. It contains no token and must be merged into the external manifest.

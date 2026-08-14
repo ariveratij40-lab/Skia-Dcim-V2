@@ -93,7 +93,7 @@ WITH actor(user_id,tenant_id) AS (VALUES
  ('02000000-0000-4000-8200-0000000000a3'::uuid,'02000000-0000-4000-8000-00000000000a'::uuid),
  ('02000000-0000-4000-8200-0000000000b1'::uuid,'02000000-0000-4000-8000-00000000000b'::uuid),
  ('02000000-0000-4000-8200-0000000000b2'::uuid,'02000000-0000-4000-8000-00000000000b'::uuid),
- ('02000000-0000-4000-8200-0000000000b3'::uuid,'02000000-0000-4000-8200-00000000000b'::uuid),
+ ('02000000-0000-4000-8200-0000000000b3'::uuid,'02000000-0000-4000-8000-00000000000b'::uuid),
  ('02000000-0000-4000-8200-0000000000c1'::uuid,'02000000-0000-4000-8000-00000000000c'::uuid),
  ('02000000-0000-4000-8200-0000000000c2'::uuid,'02000000-0000-4000-8000-00000000000c'::uuid),
  ('02000000-0000-4000-8200-0000000000c3'::uuid,'02000000-0000-4000-8000-00000000000c'::uuid))
@@ -111,28 +111,63 @@ WITH access(user_id,branch_id) AS (VALUES
 INSERT INTO user_branches(id,user_id,branch_id)
 SELECT md5('phase002:user_branch:'||user_id||':'||branch_id)::uuid,user_id,branch_id FROM access ON CONFLICT DO NOTHING;
 
+-- Application authorization uses the exact role names admin/operator. The
+-- multi-branch actor reuses operator semantics; branch membership is separate.
 WITH role_seed(tenant_id,suffix,name,description) AS (VALUES
- ('02000000-0000-4000-8000-00000000000a'::uuid,'a1','TEST-ADMIN','PHASE-002 tenant admin'),('02000000-0000-4000-8000-00000000000a','a2','TEST-OPERATOR','PHASE-002 branch operator'),('02000000-0000-4000-8000-00000000000a','a3','TEST-MULTI-BRANCH','PHASE-002 multi-branch actor'),
- ('02000000-0000-4000-8000-00000000000b','b1','TEST-ADMIN','PHASE-002 tenant admin'),('02000000-0000-4000-8000-00000000000b','b2','TEST-OPERATOR','PHASE-002 branch operator'),('02000000-0000-4000-8000-00000000000b','b3','TEST-MULTI-BRANCH','PHASE-002 multi-branch actor'),
- ('02000000-0000-4000-8000-00000000000c','c1','TEST-ADMIN','PHASE-002 tenant admin'),('02000000-0000-4000-8000-00000000000c','c2','TEST-OPERATOR','PHASE-002 branch operator'),('02000000-0000-4000-8000-00000000000c','c3','TEST-MULTI-BRANCH','PHASE-002 multi-branch actor'))
+ ('02000000-0000-4000-8000-00000000000a'::uuid,'a1','admin','PHASE-002 clone of canonical admin permissions'),('02000000-0000-4000-8000-00000000000a','a2','operator','PHASE-002 clone of canonical operator permissions'),
+ ('02000000-0000-4000-8000-00000000000b','b1','admin','PHASE-002 clone of canonical admin permissions'),('02000000-0000-4000-8000-00000000000b','b2','operator','PHASE-002 clone of canonical operator permissions'),
+ ('02000000-0000-4000-8000-00000000000c','c1','admin','PHASE-002 clone of canonical admin permissions'),('02000000-0000-4000-8000-00000000000c','c2','operator','PHASE-002 clone of canonical operator permissions'))
 INSERT INTO roles(id,tenant_id,name,description,is_global)
 SELECT ('02000000-0000-4000-8300-0000000000'||suffix)::uuid,tenant_id,name,description,false FROM role_seed ON CONFLICT DO NOTHING;
 
 WITH assignment(user_id,tenant_id,role_id) AS (VALUES
- ('02000000-0000-4000-8200-0000000000a1'::uuid,'02000000-0000-4000-8000-00000000000a'::uuid,'02000000-0000-4000-8300-0000000000a1'::uuid),('02000000-0000-4000-8200-0000000000a2','02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8300-0000000000a2'),('02000000-0000-4000-8200-0000000000a3','02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8300-0000000000a3'),
- ('02000000-0000-4000-8200-0000000000b1','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b1'),('02000000-0000-4000-8200-0000000000b2','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b2'),('02000000-0000-4000-8200-0000000000b3','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b3'),
- ('02000000-0000-4000-8200-0000000000c1','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c1'),('02000000-0000-4000-8200-0000000000c2','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c2'),('02000000-0000-4000-8200-0000000000c3','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c3'))
+ ('02000000-0000-4000-8200-0000000000a1'::uuid,'02000000-0000-4000-8000-00000000000a'::uuid,'02000000-0000-4000-8300-0000000000a1'::uuid),('02000000-0000-4000-8200-0000000000a2','02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8300-0000000000a2'),('02000000-0000-4000-8200-0000000000a3','02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8300-0000000000a2'),
+ ('02000000-0000-4000-8200-0000000000b1','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b1'),('02000000-0000-4000-8200-0000000000b2','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b2'),('02000000-0000-4000-8200-0000000000b3','02000000-0000-4000-8000-00000000000b','02000000-0000-4000-8300-0000000000b2'),
+ ('02000000-0000-4000-8200-0000000000c1','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c1'),('02000000-0000-4000-8200-0000000000c2','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c2'),('02000000-0000-4000-8200-0000000000c3','02000000-0000-4000-8000-00000000000c','02000000-0000-4000-8300-0000000000c2'))
 INSERT INTO user_roles(id,user_id,tenant_id,role_id)
 SELECT md5('phase002:user_role:'||user_id)::uuid,user_id,tenant_id,role_id FROM assignment ON CONFLICT DO NOTHING;
 
--- Permissions are existing reference data. Admin gets all non-global permissions;
--- operator and multi-branch get read/view permissions only.
+-- Clone the exact permission_id set from deterministic real source roles.
+-- The guard below blocks absent or divergent admin/operator semantics.
+DO $rbac_guard$
+DECLARE admin_variants integer; operator_variants integer; empty_role_sets integer; source_pairs integer;
+BEGIN
+  WITH role_sets AS (
+    SELECT r.name,count(rp.permission_id) AS permission_count,
+           md5(coalesce(string_agg(rp.permission_id::text,',' ORDER BY rp.permission_id),'')) AS permission_hash
+    FROM roles r LEFT JOIN role_permissions rp ON rp.role_id=r.id
+    WHERE r.name IN ('admin','operator') AND NOT r.is_global
+      AND r.id::text NOT LIKE '02000000-0000-4000-8300-%'
+    GROUP BY r.id,r.name)
+  SELECT count(DISTINCT permission_hash) FILTER (WHERE name='admin'),
+         count(DISTINCT permission_hash) FILTER (WHERE name='operator'),
+         count(*) FILTER (WHERE permission_count=0)
+  INTO admin_variants,operator_variants,empty_role_sets FROM role_sets;
+  IF admin_variants<>1 OR operator_variants<>1 OR empty_role_sets<>0 THEN
+    RAISE EXCEPTION 'safe RBAC equivalence cannot be determined';
+  END IF;
+  SELECT count(*) INTO source_pairs FROM (
+    SELECT r.tenant_id FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
+    WHERE r.name IN ('admin','operator') AND NOT r.is_global
+      AND r.id::text NOT LIKE '02000000-0000-4000-8300-%'
+    GROUP BY r.tenant_id HAVING count(DISTINCT r.name)=2) pairs;
+  IF source_pairs=0 THEN RAISE EXCEPTION 'no complete real admin/operator source pair'; END IF;
+END $rbac_guard$;
+
 INSERT INTO role_permissions(id,role_id,permission_id)
-SELECT md5('phase002:rp:'||r.id||':'||p.id)::uuid,r.id,p.id
-FROM roles r JOIN permissions p ON
-  (r.name='TEST-ADMIN' AND NOT p.is_global)
-  OR (r.name IN ('TEST-OPERATOR','TEST-MULTI-BRANCH') AND (p.code LIKE '%view%' OR p.code LIKE '%read%'))
-WHERE r.id::text LIKE '02000000-0000-4000-8300-%' ON CONFLICT DO NOTHING;
+SELECT md5('phase002:rp:'||target.id||':'||source_rp.permission_id)::uuid,target.id,source_rp.permission_id
+FROM roles target
+JOIN LATERAL (
+  WITH source_tenant AS (
+    SELECT r.tenant_id FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
+    WHERE r.name IN ('admin','operator') AND NOT r.is_global
+      AND r.id::text NOT LIKE '02000000-0000-4000-8300-%'
+    GROUP BY r.tenant_id HAVING count(DISTINCT r.name)=2 ORDER BY r.tenant_id LIMIT 1)
+  SELECT r.id FROM roles r WHERE r.name=target.name AND NOT r.is_global
+    AND r.tenant_id=(SELECT tenant_id FROM source_tenant)
+) source_role ON true
+JOIN role_permissions source_rp ON source_rp.role_id=source_role.id
+WHERE target.id::text LIKE '02000000-0000-4000-8300-%' ON CONFLICT DO NOTHING;
 
 WITH fixture_branches(tenant_id,branch_id,code) AS (VALUES
  ('02000000-0000-4000-8000-00000000000a'::uuid,'02000000-0000-4000-8100-0000000000a1'::uuid,'A1'),('02000000-0000-4000-8000-00000000000a','02000000-0000-4000-8100-0000000000a2','A2'),
@@ -159,19 +194,51 @@ FROM assets s JOIN assets t ON t.tenant_id=s.tenant_id AND t.branch_id=s.branch_
 WHERE s.internal_code LIKE 'TEST-ASSET-%' ON CONFLICT DO NOTHING;
 
 DO $fixture_postcondition$
+DECLARE expected_rp integer; observed_rp integer;
 BEGIN
+  SELECT 3*sum(permission_count) INTO expected_rp FROM (
+    SELECT source.name,count(rp.permission_id) AS permission_count
+    FROM (WITH source_tenant AS (
+            SELECT r.tenant_id FROM roles r JOIN role_permissions rp ON rp.role_id=r.id
+            WHERE r.name IN ('admin','operator') AND NOT r.is_global
+              AND r.id::text NOT LIKE '02000000-0000-4000-8300-%'
+            GROUP BY r.tenant_id HAVING count(DISTINCT r.name)=2 ORDER BY r.tenant_id LIMIT 1)
+          SELECT id,name FROM roles WHERE name IN ('admin','operator') AND NOT is_global
+            AND tenant_id=(SELECT tenant_id FROM source_tenant)) source
+    JOIN role_permissions rp ON rp.role_id=source.id GROUP BY source.name) source_counts;
+  SELECT count(*) INTO observed_rp FROM role_permissions rp JOIN roles r ON r.id=rp.role_id
+    WHERE r.id::text LIKE '02000000-0000-4000-8300-%';
   IF (SELECT count(*) FROM tenants WHERE id::text LIKE '02000000-0000-4000-8000-%')<>3
     OR (SELECT count(*) FROM branches WHERE id::text LIKE '02000000-0000-4000-8100-%')<>6
     OR (SELECT count(*) FROM users WHERE id::text LIKE '02000000-0000-4000-8200-%')<>9
-    OR (SELECT count(*) FROM roles WHERE id::text LIKE '02000000-0000-4000-8300-%')<>9
+    OR (SELECT count(*) FROM roles WHERE id::text LIKE '02000000-0000-4000-8300-%')<>6
     OR (SELECT count(*) FROM user_tenants ut JOIN users u ON u.id=ut.user_id WHERE u.id::text LIKE '02000000-0000-4000-8200-%')<>9
     OR (SELECT count(*) FROM user_branches ub JOIN users u ON u.id=ub.user_id WHERE u.id::text LIKE '02000000-0000-4000-8200-%')<>15
     OR (SELECT count(*) FROM user_roles ur JOIN users u ON u.id=ur.user_id WHERE u.id::text LIKE '02000000-0000-4000-8200-%')<>9
-    OR (SELECT count(*) FROM role_permissions rp JOIN roles r ON r.id=rp.role_id WHERE r.id::text LIKE '02000000-0000-4000-8300-%')=0
+    OR expected_rp IS NULL OR observed_rp<>expected_rp
     OR (SELECT count(*) FROM assets WHERE internal_code LIKE 'TEST-ASSET-%')<>60
     OR (SELECT count(*) FROM asset_logs l JOIN assets a ON a.id=l.asset_id WHERE a.internal_code LIKE 'TEST-ASSET-%')<>60
     OR (SELECT count(*) FROM asset_relationships ar JOIN assets a ON a.id=ar.source_asset_id WHERE a.internal_code LIKE 'TEST-ASSET-%')<>6 THEN
     RAISE EXCEPTION 'fixture postcondition failed; transaction will roll back';
+  END IF;
+  IF EXISTS (SELECT 1 FROM user_tenants ut JOIN users u ON u.id=ut.user_id
+      WHERE u.id::text LIKE '02000000-0000-4000-8200-%'
+        AND right(ut.tenant_id::text,1)<>substring(u.email from 'phase002-([abc])-'))
+    OR EXISTS (SELECT 1 FROM user_branches ub JOIN branches b ON b.id=ub.branch_id
+      JOIN user_tenants ut ON ut.user_id=ub.user_id
+      WHERE ub.user_id::text LIKE '02000000-0000-4000-8200-%' AND b.tenant_id<>ut.tenant_id)
+    OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+      JOIN user_tenants ut ON ut.user_id=ur.user_id
+      WHERE ur.user_id::text LIKE '02000000-0000-4000-8200-%'
+        AND (ur.tenant_id<>r.tenant_id OR ur.tenant_id<>ut.tenant_id))
+    OR EXISTS (SELECT 1 FROM assets a JOIN branches b ON b.id=a.branch_id
+      WHERE a.internal_code LIKE 'TEST-ASSET-%' AND a.tenant_id<>b.tenant_id)
+    OR EXISTS (SELECT 1 FROM asset_logs l JOIN assets a ON a.id=l.asset_id
+      WHERE a.internal_code LIKE 'TEST-ASSET-%' AND l.tenant_id<>a.tenant_id)
+    OR EXISTS (SELECT 1 FROM asset_relationships ar JOIN assets s ON s.id=ar.source_asset_id
+      JOIN assets t ON t.id=ar.target_asset_id WHERE s.internal_code LIKE 'TEST-ASSET-%'
+        AND (ar.tenant_id<>s.tenant_id OR ar.tenant_id<>t.tenant_id OR s.branch_id<>t.branch_id)) THEN
+    RAISE EXCEPTION 'fixture tenant/branch FK coherence failed; transaction will roll back';
   END IF;
 END $fixture_postcondition$;
 
