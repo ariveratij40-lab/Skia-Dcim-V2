@@ -22,3 +22,5 @@ No se incorporaron bypasses por rol, no se cambiaron permisos, esquema, migracio
 ## Staging
 
 Ejecutado posteriormente conforme a `ARCHITECT_DECISION_STAGING_DEPLOY_GATE.md`. El backend autorizado quedó saludable y la corrección aprobó para sesiones nuevas. El detalle y el bloqueante residual están en `STAGING_DEPLOY_REPORT.md`.
+
+La sesión inválida predeploy fue eliminada posteriormente bajo el gate específico de limpieza. La validación final aprobó y PHASE-004 queda clasificada `APROBADA EN STAGING`; ver `STALE_SESSION_CLEANUP_REPORT.md`.
