@@ -7,6 +7,6 @@
 | RLS-B03 | RESUELTO LOCAL | Artefacto canónico hereda branch desde el activo y exige ambos endpoints de relaciones | Pruebas PostgreSQL 16 efímeras aprobadas |
 | RLS-B04 | RESUELTO POR PHASE-006 | Runtime y migrador usan identidades separadas | Runtime `skia_runtime`; migrador separado |
 | RLS-B05 | RESUELTO LOCAL | `ops/phase005/activate_canonical_rls.sql` es el artefacto nuevo canónico; hashes exactos bloquean divergencias | Migraciones históricas intactas |
-| RLS-B06 | BLOQUEADO POR GATE | Aplicación del artefacto y activación efectiva de RLS en STAGING | Requiere decisión arquitectónica PHASE-005 separada |
+| RLS-B06 | BLOQUEADO | El guard FK canónico cuenta 11 FKs genéricas de `public` al no limitar `conrelid`; exige 3 y aborta antes de DDL | Corregir, validar y revisar/publicar el artefacto antes de un nuevo gate |
 
 No se requiere modificar datos, esquema, roles, grants ni credenciales. El diseño y su rollback están validados localmente; Etapa C continúa expresamente no autorizada.
