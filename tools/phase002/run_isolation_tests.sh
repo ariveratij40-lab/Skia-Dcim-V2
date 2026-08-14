@@ -3,7 +3,15 @@ set -euo pipefail
 
 die() { printf 'PHASE-002 isolation runner: %s\n' "$1" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "required command unavailable: $1"; }
-mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+mode() {
+  local value
+  value=$(stat -c '%a' -- "$1" 2>/dev/null || true)
+  if [[ ! "$value" =~ ^[0-7]{3,4}$ ]]; then
+    value=$(stat -f '%Lp' "$1" 2>/dev/null || true)
+  fi
+  [[ "$value" =~ ^[0-7]{3,4}$ ]] || return 1
+  printf '%s\n' "${value#0}"
+}
 
 [[ "${SKIA_ENVIRONMENT:-}" == staging ]] || die "staging-only guard failed"
 [[ "${PHASE002_TEST_APPROVAL:-}" == PHASE002_CAMPAIGN_AUTHORIZED ]] || die "campaign approval missing"
@@ -27,10 +35,33 @@ source "$PHASE002_CREDENTIALS_FILE"
 
 tmp_dir="$(mktemp -d)"
 chmod 700 "$tmp_dir"
-trap 'find "$tmp_dir" -type f -exec sh -c '\''for f do : > "$f"; done'\'' sh {} + 2>/dev/null || true; rm -rf "$tmp_dir"' EXIT
 results="$tmp_dir/results.tsv"
 umask 077
 printf 'ID\tACTOR\tOPERATION\tHTTP\tSTATUS\tEXPECTED_COUNT\tOBSERVED_COUNT\tCROSS_TENANT_LEAK\tCROSS_BRANCH_LEAK\n' >"$results"
+campaign_complete=false
+results_emitted=false
+
+emit_results() {
+  local execution_status="$1" process_exit="$2"
+  [[ "$results_emitted" == false ]] || return 0
+  results_emitted=true
+  printf 'CAMPAIGN_EXECUTION_STATUS=%s\n' "$execution_status"
+  printf 'PROCESS_EXIT_CODE=%s\n' "$process_exit"
+  printf 'Campaign %s verdicts (no bodies, cookies, tokens or IDs):\n' "$PHASE002_CAMPAIGN"
+  awk -F '\t' 'BEGIN {OFS="\t"} {print $1,$2,$3,$4,$5,$6,$7,$8,$9}' "$results"
+}
+
+finalize() {
+  local process_exit=$? execution_status=INCOMPLETE
+  if [[ "$campaign_complete" == true && "$process_exit" == 0 ]]; then
+    execution_status=COMPLETE
+  fi
+  emit_results "$execution_status" "$process_exit"
+  find "$tmp_dir" -type f -exec sh -c 'for f do : > "$f"; done' sh {} + 2>/dev/null || true
+  rm -rf "$tmp_dir"
+  exit "$process_exit"
+}
+trap finalize EXIT
 
 HTTP_CODE=000
 BODY_FILE=
@@ -74,8 +105,8 @@ validate_asset_list() {
   if [[ "$HTTP_CODE" == 200 ]] && jq -e '.assets | type == "array"' "$BODY_FILE" >/dev/null 2>&1; then
     observed="$(jq '[.assets[] | select((.internal_code // "") | startswith("TEST-ASSET-"))] | length' "$BODY_FILE")"
     expected_id_seen="$(jq --arg id "$expected_id" '[.assets[] | select(.id == $id)] | length' "$BODY_FILE")"
-    other_tenant="$(jq --arg tenant "$expected_tenant" '[.assets[] | select((.internal_code // "") | test("^TEST-ASSET-") and ((.internal_code[11:12]) != $tenant))] | length' "$BODY_FILE")"
-    other_branch="$(jq --arg branch "$expected_branch" '[.assets[] | select((.internal_code // "") | test("^TEST-ASSET-") and ((.internal_code[11:13]) != $branch))] | length' "$BODY_FILE")"
+    other_tenant="$(jq --arg tenant "$expected_tenant" '[.assets[] | (.internal_code // "") as $code | select(($code | test("^TEST-ASSET-")) and ($code[11:12] != $tenant))] | length' "$BODY_FILE")"
+    other_branch="$(jq --arg branch "$expected_branch" '[.assets[] | (.internal_code // "") as $code | select(($code | test("^TEST-ASSET-")) and ($code[11:13] != $branch))] | length' "$BODY_FILE")"
     for n in {1..10}; do
       alias="$(printf '%s-%03d' "$expected_prefix" "$n")"
       jq -e --arg code "$alias" 'any(.assets[]; .internal_code == $code)' "$BODY_FILE" >/dev/null || missing_aliases=$((missing_aliases+1))
@@ -87,6 +118,9 @@ validate_asset_list() {
   record "$id" "$actor" "$operation" "$HTTP_CODE" "$status" "$expected_count" "$observed" \
     "$([[ "$other_tenant" == 0 ]] && echo false || echo true)" \
     "$([[ "$other_branch" == 0 ]] && echo false || echo true)"
+  if [[ "$other_tenant" != 0 ]]; then
+    return 86
+  fi
 }
 
 login_actor() {
@@ -145,14 +179,19 @@ select_tenant c_admin "$TENANT_A_ID"; expect_denied ISO-020 c_admin deny_tenant_
 select_branch c_admin "$BRANCH_A2_ID"; expect_denied ISO-020 c_admin deny_branch_A2
 
 for tenant in a b c; do
-  actor="${tenant}_operator"; email_var="EMAIL_${tenant^^}_OPERATOR"; password_var="PASSWORD_${tenant^^}_OPERATOR"
+  case "$tenant" in
+    a) tenant_upper=A ;;
+    b) tenant_upper=B ;;
+    c) tenant_upper=C ;;
+    *) die "unsupported tenant alias in ISO-021" ;;
+  esac
+  actor="${tenant}_operator"; email_var="EMAIL_${tenant_upper}_OPERATOR"; password_var="PASSWORD_${tenant_upper}_OPERATOR"
   login_actor SETUP "$actor" "$email_var" "$password_var"
   http_request "$actor" POST /api/auth/logout; expect_code ISO-021 "$actor" logout '200'
   http_request "$actor" GET /api/auth/me; expect_denied ISO-021 "$actor" reuse_after_logout
 done
 record ISO-022 all_actors postgres_context_correlation N/A BLOQUEADO N/A N/A false false
 
-# Only the redacted tabular verdict is emitted. Full response bodies remain in
-# mode-0600 temporary files and are securely truncated/removed by the EXIT trap.
-printf 'Campaign %s verdicts (no bodies, cookies, tokens or IDs):\n' "$PHASE002_CAMPAIGN"
-awk -F '\t' 'BEGIN {OFS="\t"} {print $1,$2,$3,$4,$5,$6,$7,$8,$9}' "$results"
+# The EXIT trap emits exactly one redacted matrix, marked COMPLETE, then securely
+# truncates/removes bodies and cookie jars. Any abnormal exit emits INCOMPLETE.
+campaign_complete=true
