@@ -81,3 +81,13 @@ Static checks executed in this round:
 - `FIX-002-07`: arbitrary manifest minimum removed in favor of exact per-table counts and alias/ID coherence.
 
 No fixture, login, SQL statement, rollback or network operation was executed.
+
+## FIX-002-08 — Manifest export corrected after failed preparation
+
+The first authorized preparation attempt ended in automatic rollback because psql rejected `:'manifest_path'` inside `\copy`. The local correction replaces that meta-command with CSV output through `\g :manifest_path`, positioned before `COMMIT` and protected by `ON_ERROR_STOP`. An open/write error therefore ends psql while the transaction remains uncommitted.
+
+The new `prepare_fixtures.sh` client guard requires absolute external paths, rejects repository paths, symlink destinations and pre-existing files, applies `umask 077`, pre-creates the manifest with mode `0600`, passes the same validated path to psql and removes an incomplete manifest when psql fails. Exact IDs, logical aliases and fixture cardinalities are unchanged.
+
+Local-only validation covered `bash -n`, the guard with missing variables, static ordering of `\g` before `COMMIT`, absence of executable `\copy`, `git diff --check`, and simulated-client checks for failed-manifest cleanup and successful retention at mode `0600`. No PostgreSQL connection or SQL statement was executed.
+
+The temporary generator `/private/tmp/skia_phase002_credential_gen.go`, its nine generated credentials and their hashes were deleted before versioning. They were never added to Git and no recoverable secret material from that generation is retained.

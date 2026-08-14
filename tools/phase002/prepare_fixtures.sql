@@ -246,8 +246,25 @@ BEGIN
   END IF;
 END $fixture_postcondition$;
 
--- Client-side manifest: path must be outside the repository and outside the DB.
-\copy (SELECT 'tenants' AS table_name,id::text AS exact_id,name AS logical_alias FROM tenants WHERE id::text LIKE '02000000-0000-4000-8000-%' UNION ALL SELECT 'branches',id::text,name FROM branches WHERE id::text LIKE '02000000-0000-4000-8100-%' UNION ALL SELECT 'users',id::text,email FROM users WHERE id::text LIKE '02000000-0000-4000-8200-%' UNION ALL SELECT 'roles',id::text,name||':'||tenant_id FROM roles WHERE id::text LIKE '02000000-0000-4000-8300-%' UNION ALL SELECT 'user_tenants',id::text,user_id||':'||tenant_id FROM user_tenants WHERE user_id::text LIKE '02000000-0000-4000-8200-%' UNION ALL SELECT 'user_branches',id::text,user_id||':'||branch_id FROM user_branches WHERE user_id::text LIKE '02000000-0000-4000-8200-%' UNION ALL SELECT 'user_roles',id::text,user_id||':'||role_id FROM user_roles WHERE user_id::text LIKE '02000000-0000-4000-8200-%' UNION ALL SELECT 'role_permissions',rp.id::text,rp.role_id||':'||rp.permission_id FROM role_permissions rp JOIN roles r ON r.id=rp.role_id WHERE r.id::text LIKE '02000000-0000-4000-8300-%' UNION ALL SELECT 'assets',id::text,internal_code FROM assets WHERE internal_code LIKE 'TEST-ASSET-%' UNION ALL SELECT 'asset_logs',l.id::text,a.internal_code||':log' FROM asset_logs l JOIN assets a ON a.id=l.asset_id WHERE a.internal_code LIKE 'TEST-ASSET-%' UNION ALL SELECT 'asset_relationships',ar.id::text,s.internal_code||'->'||t.internal_code FROM asset_relationships ar JOIN assets s ON s.id=ar.source_asset_id JOIN assets t ON t.id=ar.target_asset_id WHERE s.internal_code LIKE 'TEST-ASSET-%') TO :'manifest_path' WITH (FORMAT csv, HEADER true)
+-- Client-side manifest: prepare_fixtures.sh pre-creates the absolute external
+-- destination with mode 0600. Unlike \copy, \g expands the psql variable as a
+-- filename. With ON_ERROR_STOP, an open/write failure terminates psql while the
+-- transaction is still open, so PostgreSQL rolls it back before COMMIT.
+\pset format csv
+\pset tuples_only off
+SELECT 'tenants' AS table_name,id::text AS exact_id,name AS logical_alias FROM tenants WHERE id::text LIKE '02000000-0000-4000-8000-%'
+UNION ALL SELECT 'branches',id::text,name FROM branches WHERE id::text LIKE '02000000-0000-4000-8100-%'
+UNION ALL SELECT 'users',id::text,email FROM users WHERE id::text LIKE '02000000-0000-4000-8200-%'
+UNION ALL SELECT 'roles',id::text,name||':'||tenant_id FROM roles WHERE id::text LIKE '02000000-0000-4000-8300-%'
+UNION ALL SELECT 'user_tenants',id::text,user_id||':'||tenant_id FROM user_tenants WHERE user_id::text LIKE '02000000-0000-4000-8200-%'
+UNION ALL SELECT 'user_branches',id::text,user_id||':'||branch_id FROM user_branches WHERE user_id::text LIKE '02000000-0000-4000-8200-%'
+UNION ALL SELECT 'user_roles',id::text,user_id||':'||role_id FROM user_roles WHERE user_id::text LIKE '02000000-0000-4000-8200-%'
+UNION ALL SELECT 'role_permissions',rp.id::text,rp.role_id||':'||rp.permission_id FROM role_permissions rp JOIN roles r ON r.id=rp.role_id WHERE r.id::text LIKE '02000000-0000-4000-8300-%'
+UNION ALL SELECT 'assets',id::text,internal_code FROM assets WHERE internal_code LIKE 'TEST-ASSET-%'
+UNION ALL SELECT 'asset_logs',l.id::text,a.internal_code||':log' FROM asset_logs l JOIN assets a ON a.id=l.asset_id WHERE a.internal_code LIKE 'TEST-ASSET-%'
+UNION ALL SELECT 'asset_relationships',ar.id::text,s.internal_code||'->'||t.internal_code FROM asset_relationships ar JOIN assets s ON s.id=ar.source_asset_id JOIN assets t ON t.id=ar.target_asset_id WHERE s.internal_code LIKE 'TEST-ASSET-%'
+ORDER BY 1,2
+\g :manifest_path
 
 COMMIT;
 \echo 'Fixture V1 prepared. Compute and retain an external checksum before testing.'
