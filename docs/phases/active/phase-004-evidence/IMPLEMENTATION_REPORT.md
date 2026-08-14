@@ -21,4 +21,4 @@ No se incorporaron bypasses por rol, no se cambiaron permisos, esquema, migracio
 
 ## Staging
 
-No ejecutado. La especificación exige autorización separada para actualizar o validar el runtime de staging.
+Ejecutado posteriormente conforme a `ARCHITECT_DECISION_STAGING_DEPLOY_GATE.md`. El backend autorizado quedó saludable y la corrección aprobó para sesiones nuevas. El detalle y el bloqueante residual están en `STAGING_DEPLOY_REPORT.md`.
