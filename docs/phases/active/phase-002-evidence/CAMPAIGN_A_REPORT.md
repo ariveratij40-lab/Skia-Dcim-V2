@@ -99,3 +99,78 @@ Validaciones `LOCAL`, sin HTTP staging:
 | `git diff --check` | APROBADO |
 
 Esta validación no reejecutó CAMPAÑA A y no modifica la clasificación `BLOQUEADA` del intento anterior. Se requiere un gate arquitectónico posterior para una nueva campaña.
+
+## Reintento completo autorizado
+
+- Fecha: `2026-08-14` (`America/Tijuana`).
+- Decisión: `ARCHITECT_DECISION_CAMPAIGN_A_RETRY.md`.
+- HEAD de ejecución: `08554b0c56bb5894670cedbd4afe0d91b65e7f94`.
+- Runner aprobado: `fb88dbc7c40c54cd2803b2756d15caeed73da929`.
+- Resultado estructural del runner: `CAMPAIGN_EXECUTION_STATUS=COMPLETE`, exit code `0`.
+- Resultado funcional global: **FALLIDO**.
+
+Antes del primer request se confirmó checkout limpio, runtime backend `d155910c231e96446672508534ccec83bf0d830f`, `relevant_runtime_source_differs=false`, checksum exacto del manifest y todas las cardinalidades de Fixture V1. Credenciales y contexto permanecieron fuera de Git en modo `0600`.
+
+El runner se ejecutó exactamente una vez desde `ISO-001`. Todas las solicitudes HTTP observaron código `301`; el runner no sigue redirects. Por ello no hubo login, sesión o consulta de activos evaluable, todos los conteos observados fueron `0` y ninguna denegación pudo aprobarse con los códigos esperados `401`/`403`/`404`.
+
+### Matriz redactada
+
+| ID | Actor/operación | HTTP | Estado | Esperado | Observado | Cross-tenant | Cross-branch |
+| --- | --- | ---: | --- | ---: | ---: | --- | --- |
+| ISO-001 | a_admin login | 301 | FALLIDO | N/A | N/A | false | false |
+| ISO-001 | a_admin session | 301 | FALLIDO | N/A | N/A | false | false |
+| ISO-002 | invalid login | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-003 | a_admin select tenant A | 301 | FALLIDO | N/A | N/A | false | false |
+| ISO-004 | a_admin select branch A1 | 301 | FALLIDO | N/A | N/A | false | false |
+| ISO-005 | a_operator assets A1 | 301 | FALLIDO | 10 | 0 | false | false |
+| ISO-006 | a_operator deny branch A2 | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-007 | a_multi assets A1 | 301 | FALLIDO | 10 | 0 | false | false |
+| ISO-007 | a_multi assets A2 | 301 | FALLIDO | 10 | 0 | false | false |
+| ISO-008 | a_admin deny tenant B | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-009 | a_admin deny branch B1 | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-010 | a_admin manipulated tenant/branch query | 301 | FALLIDO | 10 | 0 | false | false |
+| ISO-011 | a_admin own asset A1 | 301 | FALLIDO | N/A | N/A | false | false |
+| ISO-011 | logs/relationships endpoint absent | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-012 | a_admin deny asset B1 | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-012 | relationship endpoint absent | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-013 | actor without context | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-014 | actor without branch | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-015 | invalid session | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-016 | expiry/revocation observation | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-017 | b_admin assets B1 | 301 | FALLIDO | 10 | 0 | false | false |
+| ISO-018 | c_admin assets C2 | 301 | FALLIDO | 10 | 0 | false | false |
+| ISO-019 | b_admin deny tenant C | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-019 | b_admin deny branch C1 | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-020 | c_admin deny tenant A | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-020 | c_admin deny branch A2 | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-021 | a_operator logout | 301 | FALLIDO | N/A | N/A | false | false |
+| ISO-021 | a_operator reuse after logout | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-021 | b_operator logout | 301 | FALLIDO | N/A | N/A | false | false |
+| ISO-021 | b_operator reuse after logout | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-021 | c_operator logout | 301 | FALLIDO | N/A | N/A | false | false |
+| ISO-021 | c_operator reuse after logout | 301 | FALLIDO | 0 | 0 | false | false |
+| ISO-022 | PostgreSQL context correlation | N/A | BLOQUEADO | N/A | N/A | false | false |
+
+Las filas internas `SETUP` de los actores también observaron login `301/FALLIDO`. No se registró `CROSS_TENANT_LEAK=true` ni `CROSS_BRANCH_LEAK=true`, pero esto significa que no se observó contenido debido al redirect; **no demuestra ausencia de fuga**.
+
+### Correlación PostgreSQL read-only posterior
+
+La observación autorizada se ejecutó mediante `BEGIN READ ONLY`/`ROLLBACK`:
+
+- `current_user=skia_user`;
+- `current_database=skia_db`;
+- usuarios fixture: `9`;
+- sesiones fixture: `0`;
+- mappings `user_tenants`: `9`;
+- mappings `user_branches`: `15`;
+- activos fixture: `60`;
+- tablas con RLS habilitado: `0`;
+- integridad/checksum del manifest: aprobados.
+
+Al no existir sesiones TEST persistidas, no fue posible correlacionar tenant/branch de sesión con la matriz HTTP. `ISO-022` permanece `BLOQUEADO`.
+
+### Conclusión del reintento
+
+La secuencia completa del runner terminó, pero CAMPAÑA A tiene resultado funcional **FALLIDO** por redirects `301` en todas las operaciones HTTP. El aislamiento autenticado continúa sin evidencia suficiente y no puede aprobarse. No se reejecutó, no se corrigió la URL/runner y no se siguieron redirects fuera de esta autorización.
+
+No se ejecutó rollback, CAMPAÑA B, RLS, migraciones ni deploy. El fixture, manifest y credenciales protegidas permanecen disponibles hasta una decisión arquitectónica posterior.
