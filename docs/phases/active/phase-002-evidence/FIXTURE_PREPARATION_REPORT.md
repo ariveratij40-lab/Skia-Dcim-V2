@@ -196,3 +196,69 @@ Validaciones `LOCAL` con psql simulado, sin conexión PostgreSQL:
 | `git diff --check` | APROBADO |
 
 No se cambió `prepare_fixtures.sql`, UUIDs, cardinalidades, RBAC, manifest, checksum ni rollback. Esta corrección no ejecutó preparación, SQL, HTTP, fixtures, rollback, RLS, migraciones o deploy y no autoriza un cuarto intento.
+
+## Cuarto intento controlado
+
+- Fecha: `2026-08-14` (`America/Tijuana`).
+- Decisión: `ARCHITECT_DECISION_FIXTURE_PREPARATION_RETRY_4.md`.
+- HEAD y decisión de ejecución: `fb0792e08c5c9c2e9ae0cf20d19747ca0b34341f`.
+- Tooling canónico mínimo aprobado: `d5e916abbc82c4797df45e9b53dfd7a32c621916`.
+- Origen: `STAGING VPS` + `POSTGRES STAGING`.
+- Resultado: **PREPARADO Y VERIFICADO**.
+
+### Precondiciones
+
+- Se creó un checkout Git aislado y limpio de `phase/002-fixture-implementation`, fuera del checkout legado y con HEAD `fb0792e08c5c9c2e9ae0cf20d19747ca0b34341f`. La ruta de tooling no presentaba cambios staged/unstaged.
+- El respaldo externo previo permanecía legible, modo `0600`, checksum SHA-256 consistente y formato reconocido por `pg_restore --list`.
+- Se generaron nueve credenciales nuevas fuera de Git. Los passwords no se registran en evidencia.
+- El destino del manifest era absoluto, externo al repositorio, no existía y su directorio padre tenía modo `0700`.
+- El preflight read-only inmediato terminó con exit code `0`: runtime backend `d155910c231e96446672508534ccec83bf0d830f`, `relevant_runtime_source_differs=false`, base `skia_db`, rol `skia_user`, rango canónico vacío y sin colisiones TEST.
+
+### Preparación
+
+Se invocó exactamente una vez `tools/phase002/prepare_fixtures.sh` desde el checkout canónico. El wrapper registró SHA `fb0792e08c5c9c2e9ae0cf20d19747ca0b34341f`, abrió directamente `prepare_fixtures.sql` mediante `psql -f`, alcanzó `COMMIT` y declaró completa la preparación. No se transportó SQL por stdin ni se ejecutó el archivo directamente.
+
+El envoltorio SSH terminó inicialmente con exit code `1` después del éxito porque la limpieza posterior intentó usar la opción BSD `rm -P`, no soportada en GNU. Este error ocurrió después del `COMMIT` y del exit `0` del wrapper; no afectó la preparación. El archivo temporal de hashes se eliminó inmediatamente con `shred -u` y se confirmó ausente.
+
+### Manifest
+
+- Archivo regular: sí.
+- Symlink: no.
+- Modo: `0600`.
+- Filas sin header: `183`.
+- SHA-256: `6850065c8a25c654e3efff6ef27ddfaaed7d0a0c783edd081eacdb0c86f6c161`.
+- IDs exactos: únicos y con formato válido.
+- Aliases: aprobados contra los patrones canónicos de Fixture V1.
+
+| Tabla | Conteo |
+| --- | ---: |
+| tenants | 3 |
+| branches | 6 |
+| users | 9 |
+| roles | 3 |
+| user_tenants | 9 |
+| user_branches | 15 |
+| user_roles | 9 |
+| role_permissions | 3 |
+| assets | 60 |
+| asset_logs | 60 |
+| asset_relationships | 6 |
+
+### Verificación inmediata
+
+`verify_fixtures.sql` se ejecutó mediante `psql -f` en una transacción `BEGIN READ ONLY` finalizada con `ROLLBACK`; exit code `0`.
+
+- 3 tenants, 6 branches, 9 users, 3 roles, 60 assets, 60 logs y 6 relaciones: conteos exactos aprobados.
+- Cada branch contiene 10 activos y metadata válida.
+- Los nueve actores están asociados exclusivamente a su tenant; ADMIN/MULTI tienen dos branches y OPERATOR solo branch 1.
+- Coherencia cross-tenant de FKs: aprobada, sin mismatch.
+- Tres roles neutrales `operator`, permiso normativo exacto `dcim:view` y permission-set hash esperado: aprobados.
+- Enforcement runtime de `dcim:view`: permanece `NO ENFORCED`.
+- Roles privilegiados `admin`/`super_admin` dentro del fixture: ninguno.
+- Roles obsoletos o no canónicos: ninguno.
+
+### Seguridad y límites
+
+El generador y los hashes temporales fueron eliminados. Las credenciales plaintext necesarias para una eventual campaña posterior permanecen fuera de Git en un archivo local `0600`; no fueron usadas. El manifest y su checksum permanecen protegidos fuera del repositorio para un futuro rollback autorizado.
+
+No se ejecutó HTTP, login, CAMPAÑA A, rollback, RLS, migraciones o deploy. El resultado **PREPARADO Y VERIFICADO** no autoriza por sí mismo la campaña funcional ni declara seguro el aislamiento.
