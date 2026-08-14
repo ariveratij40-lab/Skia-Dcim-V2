@@ -2,23 +2,30 @@
 
 ## Etapa D
 
-- Estado: `BLOQUEADA / NO EJECUTADA` para validación de código convergido.
-- Motivo: Etapa C se detuvo sin cambios funcionales por límite estructural.
+- Estado: `COMPLETA` para el alcance LOCAL autorizado.
 
 ## Validaciones ejecutadas
 
 | Validación | Resultado |
 |---|---|
 | Lectura completa de gobernanza y especificación | APROBADO |
-| Linter original ejecutado correctamente | FALLIDO: 221 hallazgos heurísticos |
-| Clasificación focal de accesos objetivo | APROBADO como inventario; contiene pendientes |
-| Revisión de inicialización `db`/`runMigrations` | APROBADO; confirma conexión única actual |
-| Trazado `BeginTenantTx`/`RequireTenantTx`/scope | APROBADO |
+| Linter focal revisado | APROBADO: `tenant_db_lint: sin hallazgos.` |
+| Clasificación focal de accesos objetivo | APROBADO; cero accesos relevantes no clasificados |
+| Separación `MIGRATOR_DATABASE_URL`/`DATABASE_URL` | APROBADO por wiring y pruebas unitarias |
+| Gate de rol runtime inseguro | APROBADO por pruebas unitarias simuladas |
+| Autorización clear inventory | APROBADO: cuatro combinaciones admin/scope/password |
+| Contexto de job | APROBADO: tenant y branch obligatorios; scope global nunca inferido |
+| Infraestructura/layout contextual | APROBADO por build, gate estático y revisión de transacción única |
 | Decisión de scope logs/relaciones | DOCUMENTADA |
-| Pruebas con rol restringido sobre código convergido | NO EJECUTADO: no existe convergencia aprobada |
-| `go build` posterior a cambios | NO APLICA: no se modificó código Go |
+| Pruebas focales Go | APROBADO |
+| `go build` posterior a cambios | APROBADO; artefacto fuera del repositorio |
 | Activación RLS | NO EJECUTADO / PROHIBIDO |
 
-Los primeros dos intentos locales del linter no alcanzaron el análisis por invocación incorrecta (`go.mod` ausente en raíz y glob interpretado por `go run`). El tercer intento, con archivo fuente y separador `--`, ejecutó correctamente y devolvió exit code `1` con 221 hallazgos.
+Comandos principales:
 
-No se declara PHASE-006 lista para cierre. Se requiere decisión arquitectónica sobre operaciones tenant-wide y jobs antes de reanudar Etapa C/D.
+- `go run ../tools/tenant_db_lint/main.go -- *.go`
+- `go test -run 'Test(ValidateRuntimeRoleState|DatabaseDSNs|ClearInventoryAuthorization|JobTenantContext|JobScope)' ./...`
+- `go build -o /private/tmp/skia-phase006-backend .`
+- `go test ./...`
+
+La suite completa conserva un fallo preexistente en `TestHandleInventoryImportRoutes_DetailValid`: panic por `db == nil` en `ExtractSessionContextSecure`; también estaba registrado antes de estos cambios. No se ocultó ni se corrigió fuera de alcance. La validación con identidad PostgreSQL real restringida no se ejecutó porque requiere credenciales/cutover de STAGING.

@@ -191,6 +191,13 @@ func handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 				critRows.Close()
 			}
 
+			assetsTx.QueryRowContext(r.Context(),
+				`SELECT COUNT(*) FROM mdf_idf m
+				 JOIN assets a ON a.id = m.asset_id
+				 WHERE m.tenant_id = $1 AND a.status = 'maintenance'`,
+				tenantID,
+			).Scan(&resp.Stats.MdfIdfAtencion)
+
 			if cErr := assetsTx.Commit(); cErr != nil {
 				log.Printf("handleDashboardStats: error en commit de contexto de tenant (tenant=%s): %v", tenantID, cErr)
 				return
@@ -219,13 +226,6 @@ func handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		`SELECT COUNT(*) FROM mdf_idf WHERE tenant_id = $1`,
 		tenantID,
 	).Scan(&resp.Stats.MdfIdfTotal)
-
-	db.QueryRow(
-		`SELECT COUNT(*) FROM mdf_idf m
-		 JOIN assets a ON a.id = m.asset_id
-		 WHERE m.tenant_id = $1 AND a.status = 'maintenance'`,
-		tenantID,
-	).Scan(&resp.Stats.MdfIdfAtencion)
 
 	// ---- Racks ----
 	db.QueryRow(

@@ -2,18 +2,19 @@
 
 ## Etapa C
 
-- Estado: `BLOQUEADA POR LÍMITE ESTRUCTURAL`.
-- Código funcional modificado: ninguno.
+- Estado LOCAL: `COMPLETA`.
+- Decisión aplicada: `ARCHITECT_DECISION_TENANT_WIDE_AND_JOB_CONTEXT.md`.
 
-La migración de accesos directos es técnicamente posible para rutas branch-scoped, pero no puede completarse preservando semántica en la operación tenant-wide `handleClearInventory` sin una decisión de autorización adicional.
+## Operación tenant-wide
 
-Opciones que requieren decisión arquitectónica:
+`handleClearInventory` ahora se ejecuta mediante `RequireTenantTxScoped` y solo permite la operación cuando coinciden sesión/tenant válidos, rol efectivo `admin`, `branch_scope_all=true` y `ADMIN_PASSWORD` configurado/correcto. El password por defecto fue eliminado: ausencia de configuración falla cerrado. Las eliminaciones y el log usan el mismo `TenantDB` y conservan `WHERE tenant_id = tenant de sesión`.
 
-1. exigir rol `admin` además de la credencial administrativa y usar `RequireTenantTxScoped`;
-2. retirar o rediseñar la contraseña administrativa global;
-3. definir una capacidad específica, auditable y tenant-scoped independiente del nombre de rol;
-4. deshabilitar temporalmente la operación durante el cutover.
+## Handlers branch-scoped
 
-No se eligió ninguna opción unilateralmente. Tampoco se introdujo un runtime privilegiado, `SET ROLE`, bypass por handler ni alcance global derivado de branch ausente.
+Las rutas de infraestructura y layout de racks se registran con `RequireTenantTx`. Sus accesos a `assets` y tablas satélite comparten la transacción contextual; el layout ya no abre una transacción paralela sin variables y suma filtros tenant en verificaciones relacionadas.
 
-Los jobs de importación/background necesitan además un contrato explícito para recibir tenant/branch validados y abrir `BeginTenantTx` sobre el pool runtime. Esta adaptación debe realizarse junto con las pruebas del modelo de ejecución asíncrono, no como sustitución mecánica de `db`.
+## Jobs
+
+`JobTenantContext` exige tenant y, para importaciones, branch. `BranchScopeAll` es falso por defecto y nunca se deriva de branch vacío. `processImportFileAsync`, `ProcessImportAsync` y los helpers de deduplicación/upsert ejecutan accesos objetivo en su propia transacción runtime contextual; contexto incompleto falla antes de acceder.
+
+No se introdujo `SET ROLE`, pool migrador en handlers/jobs, bypass, cambio RLS, esquema ni privilegio nuevo.

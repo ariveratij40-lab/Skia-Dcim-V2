@@ -5,7 +5,8 @@
 - Estado: `COMPLETA`.
 - Linter: 221 hallazgos heurísticos sobre `db`/`h.DB`.
 - Hallazgos relevantes a `assets`, `asset_logs`, `asset_relationships`: requieren clasificación y cambios focalizados.
-- Resultado global: `BLOQUEADO` para convergencia automática por semántica tenant-wide no resuelta.
+- Decisión posterior aplicada: `ARCHITECT_DECISION_TENANT_WIDE_AND_JOB_CONTEXT.md`.
+- Resultado tras Etapa C: cero accesos directos no clasificados a las tres tablas objetivo según el gate estático refinado.
 
 ## Matriz por componente
 
@@ -17,18 +18,18 @@
 | `dcim_assets.go` listado/detalle/update/delete | `assets`, logs en RFID | `CONTEXT_OK` | rutas envueltas por `RequireTenantTx` y uso de `TenantDB` |
 | `dcim_assets.go` creación | `assets`, `asset_logs` | `CONTEXT_OK` | usa `BeginTenantTx` explícito |
 | `dashboard.go` | agregados de `assets` tenant-wide | `NEEDS_SCOPED_TX` parcialmente resuelto | usa `BeginTenantTxWithScope`; requiere conservar decisión de rol global |
-| `infraestructura.go` | múltiples SELECT/INSERT/UPDATE de `assets` | `NEEDS_TENANT_TX` | usa conexión global y mezclaría transacciones si solo se envolviera la ruta |
-| `rack_layout.go` | SELECT/UPDATE de `assets` | `NEEDS_TENANT_TX` | conexión global y transacción propia sin variables RLS |
-| `inventory_clear_handler.go` | COUNT/DELETE tenant-wide de `assets` | `NEEDS_SCOPED_TX` — BLOQUEANTE | autorización actual por password global, sin decisión de rol para scope multi-branch |
-| `duplicate_detector.go` | SELECT/INSERT/UPDATE `assets` | `JOB_CONTEXT_REQUIRED` / revisar receptor | varias funciones reciben DB/tx; debe fijarse tenant/branch en la transacción real |
-| `import_upload_handlers.go` y helpers | INSERT de `assets` en background | `JOB_CONTEXT_REQUIRED` | el job conserva IDs explícitos, pero no establece variables PostgreSQL en su conexión |
-| `background_processor.go` | procesamiento asíncrono | `JOB_CONTEXT_REQUIRED` | no existe request/middleware que provea contexto |
+| `infraestructura.go` | múltiples SELECT/INSERT/UPDATE de `assets` | `CONTEXT_OK` | rutas envueltas por `RequireTenantTx`; el alias local `db` es el `TenantDB` de la transacción, y tablas satélite/asset comparten la misma unidad atómica |
+| `rack_layout.go` | SELECT/UPDATE de `assets` | `CONTEXT_OK` | ruta envuelta por `RequireTenantTx`; eliminada transacción propia y agregados filtros tenant a lecturas/updates relacionados |
+| `inventory_clear_handler.go` | COUNT/DELETE tenant-wide de `assets` | `CONTEXT_OK` | `RequireTenantTxScoped`; exige rol efectivo `admin`, scope global explícito y `ADMIN_PASSWORD` configurado/válido; todas las sentencias conservan `tenant_id` |
+| `duplicate_detector.go` | SELECT/INSERT/UPDATE `assets` | `CONTEXT_OK` como job | helpers reciben `TenantDB`; los llamadores asíncronos entregan la transacción contextual, no el pool global |
+| `import_upload_handlers.go` | INSERT de `assets` en background | `CONTEXT_OK` como job | `JobTenantContext` obligatorio tenant+branch; transacción propia con scope-all falso por defecto |
+| `background_processor.go` | procesamiento asíncrono | `CONTEXT_OK` como job | abre `BeginJobTenantTx` antes de consultar/upsert; falta de tenant/branch falla antes de acceso objetivo |
 | `migrations.go` y SQL versionado | DDL/RLS | `MIGRATION_ONLY` | debe usar conexión migradora separada |
 | catálogos/configuración sin tablas objetivo | otras tablas | `FALSE_POSITIVE` | el linter actual no inspecciona el SQL y sobrerreporta |
 | `asset_relationships` runtime | sin endpoint funcional observado | `FALSE_POSITIVE` para rutas; diseño pendiente | existe tabla/policy/fixture, pero no handler read-only cubierto por CAMPAÑA A |
 
-## Límite estructural
+## Gate revisable
 
-`handleClearInventory` opera sobre todas las branches de un tenant. Bajo RLS necesitaría `app.branch_scope_all=true`. El endpoint no demuestra pertenencia al rol `admin`; valida una contraseña global. Otorgar scope global por esa contraseña, o comenzar a exigir rol `admin`, cambia la semántica global de autorización. PHASE-006 prohíbe inferir ese cambio.
+`tools/tenant_db_lint` ahora analiza solamente literales SQL que nombran exactamente `assets`, `asset_logs` o `asset_relationships`; evita confundir `imported_assets`. Reconoce el patrón revisado `db, ... := TenantDBFromContext(...)` como alias contextual local. SQL dinámico queda fuera del análisis heurístico y continúa sujeto a revisión; no se observó SQL dinámico sobre tablas objetivo en los flujos modificados.
 
-No se modificó el endpoint ni se creó un bypass.
+Resultado local: `tenant_db_lint: sin hallazgos.` No se agregó una exclusión global ni un bypass.

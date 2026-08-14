@@ -3,7 +3,8 @@
 ## Etapa B
 
 - Estado de diseño: `COMPLETA`.
-- Implementación: `BLOQUEADA` antes de modificar código por el límite estructural detectado en Etapa C.
+- Implementación local: `COMPLETA`.
+- Cutover STAGING: `BLOQUEADO / NO AUTORIZADO`.
 
 ## Configuración propuesta
 
@@ -13,11 +14,11 @@
 
 Ningún valor o secreto debe versionarse. Las dos conexiones no deben resolver a una identidad equivalente ni permitir que runtime herede el rol migrador.
 
-## Ciclo propuesto
+## Ciclo implementado
 
-1. Abrir conexión migradora.
-2. Validar que es la identidad autorizada para DDL.
-3. Ejecutar `runMigrations` y tareas de migración de arranque.
+1. Resolver `DATABASE_URL` y `MIGRATOR_DATABASE_URL` sin registrar valores.
+2. Abrir conexión migradora.
+3. Ejecutar `runMigrations` y `migrateAIChatHistory` exclusivamente con esa conexión.
 4. Cerrar la conexión migradora.
 5. Abrir el pool runtime.
 6. Consultar y validar `current_user`, `rolsuper`, `rolbypassrls`, memberships y ownership.
@@ -30,7 +31,11 @@ Las migraciones no deben ejecutarse con el pool runtime. Los handlers no deben c
 
 El cutover futuro necesita un release backend identificable y una configuración externa versionada por checksum, no por contenido. Ante fallo de arranque o rutas, el rollback debe restaurar el release/configuración backend previos. No debe cambiar RLS, datos ni fixtures.
 
-## Pruebas diseñadas
+## Gate runtime implementado
+
+Con `SKIA_REQUIRE_RESTRICTED_RUNTIME_DB=true`, el arranque rechaza configuración ausente o DSN runtime/migrator idéntico. Tras conectar el pool runtime consulta su identidad y falla ante `SUPERUSER`, `BYPASSRLS`, ownership de tablas objetivo o membresía en un rol privilegiado. SessionStore, handlers y jobs solo reciben el pool runtime.
+
+## Pruebas locales
 
 - ausencia de `DATABASE_URL` bajo gate: arranque rechazado;
 - runtime superuser/BYPASSRLS: arranque rechazado;
@@ -39,4 +44,4 @@ El cutover futuro necesita un release backend identificable y una configuración
 - runtime restringido válido: inicialización permitida;
 - secretos nunca aparecen en errores/logs.
 
-Estas pruebas no se implementaron porque continuar con la convergencia parcial dejaría un backend que todavía no puede operar integralmente con RLS y la especificación exige detenerse ante el límite de autorización global.
+Las pruebas unitarias cubren configuración ausente, DSN idéntico, separación y rechazo de cada atributo privilegiado. No se usaron credenciales ni roles reales. La validación efectiva del rol `skia_runtime` y el cambio de URLs en STAGING permanecen para un gate posterior.

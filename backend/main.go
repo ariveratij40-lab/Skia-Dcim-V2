@@ -99,43 +99,55 @@ var db *sql.DB
 // ==========================================
 
 func main() {
-	var err error
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://skia:skia@localhost:5432/skia_db?sslmode=disable"
-	}
-
-	db, err = sql.Open("postgres", dsn)
+	runtimeDSN, migratorDSN, requireRestricted, err := databaseDSNsFromEnv()
 	if err != nil {
-		log.Fatalf("Error connecting to database: %v", err)
-	}
-	defer db.Close()
-
-	if err := db.Ping(); err != nil {
-		log.Fatalf("Database ping failed: %v", err)
+		log.Fatalf("Database configuration invalid: %v", err)
 	}
 
-	log.Println("✅ Connected to database")
-
-	// Inicializar SessionStore con PostgreSQL
-	if err := InitializeSessionStore(db); err != nil {
-		log.Fatalf("Failed to initialize session store: %v", err)
+	migratorDB, err := sql.Open("postgres", migratorDSN)
+	if err != nil {
+		log.Fatalf("Error opening migrator database: %v", err)
 	}
-
-	// Validar que SessionStore está inicializado
-	if err := ValidateSessionStoreInitialization(); err != nil {
-		log.Fatalf("Session store validation failed: %v", err)
+	if err := migratorDB.Ping(); err != nil {
+		_ = migratorDB.Close()
+		log.Fatalf("Migrator database ping failed: %v", err)
 	}
 
 	// Aplicar migraciones pendientes automáticamente
-	if err := runMigrations(db); err != nil {
+	if err := runMigrations(migratorDB); err != nil {
 		log.Printf("⚠️  Error en migraciones: %v", err)
 	} else {
 		log.Println("✅ Migraciones aplicadas")
 	}
 
 	// Migrar tabla de historial IA
-	migrateAIChatHistory(db)
+	migrateAIChatHistory(migratorDB)
+	if err := migratorDB.Close(); err != nil {
+		log.Fatalf("Failed to close migrator database: %v", err)
+	}
+
+	db, err = sql.Open("postgres", runtimeDSN)
+	if err != nil {
+		log.Fatalf("Error opening runtime database: %v", err)
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Runtime database ping failed: %v", err)
+	}
+	if requireRestricted {
+		if err := validateRestrictedRuntimeDB(db); err != nil {
+			log.Fatalf("Runtime database security gate failed: %v", err)
+		}
+	}
+	log.Println("✅ Connected to runtime database")
+
+	// Inicializar SessionStore exclusivamente con el pool runtime.
+	if err := InitializeSessionStore(db); err != nil {
+		log.Fatalf("Failed to initialize session store: %v", err)
+	}
+	if err := ValidateSessionStoreInitialization(); err != nil {
+		log.Fatalf("Session store validation failed: %v", err)
+	}
 
 	// ==========================================
 	// Rutas
@@ -183,19 +195,19 @@ func main() {
 	http.HandleFunc("/api/dcim/catalogs/locations/", dcim.HandleLocationsManage)
 
 	// Infraestructura DCIM — endpoints por módulo
-	http.HandleFunc("/api/infra/mdf-idf", handleMdfIdf)
-	http.HandleFunc("/api/infra/mdf-idf/check", handleMdfIdfCheck) // validación de duplicados en tiempo real
-	http.HandleFunc("/api/infra/mdf-idf/", handleEnsureRack)       // /api/infra/mdf-idf/{id}/ensure-rack
+	http.HandleFunc("/api/infra/mdf-idf", RequireTenantTx(db, handleMdfIdf))
+	http.HandleFunc("/api/infra/mdf-idf/check", RequireTenantTx(db, handleMdfIdfCheck)) // validación de duplicados en tiempo real
+	http.HandleFunc("/api/infra/mdf-idf/", RequireTenantTx(db, handleEnsureRack))       // /api/infra/mdf-idf/{id}/ensure-rack
 	http.HandleFunc("/api/infra/cert-evaluations", handleCertEvaluations)
 	http.HandleFunc("/api/infra/cert-evaluations/", handleCertEvaluationItem)
-	http.HandleFunc("/api/infra/racks", handleRacks)
-	http.HandleFunc("/api/infra/racks/", handleRackLayout) // /api/infra/racks/{id}/layout
-	http.HandleFunc("/api/infra/switches", handleSwitches)
-	http.HandleFunc("/api/infra/patch-panels", handlePatchPanels)
-	http.HandleFunc("/api/infra/ups-pdus", handleUpsPdus)
-	http.HandleFunc("/api/infra/backbone", handleBackbone)
-	http.HandleFunc("/api/infra/backbone/check", handleBackboneCheck)
-	http.HandleFunc("/api/infra/nodos", handleNodos)
+	http.HandleFunc("/api/infra/racks", RequireTenantTx(db, handleRacks))
+	http.HandleFunc("/api/infra/racks/", RequireTenantTx(db, handleRackLayout)) // /api/infra/racks/{id}/layout
+	http.HandleFunc("/api/infra/switches", RequireTenantTx(db, handleSwitches))
+	http.HandleFunc("/api/infra/patch-panels", RequireTenantTx(db, handlePatchPanels))
+	http.HandleFunc("/api/infra/ups-pdus", RequireTenantTx(db, handleUpsPdus))
+	http.HandleFunc("/api/infra/backbone", RequireTenantTx(db, handleBackbone))
+	http.HandleFunc("/api/infra/backbone/check", RequireTenantTx(db, handleBackboneCheck))
+	http.HandleFunc("/api/infra/nodos", RequireTenantTx(db, handleNodos))
 
 	// Rutas CAPEX
 	http.HandleFunc("/api/capex/projects", handleCapexProjects)

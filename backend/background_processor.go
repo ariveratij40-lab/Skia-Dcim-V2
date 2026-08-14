@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -55,13 +56,13 @@ func CreateProcessingJob(importID int64) string {
 	jobID := fmt.Sprintf("job_%d_%d", importID, time.Now().UnixNano())
 
 	job := &ProcessingJob{
-		JobID:      jobID,
-		ImportID:   importID,
-		Status:     "pending",
-		Progress:   0,
+		JobID:       jobID,
+		ImportID:    importID,
+		Status:      "pending",
+		Progress:    0,
 		CurrentStep: 1,
-		TotalSteps: 10,
-		StartedAt:  time.Now(),
+		TotalSteps:  10,
+		StartedAt:   time.Now(),
 	}
 
 	processingManager.mu.Lock()
@@ -285,6 +286,18 @@ func ProcessImportWithSimulation(db *sql.DB, importID int64, simulate bool) erro
 func ProcessImportAsync(db *sql.DB, importID int64, tenantID string, branchID string, assetType string) {
 	go func() {
 		jobID := CreateProcessingJob(importID)
+		scope := JobTenantContext{TenantID: tenantID, BranchID: branchID}
+		jobTx, err := BeginJobTenantTx(context.Background(), db, scope, true)
+		if err != nil {
+			FailJob(jobID, "Missing or invalid tenant/branch context")
+			return
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = jobTx.Rollback()
+			}
+		}()
 
 		// Obtener filas a procesar
 		query := `
@@ -293,7 +306,7 @@ func ProcessImportAsync(db *sql.DB, importID int64, tenantID string, branchID st
 			WHERE import_id = $1 AND status IN ('correct', 'warning', 'corrected')
 		`
 
-		rows, err := db.Query(query, importID)
+		rows, err := jobTx.Query(query, importID)
 		if err != nil {
 			FailJob(jobID, fmt.Sprintf("Database error: %v", err))
 			return
@@ -314,7 +327,7 @@ func ProcessImportAsync(db *sql.DB, importID int64, tenantID string, branchID st
 			json.Unmarshal([]byte(normalizedDataStr), &assetData)
 
 			// UPSERT
-			_, err := UpsertAsset(db, tenantID, branchID, assetType, assetData)
+			_, err := UpsertAsset(jobTx, tenantID, branchID, assetType, assetData)
 			if err != nil {
 				log.Printf("Error upserting asset: %v", err)
 				continue
@@ -327,7 +340,13 @@ func ProcessImportAsync(db *sql.DB, importID int64, tenantID string, branchID st
 			UpdateJobProgress(jobID, 9, progress, fmt.Sprintf("Guardando activos: %d/%d", processedRows, totalRows))
 		}
 
-		// Generar reportes
+		if err := jobTx.Commit(); err != nil {
+			FailJob(jobID, "Database commit failed")
+			return
+		}
+		committed = true
+
+		// Generar reportes (no accede a las tres tablas objetivo).
 		UpdateJobProgress(jobID, 10, 95, "Generando reportes...")
 		GenerateAllReports(db, importID, "/tmp/reports")
 
