@@ -33,3 +33,18 @@ Ningún archivo histórico debe reescribirse. Una futura activación necesita un
 1. Definir si logs y relaciones son tenant-wide o branch-scoped por herencia.
 2. Si son branch-scoped, aprobar políticas con validación de los activos referenciados o un cambio de esquema explícito.
 3. Definir el artefacto operativo canónico sin modificar migraciones históricas.
+
+## Matriz canónica aprobada para implementación local
+
+La decisión `ARCHITECT_DECISION_RLS_POLICY_CANONICALIZATION_GATE.md` resolvió
+las decisiones anteriores. El artefacto nuevo conserva `assets` y converge:
+
+| Tabla | Policy canónica | Límite `USING` / `WITH CHECK` |
+|---|---|---|
+| `assets` | `assets_tenant_branch_isolation` | tenant actual y branch actual, branch neutral o scope-all explícito |
+| `asset_logs` | `asset_logs_tenant_branch_isolation` | tenant actual y activo referenciado visible bajo la misma regla |
+| `asset_relationships` | `asset_relationships_tenant_branch_isolation` | tenant actual y source/target visibles simultáneamente bajo la misma regla |
+
+Las tres policies son `PERMISSIVE`, `ALL`, exclusivas de `skia_runtime`, con
+fronteras simétricas de lectura/escritura. Su activación en STAGING permanece
+bloqueada hasta un gate posterior.

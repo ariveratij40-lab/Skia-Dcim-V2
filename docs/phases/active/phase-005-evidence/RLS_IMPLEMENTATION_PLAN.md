@@ -3,34 +3,27 @@
 ## Estado
 
 - Etapa: `B — DISEÑO Y VALIDACIÓN LOCAL`.
-- Resultado: `BLOQUEADO ANTES DE SQL ACTIVABLE`.
+- Resultado: `ARTEFACTO CANÓNICO Y ROLLBACK IMPLEMENTADOS LOCALMENTE`.
 
-La condición de entrada de Etapa B no se cumple: las políticas no cubren inequívocamente branch para tablas relacionadas y el backend efectivo no usa el rol restringido ni suministra contexto en todas las rutas. No se creó una migración ni script de activación para evitar convertir un diseño incompleto en una operación ejecutable.
+PHASE-006 resolvió la identidad runtime y la cobertura de contexto; la decisión
+de canonicalización resolvió la semántica branch de entidades relacionadas. Se
+creó un SQL operativo nuevo bajo `ops/phase005/`, sin reescribir migraciones
+históricas. Su token de aprobación no ha sido autorizado para STAGING.
 
-## Fases correctivas requeridas antes de Etapa C
+## Dependencias resueltas antes de Etapa C
 
-1. **Convergencia de identidad runtime**
-   - aprobar el uso efectivo de `skia_runtime` en la API;
-   - entregar su secreto fuera del repositorio;
-   - separar el rol de runtime del rol propietario/migrador;
-   - verificar que la aplicación no puede heredar `BYPASSRLS`.
-2. **Cobertura de contexto**
-   - inventariar por handler todos los accesos a las tres tablas;
-   - migrar rutas HTTP al mismo `TenantDB` transaccional;
-   - diseñar contexto explícito para jobs y operaciones tenant-wide;
-   - convertir el lint en un gate con allowlist revisada, no ignorar sus 221 hallazgos globales.
-3. **Política de entidades relacionadas**
-   - decidir formalmente si logs y relaciones son tenant-wide o branch-scoped;
-   - demostrar integridad tenant/branch entre cada registro y sus activos referenciados;
-   - añadir pruebas directas con `skia_runtime` para lectura y escritura cross-branch.
-4. **Mecanismo canónico**
-   - crear un SQL operativo nuevo, transaccional e idempotente;
-   - no modificar `015`, `016` ni el script histórico de `ops/`;
-   - fijar hashes de políticas y abortar ante divergencia.
+1. **Identidad runtime:** PHASE-006 dejó la API en `skia_runtime`, separada del
+   migrador, sin `SUPERUSER`, `BYPASSRLS`, ownership ni herencia privilegiada.
+2. **Cobertura de contexto:** PHASE-006 convergió handlers, jobs y operaciones
+   tenant-wide a contexto explícito tenant/branch.
+3. **Entidades relacionadas:** el gate aprobó logs branch-scoped por activo y
+   relaciones visibles únicamente cuando ambos endpoints están en scope.
+4. **Mecanismo canónico:** `ops/phase005/` contiene SQL nuevo, transaccional,
+   idempotente y protegido por hashes; `015`, `016` y ops históricos no cambian.
 
 ## Diseño de activación futura
 
-Una vez resueltos los bloqueantes, el artefacto deberá:
+El artefacto implementado:
 
 1. comprobar entorno STAGING, base, tablas, policies y rol runtime;
 2. verificar `NOSUPERUSER`, `NOBYPASSRLS` y ausencia de ownership runtime;
@@ -39,9 +32,11 @@ Una vez resueltos los bloqueantes, el artefacto deberá:
 5. habilitar solo las tablas aprobadas dentro de una transacción;
 6. comprobar el estado y terminar sin modificar datos funcionales.
 
-## Rollback propuesto
+## Rollback implementado
 
-El rollback futuro debe restaurar exactamente el snapshot previo. Para el estado observado —políticas existentes, FORCE activo y RLS deshabilitado— el rollback mínimo de una activación que no cambie policies sería `DISABLE ROW LEVEL SECURITY` únicamente en las tablas activadas. Si el gate aprueba cambios de policy, el rollback deberá restaurar además cada definición exacta capturada, nunca aproximarla.
+`rollback_canonical_rls.sql` restaura exactamente las policies previas y sus
+hashes, deshabilita RLS y conserva FORCE activo. Solo acepta el estado canónico
+exacto o el snapshot ya restaurado; cualquier divergencia aborta antes de DDL.
 
 Rollback no debe cambiar roles, secretos, fixtures ni datos. Un cutover de `DATABASE_URL` requiere su propio rollback de release/configuración backend, separado del rollback RLS.
 
@@ -51,8 +46,11 @@ Rollback no debe cambiar roles, secretos, fixtures ni datos. Un cutover de `DATA
 - Trazado de `BeginTenantTx`, `RequireTenantTx`, `RequireTenantTxScoped` y rutas DCIM.
 - Ejecución del linter estático: 221 hallazgos, exit code `1`.
 - Comparación de policies versionadas contra `pg_policies` real.
-- `git diff --check` se ejecutará antes del commit.
+- PostgreSQL 16 efímero: activación, matriz read/write, idempotencia, rollback y
+  guards negativos aprobados.
+- `bash -n` y `git diff --check` aprobados; `shellcheck` no disponible.
 
-## Gate solicitado
+## Gate siguiente
 
-Se requiere decisión arquitectónica sobre los cuatro bloques anteriores antes de escribir SQL activable, cambiar credenciales/runtime o habilitar RLS en STAGING.
+Se requiere una decisión arquitectónica separada antes de ejecutar el artefacto
+en STAGING, habilitar RLS o iniciar CAMPAÑA B.
