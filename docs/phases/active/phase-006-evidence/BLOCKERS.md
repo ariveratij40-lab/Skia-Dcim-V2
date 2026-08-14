@@ -10,6 +10,6 @@
 | P006-B06 | HALLAZGO PREEXISTENTE | Suite completa falla por panic de test con `db == nil` | Fase correctiva de pruebas, fuera del cambio funcional PHASE-006 |
 | P006-B07 | RESUELTO | La sesión contextless de `phase002-a-admin@test.invalid` fue eliminada transaccionalmente con `rows_affected=1` y verificación cero | Gate de limpieza ejecutado |
 | P006-B08 | RESUELTO LOCAL | La omisión de PHASE-004 en la ascendencia fue identificada; `handleSelectBranch` vuelve a exigir mapping exacto y UPDATE protegido. La sesión TEST resultante fue eliminada con `rows_affected=1` | Gate de regresión ejecutado |
-| P006-B09 | BLOQUEADO | La corrección de branch no ha sido desplegada ni validada en STAGING | Nueva decisión explícita de deploy/cutover |
+| P006-B09 | RESUELTO | La corrección de branch fue desplegada y validada: A-OPERATOR A1 `200`, intento A2 `403`, contexto preservado en A1 y cero mappings inválidos | Gate final ejecutado |
 
-Etapas C/D quedan completas en alcance LOCAL. No se activó RLS, no se cambiaron credenciales, esquema, constraints, roles ni privilegios. PHASE-006 queda preparada para revisión/cierre; no autoriza por sí misma cutover ni deploy.
+Etapas C/D y el cutover restringido quedan completos en STAGING. El backend permanece como `skia_runtime`, healthy y con cero reinicios. No se activó RLS ni se cambiaron credenciales, esquema, constraints, roles o privilegios. P006-B05 permanece sujeto al gate separado de PHASE-005; PHASE-006 no autoriza por sí misma activar RLS ni ejecutar CAMPAÑA B.
