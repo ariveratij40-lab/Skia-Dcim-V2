@@ -1,0 +1,61 @@
+# PHASE-002 — Fixture implementation design evidence
+
+## Record
+
+- Evidence origin: `LOCAL`
+- Baseline authorized: `5b4f01e028508b1045aef1ecbb386947d627aac3`
+- Fixture definition: `SKIA-PHASE-002-FIXTURE-V1`
+- Execution state: `NO EJECUTADO`
+- VPS/DB/HTTP access: not performed in this round
+
+## D-002-001 — Deterministic fixture model
+
+- State: `APROBADO` (static design)
+- Evidence: deterministic IDs cover 3 tenants, 6 branches, 9 actors, tenant/branch mappings, 9 roles, role permissions, 60 assets, 60 logs and 6 intra-branch relationships.
+- Risk: the effective staging schema may differ from repository migrations.
+- Recommendation: execute the read-only preflight under separate authorization before any write.
+- Corrective phase: not applicable unless preflight reports incompatibility.
+
+## D-002-002 — Staging-only fail-closed controls
+
+- State: `APROBADO` (static design)
+- Evidence: shell and SQL entry points require explicit staging markers and separate approval tokens; preflight verifies host/database/schema/collisions without writes.
+- Risk: environment variables are operator-controlled and must be supplied through an authorized execution channel.
+- Recommendation: retain preflight output and operator authorization as campaign evidence.
+
+## D-002-003 — Credential isolation
+
+- State: `APROBADO` (static design)
+- Evidence: no password/token/cookie is embedded. Password hashes enter psql externally; HTTP credentials enter through an external mode-`0600` file; bodies and session artifacts are not emitted.
+- Risk: process environment and temporary files remain sensitive during an authorized campaign.
+- Recommendation: use the approved staging secret-delivery mechanism and verify cleanup.
+
+## D-002-004 — Exact rollback manifest
+
+- State: `APROBADO` (static design)
+- Evidence: preparation exports table, exact ID and logical alias to a client-side external CSV. Rollback imports that manifest to a temporary table and deletes by exact IDs in FK-safe order.
+- Risk: losing or tampering with the manifest would block safe rollback.
+- Recommendation: mode-restrict it, compute SHA-256 externally, retain it through verified rollback, and version only checksum/count summaries.
+
+## D-002-005 — Isolation matrix
+
+- State: `APROBADO` (static design), execution `NO EJECUTADO`
+- Evidence: the runner enumerates `ISO-001`–`ISO-022` without direct SQL bypass and suppresses HTTP response bodies and authentication material.
+- Risk: natural session expiry and application/DB correlation cannot be established by HTTP alone.
+- Recommendation: mark those observations `BLOQUEADO` until separately authorized read-only correlation is available.
+
+## Validation record
+
+Static checks executed in this round:
+
+- `bash -n tools/phase002/preflight.sh tools/phase002/run_isolation_tests.sh`: exit `0`, `APROBADO`.
+- guarded invocation of `preflight.sh` without required environment: exit `1` before `psql`, `APROBADO`.
+- guarded invocation of `run_isolation_tests.sh` without required environment: exit `1` before HTTP, `APROBADO`.
+- static SQL review without PostgreSQL connection: transaction, approval, database, manifest and exact-ID deletion guards present, `APROBADO` by inspection.
+- secret-pattern filename-only review: no embedded secret assignment detected, `APROBADO`.
+- `git diff --check`: exit `0`, `APROBADO`.
+- path-scope verification: only `tools/phase002/` and `docs/phases/active/phase-002-evidence/` are new, `APROBADO`.
+- `shellcheck`: `NO EJECUTADO`; tool unavailable and no installation was authorized.
+- PostgreSQL SQL parser/`psql`, `sqlfluff` or `pg_format`: `NO EJECUTADO`; tools unavailable and no installation was authorized.
+
+No fixture, login, SQL statement, rollback or network operation was executed.
