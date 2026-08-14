@@ -314,3 +314,83 @@ Después de detener la campaña, sin más solicitudes HTTP:
 La nueva CAMPAÑA A **no se completó** y no puede aprobarse. Conforme al criterio de detención inmediata, no se añadieron las variables faltantes y no se reintentó el runner. No hubo evidencia de fuga cross-tenant, mutación cross-branch nueva ni cambio de runtime; la causa fue exclusivamente la ausencia de los dos inputs externos requeridos para la prueba negativa de login.
 
 No se ejecutó CAMPAÑA B, rollback de fixtures, RLS, migraciones, cambios de esquema, deploy adicional ni corrección del runner.
+
+## CAMPAÑA A completa posterior a PHASE-004
+
+- Fecha: `2026-08-14` (`America/Tijuana`).
+- Decisión: `ARCHITECT_DECISION_INVALID_LOGIN_INPUTS_RETRY.md`.
+- HEAD de ejecución: `979fc7d550f76a08d0116fc2dfaae6ba5deac34d`.
+- Runner aprobado: sin modificaciones locales.
+- Backend runtime: `01efd5099758d8ad85fc4bcdf4720c5e23e59270`.
+- Base URL: `https://skia.iamet.mx`.
+- Resultado estructural: `CAMPAIGN_EXECUTION_STATUS=COMPLETE`, exit code `0`.
+- Resultado funcional: **APROBADA EN EL ALCANCE EJECUTABLE, CON BLOQUEOS DOCUMENTADOS**.
+- Clasificación de aislamiento: **A — la aplicación bloquea los cruces observados; RLS permanece deshabilitado**.
+
+Se generaron un email y password inválidos aleatorios únicamente para ISO-002. El email se verificó con cero coincidencias en `users` mediante una transacción read-only. Los valores se almacenaron fuera del repositorio en un archivo modo `0600`, nunca se imprimieron y el archivo fue eliminado inmediatamente después del runner.
+
+### Precondiciones finales
+
+- Rama limpia y sincronizada antes de la ejecución.
+- Runtime exacto y contenedor saludable, restart count `0`.
+- Health interno y público HTTP `200`.
+- Fixture íntegro: `3/6/9/60/60/6` para tenants, branches, usuarios, activos, logs y relaciones.
+- Manifest modo `0600` y checksum SHA-256 aprobado.
+- Sesiones TEST fuera de `user_branches`: `0`.
+- Host canónico exacto.
+
+### Matriz completa redactada
+
+| ID | Actor/operación | HTTP | Estado | Esperado | Observado | Cross-tenant | Cross-branch |
+| --- | --- | ---: | --- | ---: | ---: | --- | --- |
+| ISO-001 | a_admin login | 200 | APROBADO | N/A | N/A | false | false |
+| ISO-001 | a_admin session | 200 | APROBADO | N/A | N/A | false | false |
+| ISO-002 | invalid login | 401 | APROBADO | 0 | 0 | false | false |
+| ISO-003 | a_admin select tenant A | 200 | APROBADO | N/A | N/A | false | false |
+| ISO-004 | a_admin select branch A1 | 200 | APROBADO | N/A | N/A | false | false |
+| ISO-005 | a_operator assets A1 | 200 | APROBADO | 10 | 10 | false | false |
+| ISO-006 | a_operator deny branch A2 | 403 | APROBADO | 0 | 0 | false | false |
+| ISO-007 | a_multi assets A1 | 200 | APROBADO | 10 | 10 | false | false |
+| ISO-007 | a_multi assets A2 | 200 | APROBADO | 10 | 10 | false | false |
+| ISO-008 | a_admin deny tenant B | 403 | APROBADO | 0 | 0 | false | false |
+| ISO-009 | a_admin deny branch B1 | 403 | APROBADO | 0 | 0 | false | false |
+| ISO-010 | manipulated query remains A1 | 200 | APROBADO | 10 | 10 | false | false |
+| ISO-011 | a_admin own asset A1 | 200 | APROBADO | N/A | N/A | false | false |
+| ISO-011 | logs/relationships endpoint absent | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-012 | deny asset B1 | 404 | APROBADO | 0 | 0 | false | false |
+| ISO-012 | relationship endpoint absent | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-013 | actor without context | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-014 | actor without branch | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-015 | invalid session | 401 | APROBADO | 0 | 0 | false | false |
+| ISO-016 | expiry/revocation natural observation | N/A | BLOQUEADO | N/A | N/A | false | false |
+| ISO-017 | b_admin assets B1 | 200 | APROBADO | 10 | 10 | false | false |
+| ISO-018 | c_admin assets C2 | 200 | APROBADO | 10 | 10 | false | false |
+| ISO-019 | b_admin deny tenant C | 403 | APROBADO | 0 | 0 | false | false |
+| ISO-019 | b_admin deny branch C1 | 403 | APROBADO | 0 | 0 | false | false |
+| ISO-020 | c_admin deny tenant A | 403 | APROBADO | 0 | 0 | false | false |
+| ISO-020 | c_admin deny branch A2 | 403 | APROBADO | 0 | 0 | false | false |
+| ISO-021 | a_operator logout/reuse | 200/401 | APROBADO | 0 | 0 | false | false |
+| ISO-021 | b_operator logout/reuse | 200/401 | APROBADO | 0 | 0 | false | false |
+| ISO-021 | c_operator logout/reuse | 200/401 | APROBADO | 0 | 0 | false | false |
+| ISO-022 | PostgreSQL context correlation | N/A | APROBADO combinado | 0 mappings inválidos | 0 | false | false |
+
+Todos los logins `SETUP` devolvieron HTTP `200/APROBADO`. Las respuestas de activos contenían los 10 aliases esperados y ningún alias de otro tenant o branch.
+
+### Correlación PostgreSQL read-only
+
+- `current_user=skia_user`;
+- `current_database=skia_db`;
+- sesiones fixture activas: `14`;
+- sesiones con tenant fuera de `user_tenants`: `0`;
+- sesiones con branch fuera de `user_branches`: `0`;
+- sesiones sin contexto completo: `1`, residual de intentos anteriores y sin mapping inválido;
+- activos fixture: `60`;
+- tablas relevantes con RLS habilitado: `0`;
+- health interno/público posterior: HTTP `200`;
+- backend posterior: saludable, SHA sin cambios y restart count `0`.
+
+### Dictamen final de CAMPAÑA A
+
+CAMPAÑA A completó la matriz con exit code `0`. No se observó fuga cross-tenant ni cross-branch, la mutación A-OPERATOR/A2 fue denegada con HTTP `403`, y las consultas manipuladas conservaron el contexto autorizado.
+
+Este resultado no declara SKIA seguro de forma integral: las pruebas bloqueadas permanecen pendientes y RLS continúa deshabilitado, por lo que falta defensa en profundidad a nivel de base de datos. No se ejecutó CAMPAÑA B, rollback, migraciones, cambios de esquema, RLS ni deploy adicional.
