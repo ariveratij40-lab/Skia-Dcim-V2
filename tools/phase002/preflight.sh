@@ -40,11 +40,11 @@ git -C "$active_backend_root" diff --quiet "$PHASE002_EXPECTED_BACKEND_SHA" -- "
 [[ -z "$(git -C "$active_backend_root" status --porcelain --untracked-files=all -- "${runtime_trace_paths[@]}")" ]] \
   || die "active backend authorization source has local modifications"
 
-phase003_governance_evidence_sha="7d68fa2e6b2dff05cfec9d21fed81c88414fd90c"
-static_role_trace_sha="d2e9c3519a18915ab3867d6526f0d1100559bd16"
+phase003_specification_sha="d2e9c3519a18915ab3867d6526f0d1100559bd16"
+phase003_evidence_sha="7d68fa2e6b2dff05cfec9d21fed81c88414fd90c"
 printf '%s\n' \
-  "phase003_governance_evidence_sha=$phase003_governance_evidence_sha" \
-  "canonical_static_role_trace_sha=$static_role_trace_sha" \
+  "phase003_specification_sha=$phase003_specification_sha" \
+  "phase003_evidence_sha=$phase003_evidence_sha" \
   "active_backend_runtime_sha=$actual_backend_sha" \
   "relevant_runtime_source_differs=false" \
   "frontend_runtime_sha=UNKNOWN_BLOCKED"
@@ -53,8 +53,8 @@ printf '%s\n' \
 psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 \
   -v expected_db="$PHASE002_EXPECTED_DB" \
   -v expected_host_regex="$PHASE002_EXPECTED_HOST_REGEX" \
-  -v governance_evidence_sha="$phase003_governance_evidence_sha" \
-  -v static_role_trace_sha="$static_role_trace_sha" \
+  -v phase003_specification_sha="$phase003_specification_sha" \
+  -v phase003_evidence_sha="$phase003_evidence_sha" \
   -v active_backend_sha="$actual_backend_sha" \
   -v neutral_role_name="$PHASE002_NEUTRAL_ROLE_NAME" <<'SQL'
 BEGIN READ ONLY;
@@ -136,8 +136,8 @@ $preflight$;
 
 SELECT current_database() AS database_checked,
        current_user AS runtime_role,
-       :'governance_evidence_sha' AS phase003_governance_evidence_sha,
-       :'static_role_trace_sha' AS canonical_static_role_trace_sha,
+       :'phase003_specification_sha' AS phase003_specification_sha,
+       :'phase003_evidence_sha' AS phase003_evidence_sha,
        :'active_backend_sha' AS active_backend_runtime_sha,
        false AS relevant_runtime_source_differs,
        'UNKNOWN_BLOCKED' AS frontend_runtime_sha,
