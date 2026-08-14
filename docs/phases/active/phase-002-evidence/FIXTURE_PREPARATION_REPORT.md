@@ -140,3 +140,59 @@ Validaciones `LOCAL` sin acceso externo:
 | `git diff --check` | APROBADO |
 
 La corrección no modifica SQL, UUIDs, cardinalidades, RBAC, contenido del manifest, checksum ni lógica funcional de preparación. No autoriza ni ejecuta un tercer intento.
+
+## Tercer intento controlado
+
+- Fecha: `2026-08-14` (`America/Tijuana`).
+- Decisión: `ARCHITECT_DECISION_FIXTURE_PREPARATION_RETRY_3.md`.
+- HEAD y decisión de ejecución: `f8a341cd20d58753df9bb06093ab40a2378d6b03`.
+- Tooling aprobado: `1e3cd6f5233bfbb587da81803e5f6bf2f86cc6f2`.
+- Origen: `STAGING VPS` + `POSTGRES STAGING`.
+- Resultado: **FALLIDO ANTES DE BEGIN; SIN DATOS PERSISTIDOS**.
+
+Se confirmó que la decisión posterior no introdujo cambios adicionales en `tools/phase002/`. El respaldo externo permanecía legible, con modo `0600`, checksum SHA-256 consistente y formato inspeccionable por `pg_restore`. Se generaron nueve credenciales nuevas fuera de Git en archivos `0600`, y se creó un destino externo nuevo bajo un directorio `0700` sin manifest preexistente.
+
+El preflight read-only inmediato terminó con exit code `0` y confirmó runtime backend `d155910c231e96446672508534ccec83bf0d830f`, `relevant_runtime_source_differs=false`, base `skia_db`, rol `skia_user`, rango canónico vacío y ausencia de colisiones TEST.
+
+`prepare_fixtures.sh` se invocó exactamente una vez. El canal efímero de entrada utilizó incorrectamente un filtro limitado a las primeras 20 líneas al concatenar hashes y SQL. En consecuencia, psql recibió un documento truncado y terminó con exit code `3`:
+
+```text
+reached EOF without finding closing \endif(s)
+```
+
+El error ocurrió durante el procesamiento de metaórdenes psql, antes de alcanzar `BEGIN`. No fue un fallo del guard portable ni del contenido completo de `prepare_fixtures.sql`, sino de la orquestación usada para entregarlo. No se realizó corrección ni segunda invocación bajo esta autorización.
+
+El wrapper eliminó el manifest pre-creado. Un survivor check posterior mediante `BEGIN READ ONLY`/`ROLLBACK` confirmó cero IDs en las once tablas autorizadas: `tenants`, `branches`, `users`, `roles`, `user_tenants`, `user_branches`, `user_roles`, `role_permissions`, `assets`, `asset_logs` y `asset_relationships`.
+
+- Manifest externo: no existe.
+- Checksum de manifest: no aplica.
+- Directorio externo vacío: eliminado.
+- Credenciales, hashes y generador temporal: eliminados; no usados ni versionados.
+- `verify_fixtures.sql`: no ejecutado porque la preparación no alcanzó PostgreSQL; se aplicó el survivor check read-only del failure path.
+- HTTP, CAMPAÑA A, rollback, RLS, migraciones y deploy: no ejecutados.
+
+Clasificación: **TERCER INTENTO FALLIDO POR ENTRADA TRUNCADA / CERO PERSISTENCIA**. Fixture V1 sigue ausente. Cualquier nuevo intento requiere decisión arquitectónica separada.
+
+## Corrección de ejecución SQL canónica
+
+Decisión aplicable: `ARCHITECT_DECISION_CANONICAL_SQL_EXECUTION.md`.
+
+El wrapper ahora resuelve físicamente su propio directorio y exige `prepare_fixtures.sql` como archivo regular, no symlink, bajo `tools/phase002/` del mismo checkout Git. Ambos archivos deben estar rastreados y sin diferencias staged o unstaged frente a `HEAD`; el checkout legado `/opt/apps/skia/staging` se rechaza. La única ejecución permitida del SQL es `psql -f` sobre esa ruta canónica validada.
+
+El wrapper no acepta cuerpo SQL por stdin ni opciones psql arbitrarias. Solo admite las variables psql aprobadas, añade internamente `manifest_path` y la raíz Git verificada, y registra únicamente el SHA no sensible del checkout de tooling.
+
+Validaciones `LOCAL` con psql simulado, sin conexión PostgreSQL:
+
+| Prueba | Resultado |
+| --- | --- |
+| `bash -n tools/phase002/prepare_fixtures.sh` | APROBADO |
+| Rama GNU del guard de modo | APROBADO; un solo `-f` apunta al SQL canónico y manifest `0600` |
+| Rama BSD/macOS del guard de modo | APROBADO; un solo `-f` apunta al SQL canónico y manifest `0600` |
+| stdin vacío | APROBADO; no altera la ruta ni la invocación canónica |
+| SQL canónico ausente | APROBADO; bloquea antes de psql y no crea manifest |
+| SQL canónico como symlink | APROBADO; bloquea antes de psql y no crea manifest |
+| SQL canónico con modificación local | APROBADO; bloquea antes de psql y no crea manifest |
+| Wrapper con modificación local | APROBADO; bloquea antes de psql y no crea manifest |
+| `git diff --check` | APROBADO |
+
+No se cambió `prepare_fixtures.sql`, UUIDs, cardinalidades, RBAC, manifest, checksum ni rollback. Esta corrección no ejecutó preparación, SQL, HTTP, fixtures, rollback, RLS, migraciones o deploy y no autoriza un cuarto intento.
