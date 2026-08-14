@@ -22,6 +22,13 @@ CREATE TABLE asset_relationships (
   notes text
 );
 
+-- An unrelated FK with the same generic text shape must not affect the
+-- canonical guard. The old global count incorrectly included this row.
+CREATE TABLE unrelated_audit (
+  id uuid PRIMARY KEY,
+  asset_id uuid NOT NULL REFERENCES assets(id) ON DELETE CASCADE
+);
+
 GRANT SELECT,INSERT,UPDATE,DELETE ON assets,asset_logs,asset_relationships TO skia_runtime;
 
 ALTER TABLE assets FORCE ROW LEVEL SECURITY;
