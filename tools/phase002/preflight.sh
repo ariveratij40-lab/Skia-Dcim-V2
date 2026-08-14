@@ -10,23 +10,52 @@ need() { command -v "$1" >/dev/null 2>&1 || die "required command unavailable: $
 [[ -n "${DATABASE_URL:-}" ]] || die "DATABASE_URL is required via the authorized external environment"
 [[ -n "${PHASE002_EXPECTED_DB:-}" ]] || die "PHASE002_EXPECTED_DB is required"
 [[ -n "${PHASE002_EXPECTED_HOST_REGEX:-}" ]] || die "PHASE002_EXPECTED_HOST_REGEX is required"
-[[ -n "${PHASE002_REPO_ROOT:-}" ]] || die "PHASE002_REPO_ROOT is required"
+[[ -n "${PHASE002_ACTIVE_BACKEND_SOURCE_ROOT:-}" ]] || die "active backend release source root is required"
+[[ "${PHASE002_BACKEND_PROVENANCE_ACK:-}" == "ACTIVE_BACKEND_RELEASE_SOURCE" ]] || die "active backend provenance acknowledgement missing"
 [[ "${PHASE002_NEUTRAL_ROLE_NAME:-}" == "operator" ]] || die "approved neutral role name must equal operator"
-[[ "${PHASE002_EXPECTED_APP_SHA:-}" == "d2e9c3519a18915ab3867d6526f0d1100559bd16" ]] || die "application SHA is outside the approved role-name trace"
+[[ "${PHASE002_EXPECTED_BACKEND_SHA:-}" == "d155910c231e96446672508534ccec83bf0d830f" ]] || die "backend SHA differs from the approved CAMPAÑA A runtime baseline"
 need psql
 need git
 
 actual_host="$(hostname)"
 [[ "$actual_host" =~ $PHASE002_EXPECTED_HOST_REGEX ]] || die "host is not authorized for this staging preflight"
-[[ -d "$PHASE002_REPO_ROOT/.git" ]] || die "PHASE002_REPO_ROOT is not a Git checkout"
-actual_app_sha="$(git -C "$PHASE002_REPO_ROOT" rev-parse HEAD)"
-[[ "$actual_app_sha" == "$PHASE002_EXPECTED_APP_SHA" ]] || die "checkout SHA differs from approved role-name trace"
+backend_git_root="$(git -C "$PHASE002_ACTIVE_BACKEND_SOURCE_ROOT" rev-parse --show-toplevel 2>/dev/null)" || die "active backend source provenance is not a Git checkout"
+active_backend_root="$(cd "$backend_git_root" && pwd -P)"
+[[ "$active_backend_root" != "/opt/apps/skia/staging" ]] || die "legacy staging checkout is not accepted as active backend provenance"
+actual_backend_sha="$(git -C "$active_backend_root" rev-parse HEAD)"
+[[ "$actual_backend_sha" == "$PHASE002_EXPECTED_BACKEND_SHA" ]] || die "active backend release SHA is not the approved runtime baseline"
+
+runtime_trace_paths=(
+  backend/main.go backend/import_handlers.go backend/tenant_middleware.go
+  backend/tenant_context.go backend/role_scope.go backend/dcim_assets.go
+  backend/config_admin.go backend/dashboard.go backend/session_context.go
+  backend/session_store.go backend/postgres_session_store.go
+)
+for runtime_path in "${runtime_trace_paths[@]}"; do
+  git -C "$active_backend_root" cat-file -e "$PHASE002_EXPECTED_BACKEND_SHA:$runtime_path" 2>/dev/null \
+    || die "approved runtime source path is absent: $runtime_path"
+done
+git -C "$active_backend_root" diff --quiet "$PHASE002_EXPECTED_BACKEND_SHA" -- "${runtime_trace_paths[@]}" \
+  || die "active backend authorization source differs from approved runtime SHA"
+[[ -z "$(git -C "$active_backend_root" status --porcelain --untracked-files=all -- "${runtime_trace_paths[@]}")" ]] \
+  || die "active backend authorization source has local modifications"
+
+phase003_governance_evidence_sha="7d68fa2e6b2dff05cfec9d21fed81c88414fd90c"
+static_role_trace_sha="d2e9c3519a18915ab3867d6526f0d1100559bd16"
+printf '%s\n' \
+  "phase003_governance_evidence_sha=$phase003_governance_evidence_sha" \
+  "canonical_static_role_trace_sha=$static_role_trace_sha" \
+  "active_backend_runtime_sha=$actual_backend_sha" \
+  "relevant_runtime_source_differs=false" \
+  "frontend_runtime_sha=UNKNOWN_BLOCKED"
 
 # Transaction is explicitly read-only; output contains booleans/counts, never credentials.
 psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 \
   -v expected_db="$PHASE002_EXPECTED_DB" \
   -v expected_host_regex="$PHASE002_EXPECTED_HOST_REGEX" \
-  -v expected_app_sha="$PHASE002_EXPECTED_APP_SHA" \
+  -v governance_evidence_sha="$phase003_governance_evidence_sha" \
+  -v static_role_trace_sha="$static_role_trace_sha" \
+  -v active_backend_sha="$actual_backend_sha" \
   -v neutral_role_name="$PHASE002_NEUTRAL_ROLE_NAME" <<'SQL'
 BEGIN READ ONLY;
 SELECT (current_database() = :'expected_db') AS database_matches \gset
@@ -107,7 +136,11 @@ $preflight$;
 
 SELECT current_database() AS database_checked,
        current_user AS runtime_role,
-       :'expected_app_sha' AS approved_application_sha,
+       :'governance_evidence_sha' AS phase003_governance_evidence_sha,
+       :'static_role_trace_sha' AS canonical_static_role_trace_sha,
+       :'active_backend_sha' AS active_backend_runtime_sha,
+       false AS relevant_runtime_source_differs,
+       'UNKNOWN_BLOCKED' AS frontend_runtime_sha,
        :'neutral_role_name' AS neutral_role_name,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE id::text LIKE '02000000-0000-4000-8000-%')
             THEN 'canonical V1 present: idempotent verification/convergence mode'
