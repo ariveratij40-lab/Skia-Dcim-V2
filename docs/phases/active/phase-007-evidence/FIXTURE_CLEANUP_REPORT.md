@@ -3,15 +3,15 @@
 ## Result
 
 - Stage: D — exact TEST fixture cleanup.
-- Result: **BLOCKED / TRANSACTION ROLLED BACK**.
-- Fixture deleted: **no**.
+- Final result: **APROBADO / COMMITTED** after the authorized type-safe retry.
+- Fixture deleted: **yes**, 183 exact manifest IDs.
 - Non-TEST data deleted: **no**.
-- Manifest removed: **no**; retained externally at mode `0600`.
+- Manifest removed: **yes**, only after successful postchecks.
 - RLS/policies/runtime changed: **no**.
 
-The cleanup reached a structural FK inconsistency not authorized for repair by
-PHASE-007. PostgreSQL aborted the complete transaction, and read-only
-postchecks prove all pre-cleanup totals remain unchanged.
+The initial attempts below failed closed and changed no data. A later
+architect-authorized type-safe retry completed the exact cleanup; the final
+section and dedicated retry report contain the authoritative result.
 
 ## Manifest precheck
 
@@ -103,8 +103,8 @@ stopped without retrying or weakening RLS.
 - canonical policy hashes remain exact;
 - PHASE-007 container temporary files remaining: `0`.
 
-No cleanup success is claimed. The external manifest must remain protected
-until an authorized corrective gate resolves the `import_jobs` dependency.
+At that historical checkpoint no cleanup success was claimed, and the external
+manifest remained protected pending an authorized corrective gate.
 
 ## Authorized import-job dependency gate attempt
 
@@ -122,7 +122,21 @@ type error. The error occurred before the first `DELETE`; PostgreSQL aborted
 the transaction. Read-only postchecks reproduced every baseline total,
 including both jobs and 38 sessions. No second attempt was made.
 
-Current result therefore remains **BLOCKED / TRANSACTION ABORTED**, now because
-the execution guard is incompatible with the observed JSON representation.
-See `IMPORT_JOB_DEPENDENCY_CLEANUP_REPORT.md`. The manifest remains protected
-externally at mode `0600`.
+That historical gate result was **BLOCKED / TRANSACTION ABORTED** because the
+execution guard was incompatible with the observed JSON representation. See
+`IMPORT_JOB_DEPENDENCY_CLEANUP_REPORT.md`. The manifest remained protected at
+that checkpoint.
+
+## Final type-safe retry
+
+The subsequent type-safe retry gate identified the exact observed value as
+JSON `null`, validated the corrected predicate against all required positive
+and negative cases, and authorized one final transaction. That transaction
+committed successfully: exactly two TEST jobs and 22 fixture-user sessions
+were deleted, followed by all 183 exact manifest rows in canonical FK order.
+
+The pre-COMMIT canonical survivor guard and independent read-only postchecks
+approved. Final non-fixture totals are exact, fixture entities/jobs/sessions
+are zero, runtime/RLS/hashes/health are unchanged, and the verified external
+manifest was removed. Final Stage D result: **APROBADO**. See
+`TYPE_SAFE_IMPORT_JOB_GUARD_RETRY_REPORT.md`.

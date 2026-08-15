@@ -1,15 +1,14 @@
 # PHASE-007 — Blockers and closeout classification
 
-## Blocking issue
+## Blocker disposition
 
 | ID | Status | Evidence | Required decision |
 |---|---|---|---|
 | P007-B01 | AUTHORIZED SCOPE / RESIDUAL SCHEMA DEFECT | The exact two TEST jobs were authorized for cleanup; contradictory `NO ACTION` / `SET NULL` FKs on NOT NULL `user_id` remain unchanged | Address the schema defect only in a separately approved corrective phase |
-| P007-B02 | BLOCKED | The one authorized effective cleanup transaction aborted before deletes because the exact attribution guard called `jsonb_array_length` on an observed JSON scalar | Approve a type-safe guard correction and one new cleanup retry |
+| P007-B02 | RESOLVED | Type-safe guard accepted only empty array/exact observed JSON null; one authorized transaction removed exact jobs, sessions and all manifest IDs | No further cleanup retry required |
 
-The import-job gate authorized the exact rows without authorizing schema
-changes. Its single effective transaction failed closed before the first
-delete. No retry is authorized by this evidence alone.
+The type-safe retry gate resolved the execution blocker without changing
+schema. Exact cleanup committed and all independent postchecks approved.
 
 ## Final classification
 
@@ -17,7 +16,7 @@ delete. No retry is authorized by this evidence alone.
 |---|---|
 | Integration branch contains approved PHASE-004/005/006 runtime/security behavior | **YES** |
 | STAGING runs the consolidated backend behavior | **YES** — backend tree exact; no redeploy required |
-| PHASE-002 fixtures completely removed by exact manifest | **NO / BLOCKED** — transaction rolled back |
+| PHASE-002 fixtures completely removed by exact manifest | **YES** — 183 exact IDs removed; zero survivors |
 | `skia_runtime` remains active/restricted | **YES** |
 | Canonical RLS remains active and healthy | **YES** — RLS/FORCE true/true, hashes exact |
 | Health | **YES** — backend healthy, restart 0, HTTP 200/200 |
@@ -34,12 +33,12 @@ delete. No retry is authorized by this evidence alone.
   where no read-only endpoint exists.
 - ISO-013/014 actors without context and ISO-016 natural expiry remain
   structurally unobservable under the existing fixture/runner design.
-- P007-B02 prevents fixture cleanup and therefore prevents full PHASE-007
-  completion. P007-B01 remains a residual schema defect but was not modified.
+- P007-B02 is resolved. P007-B01 remains a residual schema defect but does not
+  block the completed exact cleanup and was not modified.
 
 ## Stop condition
 
-Stages A, B and C are approved. Stage D is blocked at an explicit structural
-boundary; Stage E evidence is published with no false completion claim. No
-merge to `main`, production deployment, RLS weakening, privilege expansion or
-non-manifest data cleanup was performed.
+Stages A, B, C and D are approved. Stage E closeout evidence is published.
+PHASE-007 is ready for architectural closeout. No merge to `main`, production
+deployment, RLS weakening, privilege expansion or non-manifest data cleanup
+was performed.

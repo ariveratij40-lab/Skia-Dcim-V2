@@ -80,3 +80,12 @@ observed empty scalar representation without weakening the exact job identity
 checks. A new architectural retry authorization is required before any further
 write. The contradictory `import_jobs.user_id` FKs remain a separate schema
 defect and were not changed.
+
+## Subsequent resolution
+
+`ARCHITECT_DECISION_TYPE_SAFE_IMPORT_JOB_GUARD_RETRY_GATE.md` subsequently
+authorized a type-safe correction and one final retry. That retry committed
+successfully and removed the two exact TEST jobs plus the complete exact
+fixture scope. The historical failure documented above remains accurate; its
+blocker is resolved by `TYPE_SAFE_IMPORT_JOB_GUARD_RETRY_REPORT.md`. The FK
+design defect remains unresolved technical debt.
