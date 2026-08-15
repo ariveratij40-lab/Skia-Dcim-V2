@@ -8,6 +8,7 @@
 | RLS-B04 | RESUELTO POR PHASE-006 | Runtime y migrador usan identidades separadas | Runtime `skia_runtime`; migrador separado |
 | RLS-B05 | RESUELTO LOCAL | `ops/phase005/activate_canonical_rls.sql` es el artefacto nuevo canónico; hashes exactos bloquean divergencias | Migraciones históricas intactas |
 | RLS-B06 | RESUELTO LOCAL | Guard FK restringido a tres constraints objetivo por identidad y semántica; casos ausente/incorrecto/adicional validados en PostgreSQL 16 efímero | Pendiente de revisión arquitectónica |
-| RLS-B07 | BLOQUEADO POR GATE | Nuevo intento de activación RLS en STAGING | Requiere autorización posterior explícita |
+| RLS-B07 | RESUELTO | Activación canónica completada; RLS/FORCE `true/true`, hashes exactos y validación inmediata aprobada | Gate de reintento ejecutado |
+| RLS-B08 | BLOQUEADO POR GATE | CAMPAÑA B bajo RLS habilitado | Requiere autorización arquitectónica separada |
 
-No se requiere modificar datos, esquema, roles, grants ni credenciales. El diseño y su rollback están validados localmente; Etapa C continúa expresamente no autorizada.
+No se modificaron datos funcionales, esquema, roles, grants ni credenciales. Etapa C quedó ejecutada y validada; RLS permanece habilitado. Etapa D/CAMPAÑA B continúa expresamente no autorizada.
