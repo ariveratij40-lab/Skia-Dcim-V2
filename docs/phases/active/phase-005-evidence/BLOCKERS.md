@@ -9,6 +9,6 @@
 | RLS-B05 | RESUELTO LOCAL | `ops/phase005/activate_canonical_rls.sql` es el artefacto nuevo canónico; hashes exactos bloquean divergencias | Migraciones históricas intactas |
 | RLS-B06 | RESUELTO LOCAL | Guard FK restringido a tres constraints objetivo por identidad y semántica; casos ausente/incorrecto/adicional validados en PostgreSQL 16 efímero | Pendiente de revisión arquitectónica |
 | RLS-B07 | RESUELTO | Activación canónica completada; RLS/FORCE `true/true`, hashes exactos y validación inmediata aprobada | Gate de reintento ejecutado |
-| RLS-B08 | BLOQUEADO POR GATE | CAMPAÑA B bajo RLS habilitado | Requiere autorización arquitectónica separada |
+| RLS-B08 | BLOQUEADO | La única invocación CAMPAÑA B no emitió `CAMPAIGN_EXECUTION_STATUS` ni matriz ISO; correlación DB quedó estable pero no sustituye HTTP | Requiere diagnóstico y autorización arquitectónica separada; no reintentar bajo este gate |
 
-No se modificaron datos funcionales, esquema, roles, grants ni credenciales. Etapa C quedó ejecutada y validada; RLS permanece habilitado. Etapa D/CAMPAÑA B continúa expresamente no autorizada.
+No se modificaron datos funcionales, esquema, roles, grants ni credenciales. Etapa C quedó ejecutada y validada; RLS permanece habilitado. El único intento autorizado de CAMPAÑA B fue consumido y quedó bloqueado; una nueva ejecución no está autorizada.
