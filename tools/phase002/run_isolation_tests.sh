@@ -1,6 +1,60 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+tmp_dir=
+results=
+campaign_complete=false
+results_emitted=false
+
+emit_results() {
+  local execution_status="$1" process_exit="$2"
+  [[ "$results_emitted" == false ]] || return 0
+  results_emitted=true
+  printf 'CAMPAIGN_EXECUTION_STATUS=%s\n' "$execution_status"
+  printf 'PROCESS_EXIT_CODE=%s\n' "$process_exit"
+  printf 'Campaign %s verdicts (no bodies, cookies, tokens or IDs):\n' "${PHASE002_CAMPAIGN:-UNKNOWN}"
+  if [[ -n "$results" && -f "$results" ]]; then
+    awk -F '\t' 'BEGIN {OFS="\t"} {print $1,$2,$3,$4,$5,$6,$7,$8,$9}' "$results"
+  else
+    printf 'ID\tACTOR\tOPERATION\tHTTP\tSTATUS\tEXPECTED_COUNT\tOBSERVED_COUNT\tCROSS_TENANT_LEAK\tCROSS_BRANCH_LEAK\n'
+  fi
+}
+
+finalize() {
+  local process_exit=$? execution_status=INCOMPLETE
+  trap - EXIT HUP INT TERM
+  if [[ "$campaign_complete" == true && "$process_exit" == 0 ]]; then
+    execution_status=COMPLETE
+  fi
+  emit_results "$execution_status" "$process_exit"
+  if [[ -n "$tmp_dir" && -d "$tmp_dir" ]]; then
+    find "$tmp_dir" -type f -exec sh -c 'for f do : > "$f"; done' sh {} + 2>/dev/null || true
+    rm -rf "$tmp_dir"
+  fi
+  exit "$process_exit"
+}
+
+terminate() {
+  local signal="$1" code=1
+  case "$signal" in
+    HUP) code=129 ;;
+    INT) code=130 ;;
+    TERM) code=143 ;;
+  esac
+  exit "$code"
+}
+
+trap finalize EXIT
+trap 'terminate HUP' HUP
+trap 'terminate INT' INT
+trap 'terminate TERM' TERM
+
+tmp_dir="$(mktemp -d)"
+chmod 700 "$tmp_dir"
+results="$tmp_dir/results.tsv"
+umask 077
+printf 'ID\tACTOR\tOPERATION\tHTTP\tSTATUS\tEXPECTED_COUNT\tOBSERVED_COUNT\tCROSS_TENANT_LEAK\tCROSS_BRANCH_LEAK\n' >"$results"
+
 die() { printf 'PHASE-002 isolation runner: %s\n' "$1" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "required command unavailable: $1"; }
 mode() {
@@ -32,36 +86,6 @@ case "$PHASE002_CREDENTIALS_FILE" in "$repo_root"/*) die "credentials file must 
 source "$PHASE002_CONTEXT_FILE"
 # shellcheck disable=SC1090
 source "$PHASE002_CREDENTIALS_FILE"
-
-tmp_dir="$(mktemp -d)"
-chmod 700 "$tmp_dir"
-results="$tmp_dir/results.tsv"
-umask 077
-printf 'ID\tACTOR\tOPERATION\tHTTP\tSTATUS\tEXPECTED_COUNT\tOBSERVED_COUNT\tCROSS_TENANT_LEAK\tCROSS_BRANCH_LEAK\n' >"$results"
-campaign_complete=false
-results_emitted=false
-
-emit_results() {
-  local execution_status="$1" process_exit="$2"
-  [[ "$results_emitted" == false ]] || return 0
-  results_emitted=true
-  printf 'CAMPAIGN_EXECUTION_STATUS=%s\n' "$execution_status"
-  printf 'PROCESS_EXIT_CODE=%s\n' "$process_exit"
-  printf 'Campaign %s verdicts (no bodies, cookies, tokens or IDs):\n' "$PHASE002_CAMPAIGN"
-  awk -F '\t' 'BEGIN {OFS="\t"} {print $1,$2,$3,$4,$5,$6,$7,$8,$9}' "$results"
-}
-
-finalize() {
-  local process_exit=$? execution_status=INCOMPLETE
-  if [[ "$campaign_complete" == true && "$process_exit" == 0 ]]; then
-    execution_status=COMPLETE
-  fi
-  emit_results "$execution_status" "$process_exit"
-  find "$tmp_dir" -type f -exec sh -c 'for f do : > "$f"; done' sh {} + 2>/dev/null || true
-  rm -rf "$tmp_dir"
-  exit "$process_exit"
-}
-trap finalize EXIT
 
 HTTP_CODE=000
 BODY_FILE=
