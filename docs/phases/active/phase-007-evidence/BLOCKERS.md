@@ -4,11 +4,12 @@
 
 | ID | Status | Evidence | Required decision |
 |---|---|---|---|
-| P007-B01 | STRUCTURAL / BLOCKED | Two `import_jobs` rows reference fixture users; `user_id` is NOT NULL while duplicate FKs specify `NO ACTION` and `SET NULL`; exact user deletion aborts and rolls back | Authorize an exact job-data cleanup strategy or a schema/FK correction phase before retrying Stage D |
+| P007-B01 | AUTHORIZED SCOPE / RESIDUAL SCHEMA DEFECT | The exact two TEST jobs were authorized for cleanup; contradictory `NO ACTION` / `SET NULL` FKs on NOT NULL `user_id` remain unchanged | Address the schema defect only in a separately approved corrective phase |
+| P007-B02 | BLOCKED | The one authorized effective cleanup transaction aborted before deletes because the exact attribution guard called `jsonb_array_length` on an observed JSON scalar | Approve a type-safe guard correction and one new cleanup retry |
 
-PHASE-007 does not authorize deleting the two job rows because they are outside
-the exact manifest, nor modifying schema/constraints. No retry is authorized by
-this evidence alone.
+The import-job gate authorized the exact rows without authorizing schema
+changes. Its single effective transaction failed closed before the first
+delete. No retry is authorized by this evidence alone.
 
 ## Final classification
 
@@ -33,8 +34,8 @@ this evidence alone.
   where no read-only endpoint exists.
 - ISO-013/014 actors without context and ISO-016 natural expiry remain
   structurally unobservable under the existing fixture/runner design.
-- P007-B01 prevents fixture cleanup and therefore prevents full PHASE-007
-  completion.
+- P007-B02 prevents fixture cleanup and therefore prevents full PHASE-007
+  completion. P007-B01 remains a residual schema defect but was not modified.
 
 ## Stop condition
 

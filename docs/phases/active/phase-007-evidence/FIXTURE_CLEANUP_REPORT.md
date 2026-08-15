@@ -105,3 +105,24 @@ stopped without retrying or weakening RLS.
 
 No cleanup success is claimed. The external manifest must remain protected
 until an authorized corrective gate resolves the `import_jobs` dependency.
+
+## Authorized import-job dependency gate attempt
+
+The subsequent architect gate authorized exact removal of the two proven TEST
+`import_jobs`, their proven TEST-only dependencies, the exact fixture-user
+sessions and one canonical manifest cleanup retry in a single transaction.
+Read-only validation passed: exactly two empty TEST jobs were attributable to
+the fixture actor; dependent counts were `0/0/0`; no non-fixture job was in
+scope; fixture, runtime, RLS and policy-hash baselines were unchanged.
+
+The single effective transaction loaded and validated all 183 manifest rows,
+then failed in the added pre-delete attribution guard. The observed
+`result_json.items` value is a JSON scalar, so `jsonb_array_length` raised a
+type error. The error occurred before the first `DELETE`; PostgreSQL aborted
+the transaction. Read-only postchecks reproduced every baseline total,
+including both jobs and 38 sessions. No second attempt was made.
+
+Current result therefore remains **BLOCKED / TRANSACTION ABORTED**, now because
+the execution guard is incompatible with the observed JSON representation.
+See `IMPORT_JOB_DEPENDENCY_CLEANUP_REPORT.md`. The manifest remains protected
+externally at mode `0600`.
