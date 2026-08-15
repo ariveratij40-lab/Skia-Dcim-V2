@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -16,10 +17,10 @@ type ClearInventoryRequest struct {
 }
 
 type ClearInventoryResponse struct {
-	Success      bool                   `json:"success"`
-	Message      string                 `json:"message"`
-	DeletedCount map[string]int         `json:"deletedCount"`
-	Log          ClearInventoryLog      `json:"log"`
+	Success      bool              `json:"success"`
+	Message      string            `json:"message"`
+	DeletedCount map[string]int    `json:"deletedCount"`
+	Log          ClearInventoryLog `json:"log"`
 }
 
 type ClearInventoryLog struct {
@@ -36,16 +37,20 @@ type ClearInventoryLog struct {
 // ─── Endpoint Handler ──────────────────────────────────────────────────────────
 
 func handleClearInventory(w http.ResponseWriter, r *http.Request) {
-	// Validar método
+	RequireTenantTxScoped(db, handleClearInventoryContextual)(w, r)
+}
+
+func handleClearInventoryContextual(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Extraer sesión
-	session := ExtractSessionContextSecure(r, db)
-	if !session.Valid {
-		http.Error(w, "Unauthorized: "+session.Error, http.StatusUnauthorized)
+	tdb, dbOK := TenantDBFromContext(r.Context())
+	userID, tenantID, _, identityOK := TenantIdentityFromContext(r.Context())
+	scopeAll, scopeOK := TenantScopeFromContext(r.Context())
+	if !dbOK || !identityOK || !scopeOK || tenantID == "" || userID == "" {
+		http.Error(w, "Missing authorized tenant context", http.StatusInternalServerError)
 		return
 	}
 
@@ -62,41 +67,36 @@ func handleClearInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Obtener usuario para validar que es admin
-	user, err := getUserByID(session.UserID)
+	role, err := resolveUserRole(r.Context(), tdb, userID, tenantID)
+	if err != nil {
+		log.Printf("ERROR: Failed to resolve clear-inventory role: %v", err)
+		http.Error(w, "Failed to verify authorization", http.StatusInternalServerError)
+		return
+	}
+	if !clearInventoryAuthorized(role, scopeAll, validateAdminPassword(req.AdminPassword)) {
+		log.Printf("SECURITY: Clear inventory denied (user=%s tenant=%s role=%s scope_all=%v)", userID, tenantID, role, scopeAll)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	user, err := getUserByIDWithDB(r.Context(), tdb, userID)
 	if err != nil {
 		log.Printf("ERROR: Failed to get user: %v", err)
 		http.Error(w, "Failed to verify user", http.StatusInternalServerError)
 		return
 	}
 
-	// Validar contraseña de admin
-	if !validateAdminPassword(req.AdminPassword) {
-		log.Printf("SECURITY: Invalid admin password attempt by user %s (%s)", user.Email, session.UserID)
-		http.Error(w, "Invalid admin password", http.StatusUnauthorized)
-		return
-	}
-
-	// Iniciar transacción
-	tx, err := db.Begin()
-	if err != nil {
-		log.Printf("ERROR: Failed to begin transaction: %v", err)
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-	defer tx.Rollback()
-
 	// Contar items antes de eliminar
 	deletedCount := make(map[string]int)
 
 	// Eliminar assets
 	var assetCount int
-	err = tx.QueryRow(`
+	err = tdb.QueryRowContext(r.Context(), `
 		SELECT COUNT(*) FROM assets WHERE tenant_id = $1
-	`, session.TenantID).Scan(&assetCount)
+	`, tenantID).Scan(&assetCount)
 	if err == nil {
 		deletedCount["assets"] = assetCount
-		_, err = tx.Exec(`DELETE FROM assets WHERE tenant_id = $1`, session.TenantID)
+		_, err = tdb.ExecContext(r.Context(), `DELETE FROM assets WHERE tenant_id = $1`, tenantID)
 		if err != nil {
 			log.Printf("ERROR: Failed to delete assets: %v", err)
 			http.Error(w, "Failed to delete assets", http.StatusInternalServerError)
@@ -106,12 +106,12 @@ func handleClearInventory(w http.ResponseWriter, r *http.Request) {
 
 	// Eliminar racks
 	var rackCount int
-	err = tx.QueryRow(`
+	err = tdb.QueryRowContext(r.Context(), `
 		SELECT COUNT(*) FROM racks WHERE tenant_id = $1
-	`, session.TenantID).Scan(&rackCount)
+	`, tenantID).Scan(&rackCount)
 	if err == nil {
 		deletedCount["racks"] = rackCount
-		_, err = tx.Exec(`DELETE FROM racks WHERE tenant_id = $1`, session.TenantID)
+		_, err = tdb.ExecContext(r.Context(), `DELETE FROM racks WHERE tenant_id = $1`, tenantID)
 		if err != nil {
 			log.Printf("ERROR: Failed to delete racks: %v", err)
 			http.Error(w, "Failed to delete racks", http.StatusInternalServerError)
@@ -121,12 +121,12 @@ func handleClearInventory(w http.ResponseWriter, r *http.Request) {
 
 	// Eliminar patch panels
 	var patchPanelCount int
-	err = tx.QueryRow(`
+	err = tdb.QueryRowContext(r.Context(), `
 		SELECT COUNT(*) FROM patch_panels WHERE tenant_id = $1
-	`, session.TenantID).Scan(&patchPanelCount)
+	`, tenantID).Scan(&patchPanelCount)
 	if err == nil {
 		deletedCount["patch_panels"] = patchPanelCount
-		_, err = tx.Exec(`DELETE FROM patch_panels WHERE tenant_id = $1`, session.TenantID)
+		_, err = tdb.ExecContext(r.Context(), `DELETE FROM patch_panels WHERE tenant_id = $1`, tenantID)
 		if err != nil {
 			log.Printf("ERROR: Failed to delete patch panels: %v", err)
 			http.Error(w, "Failed to delete patch panels", http.StatusInternalServerError)
@@ -136,12 +136,12 @@ func handleClearInventory(w http.ResponseWriter, r *http.Request) {
 
 	// Eliminar import jobs
 	var jobCount int
-	err = tx.QueryRow(`
+	err = tdb.QueryRowContext(r.Context(), `
 		SELECT COUNT(*) FROM import_jobs WHERE tenant_id = $1
-	`, session.TenantID).Scan(&jobCount)
+	`, tenantID).Scan(&jobCount)
 	if err == nil {
 		deletedCount["import_jobs"] = jobCount
-		_, err = tx.Exec(`DELETE FROM import_jobs WHERE tenant_id = $1`, session.TenantID)
+		_, err = tdb.ExecContext(r.Context(), `DELETE FROM import_jobs WHERE tenant_id = $1`, tenantID)
 		if err != nil {
 			log.Printf("ERROR: Failed to delete import jobs: %v", err)
 			http.Error(w, "Failed to delete import jobs", http.StatusInternalServerError)
@@ -151,12 +151,12 @@ func handleClearInventory(w http.ResponseWriter, r *http.Request) {
 
 	// Eliminar import items
 	var itemCount int
-	err = tx.QueryRow(`
+	err = tdb.QueryRowContext(r.Context(), `
 		SELECT COUNT(*) FROM import_items WHERE tenant_id = $1
-	`, session.TenantID).Scan(&itemCount)
+	`, tenantID).Scan(&itemCount)
 	if err == nil {
 		deletedCount["import_items"] = itemCount
-		_, err = tx.Exec(`DELETE FROM import_items WHERE tenant_id = $1`, session.TenantID)
+		_, err = tdb.ExecContext(r.Context(), `DELETE FROM import_items WHERE tenant_id = $1`, tenantID)
 		if err != nil {
 			log.Printf("ERROR: Failed to delete import items: %v", err)
 			http.Error(w, "Failed to delete import items", http.StatusInternalServerError)
@@ -171,28 +171,21 @@ func handleClearInventory(w http.ResponseWriter, r *http.Request) {
 		deletedCount["assets"], deletedCount["racks"], deletedCount["patch_panels"],
 		deletedCount["import_jobs"], deletedCount["import_items"])
 
-	_, err = tx.Exec(`
+	_, err = tdb.ExecContext(r.Context(), `
 		INSERT INTO inventory_clear_logs (id, tenant_id, user_id, user_email, timestamp, action, details, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, logID, session.TenantID, session.UserID, user.Email, now, "CLEAR_ALL_INVENTORY", details, "SUCCESS")
+	`, logID, tenantID, userID, user.Email, now, "CLEAR_ALL_INVENTORY", details, "SUCCESS")
 	if err != nil {
 		log.Printf("ERROR: Failed to create log: %v", err)
 		http.Error(w, "Failed to create log", http.StatusInternalServerError)
 		return
 	}
 
-	// Confirmar transacción
-	if err = tx.Commit(); err != nil {
-		log.Printf("ERROR: Failed to commit transaction: %v", err)
-		http.Error(w, "Database error", http.StatusInternalServerError)
-		return
-	}
-
 	// Preparar respuesta
 	logEntry := ClearInventoryLog{
 		ID:        logID,
-		TenantID:  session.TenantID,
-		UserID:    session.UserID,
+		TenantID:  tenantID,
+		UserID:    userID,
 		UserEmail: user.Email,
 		Timestamp: now,
 		Action:    "CLEAR_ALL_INVENTORY",
@@ -207,7 +200,7 @@ func handleClearInventory(w http.ResponseWriter, r *http.Request) {
 		Log:          logEntry,
 	}
 
-	log.Printf("SUCCESS: Inventory cleared for tenant %s by user %s (%s)", session.TenantID, user.Email, session.UserID)
+	log.Printf("SUCCESS: Inventory cleared for tenant %s by user %s (%s)", tenantID, user.Email, userID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -216,20 +209,17 @@ func handleClearInventory(w http.ResponseWriter, r *http.Request) {
 // ─── Funciones de Utilidad ────────────────────────────────────────────────────
 
 func validateAdminPassword(password string) bool {
-	// Obtener contraseña de admin desde variable de entorno
 	adminPassword := os.Getenv("ADMIN_PASSWORD")
-	if adminPassword == "" {
-		// Si no está configurada, usar una contraseña por defecto (CAMBIAR EN PRODUCCIÓN)
-		adminPassword = "admin123456"
-	}
-
-	// Comparar contraseñas
-	return password == adminPassword
+	return adminPassword != "" && password == adminPassword
 }
 
-func getUserByID(userID string) (*User, error) {
+func clearInventoryAuthorized(role string, scopeAll, passwordValid bool) bool {
+	return globalScopeRoles[role] && scopeAll && passwordValid
+}
+
+func getUserByIDWithDB(ctx context.Context, tdb TenantDB, userID string) (*User, error) {
 	user := &User{}
-	err := db.QueryRow(`
+	err := tdb.QueryRowContext(ctx, `
 		SELECT id, email, name, tenant_id FROM users WHERE id = $1
 	`, userID).Scan(&user.ID, &user.Email, &user.Name, &user.TenantID)
 	if err != nil {
@@ -237,5 +227,3 @@ func getUserByID(userID string) (*User, error) {
 	}
 	return user, nil
 }
-
-

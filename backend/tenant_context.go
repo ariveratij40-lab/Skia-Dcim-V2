@@ -75,6 +75,9 @@ func BeginTenantTxWithScope(ctx context.Context, database *sql.DB, tenantID, bra
 // transacción (la que abrió el middleware); no hace falta ni se debe abrir
 // otra.
 type TenantDB interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row

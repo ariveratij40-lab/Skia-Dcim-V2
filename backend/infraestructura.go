@@ -66,7 +66,7 @@ func getInfraSession(r *http.Request) (tenantID, branchID, userID string, err er
 
 // ensureAssetType obtiene el ID del asset_type global por código
 // La tabla asset_types es global (sin tenant_id) con códigos fijos: RACK, SWITCH, MDF, IDF, etc.
-func ensureAssetType(tenantID, category, subcat string) (string, error) {
+func ensureAssetType(db TenantDB, tenantID, category, subcat string) (string, error) {
 	var id string
 	// Mapear category al código correcto en la tabla global
 	code := category // Por defecto usar el mismo valor
@@ -104,9 +104,9 @@ func ensureAssetType(tenantID, category, subcat string) (string, error) {
 
 // suggestNextMdfCode genera el siguiente código disponible para un MDF/IDF
 // dado un código base (ej: "MDF-001" → "MDF-002", "MDF-IDF-001" → "MDF-IDF-002")
-func suggestNextMdfCode(tenantID, baseCode string) string {
+func suggestNextMdfCode(tdb TenantDB, tenantID, baseCode string) string {
 	// Obtener todos los códigos existentes del tenant
-	rows, err := db.Query(`
+	rows, err := tdb.Query(`
 		SELECT internal_code FROM assets
 		WHERE tenant_id = $1
 		ORDER BY internal_code`, tenantID)
@@ -198,9 +198,10 @@ type MdfIdfRecord struct {
 // handleMdfIdfCheck — GET /api/infra/mdf-idf/check?code=X&name=Y
 // Valida en tiempo real si un código o nombre ya existe para el tenant
 func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, _, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	_, tenantID, _, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" {
+		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
@@ -221,7 +222,7 @@ func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
 		if count > 0 {
 			result["code_available"] = false
 			result["code_error"] = fmt.Sprintf("El código '%s' ya existe. Elige uno diferente.", code)
-			result["suggestion"] = suggestNextMdfCode(tenantID, code)
+			result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
 		}
 	}
 	if name != "" {
@@ -232,7 +233,7 @@ func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
 			result["name_available"] = false
 			result["name_error"] = fmt.Sprintf("El nombre '%s' ya existe. Elige uno diferente.", name)
 			if result["suggestion"] == "" {
-				result["suggestion"] = suggestNextMdfCode(tenantID, code)
+				result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
 			}
 		}
 	}
@@ -240,15 +241,17 @@ func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
-	tenantID, branchID, userID, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
+	var err error
 
 	switch r.Method {
 	case http.MethodGet:
-			rows, err := db.Query(`
+		rows, err := db.Query(`
 				SELECT a.id, a.internal_code, COALESCE(a.name, a.internal_code),
 					COALESCE(m.type,'MDF'),
 					COALESCE(a.status,'active'),
@@ -329,7 +332,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			tenantID, req.Code).Scan(&codeExists)
 		if codeExists > 0 {
 			// Sugerir el siguiente código disponible
-			nextCode := suggestNextMdfCode(tenantID, req.Code)
+			nextCode := suggestNextMdfCode(db, tenantID, req.Code)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -346,7 +349,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			WHERE tenant_id = $1 AND LOWER(name) = LOWER($2)`,
 			tenantID, req.Name).Scan(&nameExists)
 		if nameExists > 0 {
-			nextCode := suggestNextMdfCode(tenantID, req.Code)
+			nextCode := suggestNextMdfCode(db, tenantID, req.Code)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]string{
@@ -357,7 +360,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		atID, _ := ensureAssetType(tenantID, "MDF_IDF", "network")
+		atID, _ := ensureAssetType(db, tenantID, "MDF_IDF", "network")
 		assetID := generateID()
 		_, err = db.Exec(`
 			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
@@ -394,43 +397,45 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 // ─── Racks ────────────────────────────────────────────────────────────────────
 
 type RackRecord struct {
-	ID           string    `json:"id"`
-	Code         string    `json:"code"`
-	Brand        string    `json:"brand"`
-	Model        string    `json:"model"`
-	HeightU      int       `json:"height_u"`
-	TypePosts    string    `json:"type_posts"`
-	RackType     string    `json:"rack_type"`
-	Status       string    `json:"status"`
-	Location     string    `json:"location"`
-	FloorPlanRef string    `json:"floor_plan_ref"`
-	PhotoURL     string    `json:"photo_url"`
-	RefImageURL  string    `json:"ref_image_url"`
-	Observations string    `json:"observations"`
-	OrgHorizontal bool     `json:"org_horizontal"`
-	OrgVertical  bool      `json:"org_vertical"`
-	Pdu          bool      `json:"pdu"`
-	Integrator   string    `json:"integrator"`
-	InvoiceNo    string    `json:"invoice_no"`
-	CostUsd      float64   `json:"cost_usd"`
-	Po           string    `json:"po"`
-	CostCenter   string    `json:"cost_center"`
-	RfidTag      string    `json:"rfid_tag"`
-	InstallYear  int       `json:"install_year"`
-	CapacityU    int       `json:"capacity_u"`
-	UsedU        int       `json:"used_u"`
-	CreatedAt    time.Time `json:"created_at"`
-	MdfIdfID     string    `json:"mdf_idf_id"`
-	MdfIdfCode   string    `json:"mdf_idf_code"`
-	MdfIdfName   string    `json:"mdf_idf_name"`
+	ID            string    `json:"id"`
+	Code          string    `json:"code"`
+	Brand         string    `json:"brand"`
+	Model         string    `json:"model"`
+	HeightU       int       `json:"height_u"`
+	TypePosts     string    `json:"type_posts"`
+	RackType      string    `json:"rack_type"`
+	Status        string    `json:"status"`
+	Location      string    `json:"location"`
+	FloorPlanRef  string    `json:"floor_plan_ref"`
+	PhotoURL      string    `json:"photo_url"`
+	RefImageURL   string    `json:"ref_image_url"`
+	Observations  string    `json:"observations"`
+	OrgHorizontal bool      `json:"org_horizontal"`
+	OrgVertical   bool      `json:"org_vertical"`
+	Pdu           bool      `json:"pdu"`
+	Integrator    string    `json:"integrator"`
+	InvoiceNo     string    `json:"invoice_no"`
+	CostUsd       float64   `json:"cost_usd"`
+	Po            string    `json:"po"`
+	CostCenter    string    `json:"cost_center"`
+	RfidTag       string    `json:"rfid_tag"`
+	InstallYear   int       `json:"install_year"`
+	CapacityU     int       `json:"capacity_u"`
+	UsedU         int       `json:"used_u"`
+	CreatedAt     time.Time `json:"created_at"`
+	MdfIdfID      string    `json:"mdf_idf_id"`
+	MdfIdfCode    string    `json:"mdf_idf_code"`
+	MdfIdfName    string    `json:"mdf_idf_name"`
 }
 
 func handleRacks(w http.ResponseWriter, r *http.Request) {
-	tenantID, branchID, userID, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
+	var err error
 
 	switch r.Method {
 	case http.MethodGet:
@@ -476,16 +481,16 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			InternalCode string  `json:"internal_code"`
-			Location     string  `json:"location"`
-			TotalU       int     `json:"total_u"`
-			Status       string  `json:"status"`
-			Manufacturer string  `json:"manufacturer"`
-			Model        string  `json:"model"`
-			RackType     string  `json:"rack_type"`
-			PostCount    string  `json:"post_count"`
-			Observations string  `json:"observations"`
-			InstallYear  int     `json:"install_year"`
+			InternalCode string `json:"internal_code"`
+			Location     string `json:"location"`
+			TotalU       int    `json:"total_u"`
+			Status       string `json:"status"`
+			Manufacturer string `json:"manufacturer"`
+			Model        string `json:"model"`
+			RackType     string `json:"rack_type"`
+			PostCount    string `json:"post_count"`
+			Observations string `json:"observations"`
+			InstallYear  int    `json:"install_year"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -501,7 +506,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 			req.TotalU = 42
 		}
 
-		atID, _ := ensureAssetType(tenantID, "RACK", "infrastructure")
+		atID, _ := ensureAssetType(db, tenantID, "RACK", "infrastructure")
 		log.Printf("DEBUG RACK INSERT: tenantID=%s branchID=%s atID=%s", tenantID, branchID, atID)
 		assetID := generateID()
 		_, err = db.Exec(`
@@ -535,8 +540,9 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 // ─── Ensure Rack para MDF/IDF ────────────────────────────────────────────────
 // POST /api/infra/mdf-idf/{id}/ensure-rack
 // handleMdfIdfItem maneja rutas con ID:
-//   PUT /api/infra/mdf-idf/{id}           — actualizar campos
-//   POST /api/infra/mdf-idf/{id}/ensure-rack — crear/recuperar rack
+//
+//	PUT /api/infra/mdf-idf/{id}           — actualizar campos
+//	POST /api/infra/mdf-idf/{id}/ensure-rack — crear/recuperar rack
 func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	// — Ruta especial: GET /api/infra/mdf-idf/check?code=X&name=Y
 	// El mux de Go enruta /api/infra/mdf-idf/check a este handler porque el patrón
@@ -546,16 +552,18 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID, branchID, userID, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+		http.Error(w, `{"error":"missing tenant context"}`, http.StatusInternalServerError)
 		return
 	}
+	var err error
 
 	// Extraer el ID del MDF/IDF de la URL
 	urlPath := r.URL.Path
 	urlPath = strings.TrimPrefix(urlPath, "/api/infra/mdf-idf/")
-	
+
 	// ─── PUT /api/infra/mdf-idf/{id} — Actualizar MDF/IDF ───────────────────────
 	if r.Method == http.MethodPut && !strings.Contains(urlPath, "/") {
 		mdfAssetID := strings.TrimSpace(urlPath)
@@ -564,21 +572,21 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var req struct {
-			Name            string  `json:"name"`
-			Type            string  `json:"type"`
-			Status          string  `json:"status"`
-			Building        string  `json:"building"`
-			Floor           string  `json:"floor"`
-			Zone            string  `json:"zone"`
-			Address         string  `json:"address"`
-			Responsible     string  `json:"responsible"`
-			ResponsibleEmail string `json:"responsible_email"`
-			Cooling         string  `json:"cooling"`
-			PowerKva        float64 `json:"power_kva"`
-			CapacityU       int     `json:"capacity_u"`
-			Observations    string  `json:"observations"`
-			PhotoURL        string  `json:"photo_url"`
-			RefImageURL     string  `json:"ref_image_url"`
+			Name             string  `json:"name"`
+			Type             string  `json:"type"`
+			Status           string  `json:"status"`
+			Building         string  `json:"building"`
+			Floor            string  `json:"floor"`
+			Zone             string  `json:"zone"`
+			Address          string  `json:"address"`
+			Responsible      string  `json:"responsible"`
+			ResponsibleEmail string  `json:"responsible_email"`
+			Cooling          string  `json:"cooling"`
+			PowerKva         float64 `json:"power_kva"`
+			CapacityU        int     `json:"capacity_u"`
+			Observations     string  `json:"observations"`
+			PhotoURL         string  `json:"photo_url"`
+			RefImageURL      string  `json:"ref_image_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -676,7 +684,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 
 	// No existe — crear el rack automáticamente
 	rackCode := fmt.Sprintf("RCK-%s", mdfCode)
-	atID, _ := ensureAssetType(tenantID, "RACK", "infrastructure")
+	atID, _ := ensureAssetType(db, tenantID, "RACK", "infrastructure")
 	rackAssetID := generateID()
 	_, err = db.Exec(`
 		INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
@@ -737,11 +745,13 @@ type SWRecord struct {
 }
 
 func handleSwitches(w http.ResponseWriter, r *http.Request) {
-	tenantID, branchID, userID, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
+	var err error
 
 	switch r.Method {
 	case http.MethodGet:
@@ -809,7 +819,7 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 			req.PortCount = 24
 		}
 
-		atID, _ := ensureAssetType(tenantID, "SWITCH", "network")
+		atID, _ := ensureAssetType(db, tenantID, "SWITCH", "network")
 		assetID := generateID()
 		_, err = db.Exec(`
 			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
@@ -844,29 +854,31 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 // ─── UPS / PDUs ───────────────────────────────────────────────────────────────
 
 type PowerDeviceRecord struct {
-	ID              string    `json:"id"`
-	Code            string    `json:"code"`
-	Name            string    `json:"name"`
-	DeviceType      string    `json:"device_type"`
-	Kva             float64   `json:"kva"`
-	BatteryRuntime  int       `json:"battery_runtime_min"`
-	ManagementIP    string    `json:"management_ip"`
-	Status          string    `json:"status"`
-	Manufacturer    string    `json:"brand"`
-	Model           string    `json:"model"`
-	Observations    string    `json:"observations"`
-	TotalOutlets    int       `json:"total_outlets"`
-	Amperage        float64   `json:"amperage"`
-	InstallYear     int       `json:"install_year"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID             string    `json:"id"`
+	Code           string    `json:"code"`
+	Name           string    `json:"name"`
+	DeviceType     string    `json:"device_type"`
+	Kva            float64   `json:"kva"`
+	BatteryRuntime int       `json:"battery_runtime_min"`
+	ManagementIP   string    `json:"management_ip"`
+	Status         string    `json:"status"`
+	Manufacturer   string    `json:"brand"`
+	Model          string    `json:"model"`
+	Observations   string    `json:"observations"`
+	TotalOutlets   int       `json:"total_outlets"`
+	Amperage       float64   `json:"amperage"`
+	InstallYear    int       `json:"install_year"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
-	tenantID, branchID, userID, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
+	var err error
 
 	switch r.Method {
 	case http.MethodGet:
@@ -970,7 +982,7 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 		if req.DeviceType == "pdu" {
 			category = "PDU"
 		}
-		atID, _ := ensureAssetType(tenantID, category, "power")
+		atID, _ := ensureAssetType(db, tenantID, category, "power")
 		assetID := generateID()
 		_, err = db.Exec(`
 			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
@@ -1032,11 +1044,13 @@ type PatchPanelRecord struct {
 }
 
 func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
-	tenantID, branchID, userID, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
+	var err error
 
 	switch r.Method {
 	case http.MethodGet:
@@ -1104,7 +1118,7 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 			req.PortCount = 24
 		}
 
-		atID, _ := ensureAssetType(tenantID, "PATCH_PANEL", "network")
+		atID, _ := ensureAssetType(db, tenantID, "PATCH_PANEL", "network")
 		assetID := generateID()
 		_, err = db.Exec(`
 			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
@@ -1153,11 +1167,13 @@ type BBRecord struct {
 }
 
 func handleBackbone(w http.ResponseWriter, r *http.Request) {
-	tenantID, branchID, userID, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
+	var err error
 
 	switch r.Method {
 	case http.MethodGet:
@@ -1230,7 +1246,7 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 			_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
 				tenantID, req.InternalCode).Scan(&codeExists)
 			if codeExists > 0 {
-				nextCode := suggestNextMdfCode(tenantID, req.InternalCode)
+				nextCode := suggestNextMdfCode(db, tenantID, req.InternalCode)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusConflict)
 				json.NewEncoder(w).Encode(map[string]string{
@@ -1242,7 +1258,7 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		atID, _ := ensureAssetType(tenantID, "BACKBONE", "network")
+		atID, _ := ensureAssetType(db, tenantID, "BACKBONE", "network")
 		assetID := generateID()
 		_, err = db.Exec(`
 			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
@@ -1284,9 +1300,10 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 // handleBackboneCheck — GET /api/infra/backbone/check?code=X
 // Valida unicidad de código y sugiere el siguiente disponible
 func handleBackboneCheck(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, _, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	_, tenantID, _, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" {
+		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
 	code := strings.TrimSpace(r.URL.Query().Get("code"))
@@ -1304,10 +1321,10 @@ func handleBackboneCheck(w http.ResponseWriter, r *http.Request) {
 		if count > 0 {
 			result["code_available"] = false
 			result["code_error"] = fmt.Sprintf("El código '%s' ya existe. Elige uno diferente.", code)
-			result["suggestion"] = suggestNextMdfCode(tenantID, code)
+			result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
 		} else {
 			// Sugerir el siguiente aunque esté disponible (para referencia)
-			result["suggestion"] = suggestNextMdfCode(tenantID, code)
+			result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
 		}
 	} else {
 		// Sin código: sugerir el primero disponible basado en naming_rules
@@ -1320,7 +1337,7 @@ func handleBackboneCheck(w http.ResponseWriter, r *http.Request) {
 			seqDigits = 4
 		}
 		baseCode := fmt.Sprintf("%s-%0*d", prefix, seqDigits, 1)
-		result["suggestion"] = suggestNextMdfCode(tenantID, baseCode)
+		result["suggestion"] = suggestNextMdfCode(db, tenantID, baseCode)
 	}
 	jsonResp(w, 200, result)
 }
@@ -1343,11 +1360,13 @@ type NodeRecord struct {
 }
 
 func handleNodos(w http.ResponseWriter, r *http.Request) {
-	tenantID, branchID, userID, err := getInfraSession(r)
-	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	db, dbOK := TenantDBFromContext(r.Context())
+	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
+	var err error
 
 	switch r.Method {
 	case http.MethodGet:
@@ -1410,7 +1429,7 @@ func handleNodos(w http.ResponseWriter, r *http.Request) {
 			req.InternalCode = fmt.Sprintf("NOD-%s", generateID()[:8])
 		}
 
-		atID, _ := ensureAssetType(tenantID, "NODE", "network")
+		atID, _ := ensureAssetType(db, tenantID, "NODE", "network")
 		assetID := generateID()
 		_, err = db.Exec(`
 			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,

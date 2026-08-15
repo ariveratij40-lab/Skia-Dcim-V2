@@ -99,43 +99,55 @@ var db *sql.DB
 // ==========================================
 
 func main() {
-	var err error
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://skia:skia@localhost:5432/skia_db?sslmode=disable"
-	}
-
-	db, err = sql.Open("postgres", dsn)
+	runtimeDSN, migratorDSN, requireRestricted, err := databaseDSNsFromEnv()
 	if err != nil {
-		log.Fatalf("Error connecting to database: %v", err)
-	}
-	defer db.Close()
-
-	if err := db.Ping(); err != nil {
-		log.Fatalf("Database ping failed: %v", err)
+		log.Fatalf("Database configuration invalid: %v", err)
 	}
 
-	log.Println("✅ Connected to database")
-
-	// Inicializar SessionStore con PostgreSQL
-	if err := InitializeSessionStore(db); err != nil {
-		log.Fatalf("Failed to initialize session store: %v", err)
+	migratorDB, err := sql.Open("postgres", migratorDSN)
+	if err != nil {
+		log.Fatalf("Error opening migrator database: %v", err)
 	}
-
-	// Validar que SessionStore está inicializado
-	if err := ValidateSessionStoreInitialization(); err != nil {
-		log.Fatalf("Session store validation failed: %v", err)
+	if err := migratorDB.Ping(); err != nil {
+		_ = migratorDB.Close()
+		log.Fatalf("Migrator database ping failed: %v", err)
 	}
 
 	// Aplicar migraciones pendientes automáticamente
-	if err := runMigrations(db); err != nil {
+	if err := runMigrations(migratorDB); err != nil {
 		log.Printf("⚠️  Error en migraciones: %v", err)
 	} else {
 		log.Println("✅ Migraciones aplicadas")
 	}
 
 	// Migrar tabla de historial IA
-	migrateAIChatHistory(db)
+	migrateAIChatHistory(migratorDB)
+	if err := migratorDB.Close(); err != nil {
+		log.Fatalf("Failed to close migrator database: %v", err)
+	}
+
+	db, err = sql.Open("postgres", runtimeDSN)
+	if err != nil {
+		log.Fatalf("Error opening runtime database: %v", err)
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		log.Fatalf("Runtime database ping failed: %v", err)
+	}
+	if requireRestricted {
+		if err := validateRestrictedRuntimeDB(db); err != nil {
+			log.Fatalf("Runtime database security gate failed: %v", err)
+		}
+	}
+	log.Println("✅ Connected to runtime database")
+
+	// Inicializar SessionStore exclusivamente con el pool runtime.
+	if err := InitializeSessionStore(db); err != nil {
+		log.Fatalf("Failed to initialize session store: %v", err)
+	}
+	if err := ValidateSessionStoreInitialization(); err != nil {
+		log.Fatalf("Session store validation failed: %v", err)
+	}
 
 	// ==========================================
 	// Rutas
@@ -183,19 +195,19 @@ func main() {
 	http.HandleFunc("/api/dcim/catalogs/locations/", dcim.HandleLocationsManage)
 
 	// Infraestructura DCIM — endpoints por módulo
-	http.HandleFunc("/api/infra/mdf-idf", handleMdfIdf)
-	http.HandleFunc("/api/infra/mdf-idf/check", handleMdfIdfCheck) // validación de duplicados en tiempo real
-	http.HandleFunc("/api/infra/mdf-idf/", handleEnsureRack)       // /api/infra/mdf-idf/{id}/ensure-rack
+	http.HandleFunc("/api/infra/mdf-idf", RequireTenantTx(db, handleMdfIdf))
+	http.HandleFunc("/api/infra/mdf-idf/check", RequireTenantTx(db, handleMdfIdfCheck)) // validación de duplicados en tiempo real
+	http.HandleFunc("/api/infra/mdf-idf/", RequireTenantTx(db, handleEnsureRack))       // /api/infra/mdf-idf/{id}/ensure-rack
 	http.HandleFunc("/api/infra/cert-evaluations", handleCertEvaluations)
 	http.HandleFunc("/api/infra/cert-evaluations/", handleCertEvaluationItem)
-	http.HandleFunc("/api/infra/racks", handleRacks)
-	http.HandleFunc("/api/infra/racks/", handleRackLayout) // /api/infra/racks/{id}/layout
-	http.HandleFunc("/api/infra/switches", handleSwitches)
-	http.HandleFunc("/api/infra/patch-panels", handlePatchPanels)
-	http.HandleFunc("/api/infra/ups-pdus", handleUpsPdus)
-	http.HandleFunc("/api/infra/backbone", handleBackbone)
-	http.HandleFunc("/api/infra/backbone/check", handleBackboneCheck)
-	http.HandleFunc("/api/infra/nodos", handleNodos)
+	http.HandleFunc("/api/infra/racks", RequireTenantTx(db, handleRacks))
+	http.HandleFunc("/api/infra/racks/", RequireTenantTx(db, handleRackLayout)) // /api/infra/racks/{id}/layout
+	http.HandleFunc("/api/infra/switches", RequireTenantTx(db, handleSwitches))
+	http.HandleFunc("/api/infra/patch-panels", RequireTenantTx(db, handlePatchPanels))
+	http.HandleFunc("/api/infra/ups-pdus", RequireTenantTx(db, handleUpsPdus))
+	http.HandleFunc("/api/infra/backbone", RequireTenantTx(db, handleBackbone))
+	http.HandleFunc("/api/infra/backbone/check", RequireTenantTx(db, handleBackboneCheck))
+	http.HandleFunc("/api/infra/nodos", RequireTenantTx(db, handleNodos))
 
 	// Rutas CAPEX
 	http.HandleFunc("/api/capex/projects", handleCapexProjects)
@@ -558,6 +570,60 @@ func handleSelectTenant(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSelectBranch(w http.ResponseWriter, r *http.Request) {
+	handleSelectBranchWithDeps(w, r, branchSelectionDeps{
+		loadSession: func(token string, now int64) (string, string, error) {
+			var userID, tenantID string
+			err := db.QueryRow(
+				"SELECT user_id, tenant_id FROM sessions WHERE token = $1 AND expires_at > $2",
+				token, now,
+			).Scan(&userID, &tenantID)
+			return userID, tenantID, err
+		},
+		userHasBranchAccess: func(userID, tenantID, branchID string) (bool, error) {
+			var allowed bool
+			err := db.QueryRow(
+				`SELECT EXISTS(
+					SELECT 1
+					FROM branches b
+					JOIN user_branches ub ON ub.branch_id = b.id
+					WHERE b.id = $1 AND b.tenant_id = $2 AND ub.user_id = $3
+				)`,
+				branchID, tenantID, userID,
+			).Scan(&allowed)
+			return allowed, err
+		},
+		updateBranch: func(token, userID, tenantID, branchID string, now int64) (bool, error) {
+			result, err := db.Exec(
+				`UPDATE sessions s
+				 SET branch_id = $1
+				 WHERE s.token = $2
+				   AND s.user_id = $3
+				   AND s.tenant_id = $4
+				   AND s.expires_at > $5
+				   AND EXISTS (
+					 SELECT 1
+					 FROM branches b
+					 JOIN user_branches ub ON ub.branch_id = b.id
+					 WHERE b.id = $1 AND b.tenant_id = s.tenant_id AND ub.user_id = s.user_id
+				   )`,
+				branchID, token, userID, tenantID, now,
+			)
+			if err != nil {
+				return false, err
+			}
+			rows, err := result.RowsAffected()
+			return rows == 1, err
+		},
+	})
+}
+
+type branchSelectionDeps struct {
+	loadSession         func(token string, now int64) (userID, tenantID string, err error)
+	userHasBranchAccess func(userID, tenantID, branchID string) (bool, error)
+	updateBranch        func(token, userID, tenantID, branchID string, now int64) (bool, error)
+}
+
+func handleSelectBranchWithDeps(w http.ResponseWriter, r *http.Request, deps branchSelectionDeps) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -576,35 +642,31 @@ func handleSelectBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "BranchID required", http.StatusBadRequest)
 		return
 	}
-	// Obtener tenant_id de la sesión activa
-	var tenantID string
-	err := db.QueryRow(
-		"SELECT tenant_id FROM sessions WHERE token = $1 AND expires_at > $2",
-		sessionToken, time.Now().Unix(),
-	).Scan(&tenantID)
-	if err != nil || tenantID == "" {
+	now := time.Now().Unix()
+	userID, tenantID, err := deps.loadSession(sessionToken, now)
+	if err != nil || userID == "" || tenantID == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// SEGURIDAD CRITICA: verificar que la branch pertenece al tenant de la sesión
-	var belongs bool
-	db.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM branches WHERE id = $1 AND tenant_id = $2)",
-		req.BranchID, tenantID,
-	).Scan(&belongs)
-	if !belongs {
-		log.Printf("SECURITY: tenant %s attempted to access branch %s without permission", tenantID, req.BranchID)
+	allowed, err := deps.userHasBranchAccess(userID, tenantID, req.BranchID)
+	if err != nil {
+		log.Printf("ERROR select-branch authorization check failed")
+		http.Error(w, "Error checking branch access", http.StatusInternalServerError)
+		return
+	}
+	if !allowed {
+		log.Printf("SECURITY: branch selection denied for authenticated user")
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	// Actualizar sesión con branch_id validado
-	_, err = db.Exec(
-		"UPDATE sessions SET branch_id = $1 WHERE token = $2",
-		req.BranchID, sessionToken,
-	)
+	updated, err := deps.updateBranch(sessionToken, userID, tenantID, req.BranchID, now)
 	if err != nil {
-		log.Printf("ERROR select-branch update session: %v branchID=[%s] token=[%s]", err, req.BranchID, sessionToken)
+		log.Printf("ERROR select-branch update session: %v", err)
 		http.Error(w, "Error updating session", http.StatusInternalServerError)
+		return
+	}
+	if !updated {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

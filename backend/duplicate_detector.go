@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -53,7 +54,7 @@ type DuplicateMatch struct {
 // FUNCIÓN: DETECTAR DUPLICADOS
 // ============================================================
 
-func DetectDuplicates(db *sql.DB, tenantID string, branchID string, assetType string, assetData map[string]interface{}) ([]DuplicateMatch, error) {
+func DetectDuplicates(db TenantDB, tenantID string, branchID string, assetType string, assetData map[string]interface{}) ([]DuplicateMatch, error) {
 	var matches []DuplicateMatch
 
 	// Campos clave para búsqueda de duplicados
@@ -256,7 +257,7 @@ type UpsertResult struct {
 	Changes map[string]interface{}
 }
 
-func UpsertAsset(db *sql.DB, tenantID string, branchID string, assetType string, assetData map[string]interface{}) (*UpsertResult, error) {
+func UpsertAsset(db TenantDB, tenantID string, branchID string, assetType string, assetData map[string]interface{}) (*UpsertResult, error) {
 	// Detectar duplicados
 	duplicates, err := DetectDuplicates(db, tenantID, branchID, assetType, assetData)
 	if err != nil {
@@ -312,7 +313,7 @@ func UpsertAsset(db *sql.DB, tenantID string, branchID string, assetType string,
 // FUNCIÓN: INSERTAR NUEVO ACTIVO
 // ============================================================
 
-func insertAsset(db *sql.DB, tenantID string, branchID string, assetType string, assetData map[string]interface{}) (string, error) {
+func insertAsset(db TenantDB, tenantID string, branchID string, assetType string, assetData map[string]interface{}) (string, error) {
 	query := `
 		INSERT INTO assets (
 			tenant_id,
@@ -376,7 +377,7 @@ func insertAsset(db *sql.DB, tenantID string, branchID string, assetType string,
 // Decisión del usuario: corregir esto ahora mismo aunque el archivo
 // completo quede fuera de alcance operativo (ver nota de cabecera del
 // archivo) -- es un bug de aislamiento real, aunque no explotable hoy.
-func updateAsset(db *sql.DB, tenantID string, branchID string, assetID string, assetData map[string]interface{}) error {
+func updateAsset(db TenantDB, tenantID string, branchID string, assetID string, assetData map[string]interface{}) error {
 	query := `
 		UPDATE assets SET
 			name = COALESCE($1, name),
@@ -421,7 +422,8 @@ func updateAsset(db *sql.DB, tenantID string, branchID string, assetID string, a
 // ============================================================
 
 func UpsertAssetsTransaction(db *sql.DB, tenantID string, branchID string, assetType string, assetsList []map[string]interface{}) ([]UpsertResult, error) {
-	tx, err := db.Begin()
+	scope := JobTenantContext{TenantID: tenantID, BranchID: branchID}
+	tx, err := BeginJobTenantTx(context.Background(), db, scope, true)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +433,7 @@ func UpsertAssetsTransaction(db *sql.DB, tenantID string, branchID string, asset
 
 	for _, assetData := range assetsList {
 		// Detectar duplicados
-		duplicates, err := DetectDuplicates(db, tenantID, branchID, assetType, assetData)
+		duplicates, err := DetectDuplicates(tx, tenantID, branchID, assetType, assetData)
 		if err != nil {
 			log.Printf("Error detecting duplicates: %v", err)
 			continue
