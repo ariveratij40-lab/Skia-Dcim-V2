@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -317,6 +318,19 @@ func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID s
 
 	// Guardar items en BD
 	updateImportJobProgress(dbJobID, 90, "Saving to database...")
+	jobScope := JobTenantContext{TenantID: tenantID, BranchID: branchID}
+	jobTx, err := BeginJobTenantTx(context.Background(), db, jobScope, true)
+	if err != nil {
+		log.Printf("ERROR: import job rejected before asset access: %v", err)
+		updateImportJobError(dbJobID, "Import rejected: invalid database context")
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = jobTx.Rollback()
+		}
+	}()
 	for _, item := range items {
 		// Validar que el item tenga al menos un nombre
 		if item["name"] == nil || item["name"] == "" {
@@ -403,7 +417,7 @@ func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID s
 		// asignación incorrecta de sucursal que este fix corrige.
 
 		// 4. Insertar en assets
-		_, err = db.Exec(`
+		_, err = jobTx.ExecContext(context.Background(), `
 			INSERT INTO assets (
 				tenant_id, branch_id, asset_type_id, internal_code, name,
 				serial_number, model, manufacturer, status, observations
@@ -415,8 +429,16 @@ func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID s
 		)
 		if err != nil {
 			log.Printf("Error saving item to assets table: %v", err)
+			updateImportJobError(dbJobID, "Import failed while saving assets")
+			return
 		}
 	}
+	if err = jobTx.Commit(); err != nil {
+		log.Printf("Error committing imported assets: %v", err)
+		updateImportJobError(dbJobID, "Import failed while committing assets")
+		return
+	}
+	committed = true
 
 	// Guardar resultado
 	result := map[string]interface{}{

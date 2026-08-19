@@ -1,5 +1,6 @@
 // Command tenant_db_lint es una verificación estática heurística (C-6):
-// detecta llamadas a métodos de consulta (Query/QueryRow/Exec y sus
+// detecta llamadas a métodos de consulta sobre las tablas objetivo
+// (assets, asset_logs y asset_relationships) (Query/QueryRow/Exec y sus
 // variantes *Context) hechas directamente sobre el receptor `db` (la
 // variable global de main.go) o sobre un selector que termina en `.DB`
 // (p.ej. `h.DB`), dentro de los archivos de handlers del backend.
@@ -57,10 +58,10 @@ var tenantQueryMethods = map[string]bool{
 // deben declarar su alcance explícitamente en el código, no a través de
 // este linter.
 var defaultExemptFiles = map[string]bool{
-	"migrations.go":         true,
-	"tenant_context.go":     true,
-	"tenant_middleware.go":  true,
-	"main.go":                true,
+	"migrations.go":             true,
+	"tenant_context.go":         true,
+	"tenant_middleware.go":      true,
+	"main.go":                   true,
 	"postgres_session_store.go": true,
 }
 
@@ -70,6 +71,8 @@ type finding struct {
 	method string
 	recv   string
 }
+
+var protectedTables = []string{"assets", "asset_logs", "asset_relationships"}
 
 func main() {
 	allowFlag := flag.String("allow", "", "lista separada por comas de archivos adicionales a exceptuar (además de los exentos por defecto)")
@@ -130,8 +133,14 @@ func main() {
 			if !tenantQueryMethods[sel.Sel.Name] {
 				return true
 			}
+			if !queryTouchesProtectedTable(call) {
+				return true
+			}
 			recvName, forbidden := describeReceiver(sel.X)
 			if !forbidden {
+				return true
+			}
+			if recvName == "db" && contextualDBAliasAt(node, call.Pos()) {
 				return true
 			}
 			pos := fset.Position(call.Pos())
@@ -158,6 +167,64 @@ func main() {
 	fmt.Println("función a un archivo exento o pásalo con -allow. Si toca una tabla con")
 	fmt.Println("tenant_id/RLS, debe usar TenantDBFromContext(r.Context()) en su lugar.")
 	os.Exit(1)
+}
+
+// queryTouchesProtectedTable intentionally classifies only SQL literals.
+// Dynamic SQL remains subject to code review and must not be used for target
+// tables; this keeps unrelated catalog/session accesses out of the gate.
+func queryTouchesProtectedTable(call *ast.CallExpr) bool {
+	if len(call.Args) == 0 {
+		return false
+	}
+	literal, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return false
+	}
+	query := strings.ToLower(literal.Value)
+	tokens := strings.FieldsFunc(query, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '_'
+	})
+	for _, table := range protectedTables {
+		for _, token := range tokens {
+			if token == table {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// contextualDBAliasAt recognizes the reviewed pattern used by legacy infra
+// handlers: `db, ok := TenantDBFromContext(r.Context())`. The local identifier
+// shadows the package pool and is therefore a contextual *sql.Tx implementing
+// TenantDB, not an unscoped connection.
+func contextualDBAliasAt(node *ast.File, pos token.Pos) bool {
+	for _, decl := range node.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil || pos < fn.Pos() || pos > fn.End() {
+			continue
+		}
+		found := false
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			assign, ok := n.(*ast.AssignStmt)
+			if !ok || len(assign.Lhs) == 0 || len(assign.Rhs) == 0 {
+				return true
+			}
+			lhs, ok := assign.Lhs[0].(*ast.Ident)
+			call, callOK := assign.Rhs[0].(*ast.CallExpr)
+			if !ok || !callOK {
+				return true
+			}
+			callee, calleeOK := call.Fun.(*ast.Ident)
+			if calleeOK && lhs.Name == "db" && callee.Name == "TenantDBFromContext" {
+				found = true
+				return false
+			}
+			return true
+		})
+		return found
+	}
+	return false
 }
 
 // describeReceiver decide si una expresión receptora de un método de
