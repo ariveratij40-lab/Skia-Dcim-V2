@@ -1,20 +1,15 @@
 # PHASE-012 — Blockers
 
-## P12-BLK-001 — Related inventory route fixtures remain incompatible
+## P12-BLK-001 — RESOLVED
 
-- Status: **BLOCKED**
-- Corrected test: `TestHandleInventoryImportRoutes_DetailValid` passes 10/10
-  with an exact SQL fixture and integer import ID.
-- Observed next: `TestHandleInventoryImportRoutes_RowsValid` reaches the same
-  DB-backed session path with a nil database handle.
-- Additional contract mismatch: the inherited permission test expects 403,
-  while the current dispatcher does not evaluate the declared permission.
-- Risk: the mandatory backend suite is not green; promotion cannot claim a
-  stable baseline.
-- Required resolution: an architectural decision must define whether all route
-  tests receive DB fixtures or the dispatcher converges on the established
-  injected session/RBAC contract. PHASE-012 must then rerun in full.
+- Status: **RESOLVED**
+- Resolution: all directly related route tests now use exact DB-backed fixtures,
+  INTEGER IDs and the authorization contract approved by the architecture gate.
+- Verification: route matrix 10/10; full clean validation approved.
 
 ## Final classification
 
-**BLOCKED**
+**READY FOR MAIN MERGE GATE**
+
+No open PHASE-012 technical blocker remains. Merge remains prohibited until a
+separate MAIN MERGE GATE is issued.

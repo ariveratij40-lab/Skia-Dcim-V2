@@ -2,7 +2,7 @@
 
 ## Classification
 
-**BLOCKED**
+**READY FOR MAIN MERGE GATE**
 
 ## Lineage and delta
 
@@ -32,14 +32,15 @@ A detached clean worktree at exact candidate SHA was used.
 - PHASE-005 canonical RLS ephemeral matrix: **APPROVED**, including canonical
   hashes and negative guards.
 
-The backend test failure is mandatory and cannot be corrected inside this
-promotion-only gate. Main merge readiness is therefore not established.
+The inventory route contract gate converged all related tests to the real
+DB-backed setup without changing runtime handlers. The complete clean
+validation set now passes, so technical readiness for a separate main merge
+gate is established.
 
-The subsequent panic gate proved the original nil to be a test-setup defect
-and corrected the affected detail test without runtime changes. That test now
-passes 10/10, but the related rows test exposes the same inherited setup defect
-and the route suite contains an authorization-contract discrepancy. The gate
-therefore remains **BLOCKED** without broadening into runtime/RBAC wiring.
+The route matrix passes 10 consecutive executions. Full `go test ./...`, Go
+build, frontend install/typecheck/build, internal-import resolution, bootstrap
+twice with ledger 10 and canonical RLS validation all pass from a clean
+checkout at `61a4fbc29518c046e48a6380b8209979915c537d`.
 
 ## Dark deployment identity
 
