@@ -5,6 +5,7 @@
 - Functional candidate: `92eac07c3931c30d198b8842ee458820bcba18d6`
 - Evidence baseline: `a4541a8e50122de1810ac319289e432fd44d364c`
 - Status: **DRAFT / BLOCKED — DO NOT MERGE**
+- GitHub PR: `#6` — `https://github.com/ariveratij40-lab/Skia-Dcim-V2/pull/6`.
 
 The frontend, bootstrap, RLS and dark-deployment identity controls pass. The
 mandatory backend suite panics in
