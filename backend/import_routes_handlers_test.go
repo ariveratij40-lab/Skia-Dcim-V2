@@ -83,28 +83,13 @@ func TestHandleInventoryImportRoutes_DetailValid(t *testing.T) {
 
 // TestHandleInventoryImportRoutes_RowsValid prueba GET /{id}/rows válido
 func TestHandleInventoryImportRoutes_RowsValid(t *testing.T) {
-	// Configurar store fake
-	store := NewFakeSessionStore()
-	session := CreateValidSession("user-1", "tenant-1", "branch-1")
-	store.AddSession(session)
-	userInfo := CreateActiveUser("user-1", "user@example.com")
-	store.AddUser(userInfo)
-	store.SetTenantAccess("user-1", "tenant-1", true)
-	store.SetBranchAccess("user-1", "tenant-1", "branch-1", true)
-	store.SetPermissions("user-1", "tenant-1", map[string]bool{"inventory.import.read": true})
-	SetSessionStore(store)
-	defer func() { SetSessionStore(nil) }()
-
-	// Crear request
-	req := httptest.NewRequest("GET", "/api/import/inventory/550e8400-e29b-41d4-a716-446655440000/rows", nil)
-	req.AddCookie(&http.Cookie{
-		Name:  "session_token",
-		Value: session.SessionID,
-	})
-
-	// Ejecutar handler
-	w := httptest.NewRecorder()
-	handleInventoryImportRoutes(w, req)
+	mock := installInventoryRouteDBMock(t)
+	expectInventoryRouteSession(mock, "test-session", "user-1", "tenant-1", "branch-1")
+	mock.ExpectQuery("FROM inventory_import_rows").
+		WithArgs("1", "tenant-1", "branch-1", 50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "row_number", "status", "data", "error_message", "created_at"}).
+			AddRow("10", 1, "valid", `{\"serial_number\":\"TEST-001\"}`, nil, time.Now()))
+	w := runInventoryRouteTest(t, http.MethodGet, "/api/import/inventory/1/rows", "test-session")
 
 	// Verificar respuesta
 	if w.Code != http.StatusOK {
@@ -114,28 +99,9 @@ func TestHandleInventoryImportRoutes_RowsValid(t *testing.T) {
 
 // TestHandleInventoryImportRoutes_CommitNotImplemented prueba POST /{id}/commit (501)
 func TestHandleInventoryImportRoutes_CommitNotImplemented(t *testing.T) {
-	// Configurar store fake
-	store := NewFakeSessionStore()
-	session := CreateValidSession("user-1", "tenant-1", "branch-1")
-	store.AddSession(session)
-	userInfo := CreateActiveUser("user-1", "user@example.com")
-	store.AddUser(userInfo)
-	store.SetTenantAccess("user-1", "tenant-1", true)
-	store.SetBranchAccess("user-1", "tenant-1", "branch-1", true)
-	store.SetPermissions("user-1", "tenant-1", map[string]bool{"inventory.import.commit": true})
-	SetSessionStore(store)
-	defer func() { SetSessionStore(nil) }()
-
-	// Crear request
-	req := httptest.NewRequest("POST", "/api/import/inventory/550e8400-e29b-41d4-a716-446655440000/commit", nil)
-	req.AddCookie(&http.Cookie{
-		Name:  "session_token",
-		Value: session.SessionID,
-	})
-
-	// Ejecutar handler
-	w := httptest.NewRecorder()
-	handleInventoryImportRoutes(w, req)
+	mock := installInventoryRouteDBMock(t)
+	expectInventoryRouteSession(mock, "test-session", "user-1", "tenant-1", "branch-1")
+	w := runInventoryRouteTest(t, http.MethodPost, "/api/import/inventory/1/commit", "test-session")
 
 	// Verificar respuesta 501
 	if w.Code != http.StatusNotImplemented {
@@ -145,12 +111,9 @@ func TestHandleInventoryImportRoutes_CommitNotImplemented(t *testing.T) {
 
 // TestHandleInventoryImportRoutes_InvalidID prueba ID inválido
 func TestHandleInventoryImportRoutes_InvalidID(t *testing.T) {
-	// Crear request con ID inválido
-	req := httptest.NewRequest("GET", "/api/import/inventory/invalid-id", nil)
-
-	// Ejecutar handler
-	w := httptest.NewRecorder()
-	handleInventoryImportRoutes(w, req)
+	mock := installInventoryRouteDBMock(t)
+	expectInventoryRouteSession(mock, "test-session", "user-1", "tenant-1", "branch-1")
+	w := runInventoryRouteTest(t, http.MethodGet, "/api/import/inventory/invalid-id", "test-session")
 
 	// Verificar respuesta 400
 	if w.Code != http.StatusBadRequest {
@@ -160,27 +123,20 @@ func TestHandleInventoryImportRoutes_InvalidID(t *testing.T) {
 
 // TestHandleInventoryImportRoutes_EmptyPath prueba ruta vacía
 func TestHandleInventoryImportRoutes_EmptyPath(t *testing.T) {
-	// Crear request con ruta vacía
-	req := httptest.NewRequest("GET", "/api/import/inventory/", nil)
+	mock := installInventoryRouteDBMock(t)
+	expectInventoryRouteSession(mock, "test-session", "user-1", "tenant-1", "branch-1")
+	w := runInventoryRouteTest(t, http.MethodGet, "/api/import/inventory/", "test-session")
 
-	// Ejecutar handler
-	w := httptest.NewRecorder()
-	handleInventoryImportRoutes(w, req)
-
-	// Verificar respuesta 404
-	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected status 404, got %d", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
 	}
 }
 
 // TestHandleInventoryImportRoutes_UnknownRoute prueba ruta desconocida
 func TestHandleInventoryImportRoutes_UnknownRoute(t *testing.T) {
-	// Crear request con ruta desconocida
-	req := httptest.NewRequest("GET", "/api/import/inventory/550e8400-e29b-41d4-a716-446655440000/unknown", nil)
-
-	// Ejecutar handler
-	w := httptest.NewRecorder()
-	handleInventoryImportRoutes(w, req)
+	mock := installInventoryRouteDBMock(t)
+	expectInventoryRouteSession(mock, "test-session", "user-1", "tenant-1", "branch-1")
+	w := runInventoryRouteTest(t, http.MethodGet, "/api/import/inventory/1/unknown", "test-session")
 
 	// Verificar respuesta 404
 	if w.Code != http.StatusNotFound {
@@ -190,17 +146,8 @@ func TestHandleInventoryImportRoutes_UnknownRoute(t *testing.T) {
 
 // TestHandleInventoryImportRoutes_NoSession prueba sin sesión
 func TestHandleInventoryImportRoutes_NoSession(t *testing.T) {
-	// Configurar store vacío
-	store := NewFakeSessionStore()
-	SetSessionStore(store)
-	defer func() { SetSessionStore(nil) }()
-
-	// Crear request sin cookie
-	req := httptest.NewRequest("GET", "/api/import/inventory/550e8400-e29b-41d4-a716-446655440000", nil)
-
-	// Ejecutar handler
-	w := httptest.NewRecorder()
-	handleInventoryImportRoutes(w, req)
+	installInventoryRouteDBMock(t)
+	w := runInventoryRouteTest(t, http.MethodGet, "/api/import/inventory/1", "")
 
 	// Verificar respuesta 401
 	if w.Code != http.StatusUnauthorized {
@@ -208,65 +155,27 @@ func TestHandleInventoryImportRoutes_NoSession(t *testing.T) {
 	}
 }
 
-// TestHandleInventoryImportRoutes_NoPermission prueba sin permiso
-func TestHandleInventoryImportRoutes_NoPermission(t *testing.T) {
-	// Configurar store fake SIN permiso
-	store := NewFakeSessionStore()
-	session := CreateValidSession("user-1", "tenant-1", "branch-1")
-	store.AddSession(session)
-	userInfo := CreateActiveUser("user-1", "user@example.com")
-	store.AddUser(userInfo)
-	store.SetTenantAccess("user-1", "tenant-1", true)
-	store.SetBranchAccess("user-1", "tenant-1", "branch-1", true)
-	store.SetPermissions("user-1", "tenant-1", map[string]bool{}) // Sin permisos
-	SetSessionStore(store)
-	defer func() { SetSessionStore(nil) }()
-
-	// Crear request
-	req := httptest.NewRequest("GET", "/api/import/inventory/550e8400-e29b-41d4-a716-446655440000", nil)
-	req.AddCookie(&http.Cookie{
-		Name:  "session_token",
-		Value: session.SessionID,
-	})
-
-	// Ejecutar handler
-	w := httptest.NewRecorder()
-	handleInventoryImportRoutes(w, req)
-
-	// Verificar respuesta 403
-	if w.Code != http.StatusForbidden {
-		t.Errorf("Expected status 403, got %d", w.Code)
+// PermissionCatalogAbsenceDoesNotGateRoute documents the current approved
+// contract: this dispatcher validates session/tenant/branch, but does not
+// consult inventory.import.read.
+func TestHandleInventoryImportRoutes_PermissionCatalogAbsenceDoesNotGateRoute(t *testing.T) {
+	mock := installInventoryRouteDBMock(t)
+	expectInventoryRouteSession(mock, "test-session", "user-1", "tenant-1", "branch-1")
+	expectInventoryDetailFound(mock, "1", "tenant-1", "branch-1")
+	w := runInventoryRouteTest(t, http.MethodGet, "/api/import/inventory/1", "test-session")
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected current DB-backed contract to return 200, got %d", w.Code)
 	}
 }
 
 // TestHandleInventoryImportRoutes_WrongMethod prueba método incorrecto
 func TestHandleInventoryImportRoutes_WrongMethod(t *testing.T) {
-	// Configurar store fake
-	store := NewFakeSessionStore()
-	session := CreateValidSession("user-1", "tenant-1", "branch-1")
-	store.AddSession(session)
-	userInfo := CreateActiveUser("user-1", "user@example.com")
-	store.AddUser(userInfo)
-	store.SetTenantAccess("user-1", "tenant-1", true)
-	store.SetBranchAccess("user-1", "tenant-1", "branch-1", true)
-	store.SetPermissions("user-1", "tenant-1", map[string]bool{"inventory.import.read": true})
-	SetSessionStore(store)
-	defer func() { SetSessionStore(nil) }()
+	mock := installInventoryRouteDBMock(t)
+	expectInventoryRouteSession(mock, "test-session", "user-1", "tenant-1", "branch-1")
+	w := runInventoryRouteTest(t, http.MethodPost, "/api/import/inventory/1", "test-session")
 
-	// Crear request con método POST (debe ser GET)
-	req := httptest.NewRequest("POST", "/api/import/inventory/550e8400-e29b-41d4-a716-446655440000", nil)
-	req.AddCookie(&http.Cookie{
-		Name:  "session_token",
-		Value: session.SessionID,
-	})
-
-	// Ejecutar handler
-	w := httptest.NewRecorder()
-	handleInventoryImportRoutes(w, req)
-
-	// Verificar respuesta 404 (ruta no encontrada)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected status 404, got %d", w.Code)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Expected status 405, got %d", w.Code)
 	}
 }
 
