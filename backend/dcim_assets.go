@@ -739,7 +739,7 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		SELECT
 			CAST(id AS TEXT) as id,
 			tenant_id::TEXT as tenant_id,
-			$2::TEXT as branch_id,
+			branch_id::TEXT as branch_id,
 			asset_type as asset_type_id,
 			asset_type as asset_type_code,
 			asset_type as asset_type_name,
@@ -762,7 +762,7 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 			created_at,
 			updated_at
 		FROM imported_assets
-		WHERE tenant_id = $1
+		WHERE tenant_id = $1 AND branch_id = $2
 	`
 	importedRows, err := tdb.QueryContext(r.Context(), importedQuery, tenantID, branchID)
 	if err == nil {
