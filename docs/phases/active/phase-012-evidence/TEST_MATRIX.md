@@ -15,3 +15,6 @@
 | Dark source/image identity | PRODUCTION VPS READ-ONLY | APPROVED |
 | Main merge | NOT EXECUTED | BLOCKED |
 | Production rebuild/redeploy | NOT EXECUTED | PROHIBITED |
+| Inventory detail affected test, 10 repetitions | LOCAL | APPROVED |
+| Related inventory route tests | LOCAL | FAILED (nil DB in `RowsValid`) |
+| Gate rerun: full backend/frontend/bootstrap/RLS | NOT EXECUTED | BLOCKED by related test |

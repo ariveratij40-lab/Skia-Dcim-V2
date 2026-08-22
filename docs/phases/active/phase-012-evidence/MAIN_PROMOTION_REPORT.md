@@ -35,6 +35,12 @@ A detached clean worktree at exact candidate SHA was used.
 The backend test failure is mandatory and cannot be corrected inside this
 promotion-only gate. Main merge readiness is therefore not established.
 
+The subsequent panic gate proved the original nil to be a test-setup defect
+and corrected the affected detail test without runtime changes. That test now
+passes 10/10, but the related rows test exposes the same inherited setup defect
+and the route suite contains an authorization-contract discrepancy. The gate
+therefore remains **BLOCKED** without broadening into runtime/RBAC wiring.
+
 ## Dark deployment identity
 
 Read-only verification confirmed source pin

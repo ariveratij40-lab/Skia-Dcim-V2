@@ -4,7 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 // ============================================================
@@ -13,23 +17,50 @@ import (
 
 // TestHandleInventoryImportRoutes_DetailValid prueba GET /{id} válido
 func TestHandleInventoryImportRoutes_DetailValid(t *testing.T) {
-	// Configurar store fake
-	store := NewFakeSessionStore()
-	session := CreateValidSession("user-1", "tenant-1", "branch-1")
-	store.AddSession(session)
-	userInfo := CreateActiveUser("user-1", "user@example.com")
-	store.AddUser(userInfo)
-	store.SetTenantAccess("user-1", "tenant-1", true)
-	store.SetBranchAccess("user-1", "tenant-1", "branch-1", true)
-	store.SetPermissions("user-1", "tenant-1", map[string]bool{"inventory.import.read": true})
-	SetSessionStore(store)
-	defer func() { SetSessionStore(nil) }()
+	// El handler autentica y consulta el inventario mediante el *sql.DB global
+	// que main inicializa en runtime. La prueba debe proporcionar esa misma
+	// dependencia; FakeSessionStore no participa en este flujo seguro.
+	mockDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create SQL mock: %v", err)
+	}
+	previousDB := db
+	db = mockDB
+	t.Cleanup(func() {
+		db = previousDB
+		mockDB.Close()
+	})
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT s.user_id, s.tenant_id, s.branch_id, u.email
+		FROM sessions s
+		JOIN users u ON s.user_id = u.id
+		WHERE s.token = $1 AND s.expires_at > $2
+		LIMIT 1
+	`)).WithArgs("test-session", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "tenant_id", "branch_id", "email"}).
+			AddRow("user-1", "tenant-1", "branch-1", "user@example.com"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT EXISTS(SELECT 1 FROM tenants WHERE id = $1)")).
+		WithArgs("tenant-1").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS(
+				SELECT 1 FROM branches b
+				JOIN user_branches ub ON ub.branch_id = b.id
+				WHERE b.id = $1 AND b.tenant_id = $2 AND ub.user_id = $3
+			)`)).WithArgs("branch-1", "tenant-1", "user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery("FROM inventory_imports").WithArgs("1", "tenant-1", "branch-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "filename", "file_type", "status", "total_rows", "valid_rows",
+			"error_rows", "duplicate_rows", "created_at", "updated_at",
+		}).AddRow("1", "inventory.csv", "csv", "staging", 10, 10, 0, 0, time.Now(), time.Now()))
+	mock.ExpectQuery("FROM import_errors").WithArgs("1", "tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"error_message"}))
 
 	// Crear request
-	req := httptest.NewRequest("GET", "/api/import/inventory/550e8400-e29b-41d4-a716-446655440000", nil)
+	req := httptest.NewRequest("GET", "/api/import/inventory/1", nil)
 	req.AddCookie(&http.Cookie{
 		Name:  "session_token",
-		Value: session.SessionID,
+		Value: "test-session",
 	})
 
 	// Ejecutar handler
@@ -43,6 +74,10 @@ func TestHandleInventoryImportRoutes_DetailValid(t *testing.T) {
 
 	if w.Header().Get("Content-Type") != "application/json" {
 		t.Errorf("Expected JSON content type, got %s", w.Header().Get("Content-Type"))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet SQL expectations: %v", err)
 	}
 }
 
