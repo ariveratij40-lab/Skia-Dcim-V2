@@ -50,3 +50,21 @@ not the exactly 15 required by
 therefore failed closed before approval. The target was removed and Stage F was
 not entered. Accepting the additional identity requires a new architectural
 decision even though the limited normalization produced semantic equality.
+
+## Cardinality-corrected revalidation
+
+The authorized correction changed only the exact count from 15 to 16 and fixed
+the expected semantic SHA. One disposable revalidation then approved all
+required controls:
+
+- constraints: `225/225`;
+- serializer-only CHECK differences: exactly `16`;
+- differences after the approved normalization: `0`;
+- source/restore semantic SHA-256:
+  `19f95417bba53f97adc66ae024abcbcde87bca9a650a0ea22f1e00024fe840b1`;
+- all non-CHECK fingerprint categories shared SHA-256
+  `182cc41757aa12bb7887df97340b2e8967b95813eb03d7fc9c16263ca7a1b08f`;
+- ledger `10/10`, business data `0/0/0`, grants `12/12`.
+
+The target was removed. Stage E is **APPROVED — BACKUP/RESTORE SEMANTIC
+EQUIVALENCE PROVEN**.

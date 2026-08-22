@@ -48,7 +48,7 @@
 ## P11-BLK-005 — Semantic gate expected 15 serializer diffs; observed 16
 
 - Stage: E — Backup/restore semantic revalidation
-- Status: **BLOCKED**
+- Status: **RESOLVED**
 - One disposable restore revalidation enumerated 225/225 constraints and paired
   every raw difference by exact table/constraint identity.
 - Observed serializer-only CHECK identities: 16; authorized exact count: 15.
@@ -60,14 +60,27 @@
 - Required resolution: a new gate must explicitly reconcile the authoritative
   serializer-only identity set/count. Semantic equality alone cannot override
   the exact-count guard.
+- Resolution: the cardinality-correction gate authorized exactly 16; the single
+  revalidation passed with the fixed semantic SHA and Stage E was approved.
+
+## P11-BLK-006 — Authorized frontend source does not build
+
+- Stage: F — Application dark deploy
+- Status: **BLOCKED**
+- Stage E was approved by the cardinality-corrected semantic gate.
+- Backend image build succeeded from the exact authorized SHA.
+- Frontend `next build` failed because `components/BackboneSelector.tsx`
+  references absent module `../lib/backboneStore`.
+- Safety response: Compose deployment was not reached; no application
+  containers, Nginx route, DNS change or traffic activation occurred.
+- Required resolution: correct the frontend in an authorized functional phase,
+  promote a new immutable source SHA and obtain a continuation/deploy gate.
 
 ## Final classification
 
 **BLOCKED**
 
-Stage D approved and Stage E created a valid backup and successful disposable
-restore, but both the original exact comparison and the subsequent exact-count
-semantic gate failed. Stages F–H were not executed.
-No application build, dark deploy, reverse-proxy change, TLS, DNS or traffic
-activation occurred. Production remains empty, isolated and healthy with
-canonical RLS enabled.
+Stages D and E approved. Stage F stopped on the frontend build failure before
+container creation; Stages G–H were not executed beyond final evidence. No dark
+deploy, reverse-proxy change, TLS, DNS or traffic activation occurred.
+Production remains empty, isolated and healthy with canonical RLS enabled.

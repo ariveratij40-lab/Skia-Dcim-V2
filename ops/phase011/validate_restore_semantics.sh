@@ -17,9 +17,9 @@ chmod 600 "$tmp_dir"/*
 
 comm -3 "$tmp_dir/source.raw" "$tmp_dir/restore.raw" >"$tmp_dir/raw.diff"
 # comm contains one source and one restore line per differing constraint.
-[[ "$(wc -l <"$tmp_dir/raw.diff" | tr -d ' ')" == 30 ]]
+[[ "$(wc -l <"$tmp_dir/raw.diff" | tr -d ' ')" == 32 ]]
 [[ "$(sed 's/^[[:space:]]*//' "$tmp_dir/raw.diff" | cut -d'|' -f3 | sort -u)" == c ]]
-[[ "$(sed 's/^[[:space:]]*//' "$tmp_dir/raw.diff" | cut -d'|' -f1-2 | sort -u | wc -l | tr -d ' ')" == 15 ]]
+[[ "$(sed 's/^[[:space:]]*//' "$tmp_dir/raw.diff" | cut -d'|' -f1-3 | sort -u | wc -l | tr -d ' ')" == 16 ]]
 
 normalize_checks() {
   sed -E \
@@ -33,6 +33,7 @@ cmp -s "$tmp_dir/source.semantic" "$tmp_dir/restore.semantic"
 source_fp="$(sha256sum "$tmp_dir/source.semantic" | awk '{print $1}')"
 restore_fp="$(sha256sum "$tmp_dir/restore.semantic" | awk '{print $1}')"
 [[ "$source_fp" == "$restore_fp" ]]
-printf 'CONSTRAINT_COUNT=225\nRAW_SERIALIZER_DIFFS=15\nSEMANTIC_DIFFS=0\n'
+[[ "$source_fp" == 19f95417bba53f97adc66ae024abcbcde87bca9a650a0ea22f1e00024fe840b1 ]]
+printf 'CONSTRAINT_COUNT=225\nRAW_SERIALIZER_DIFFS=16\nSEMANTIC_DIFFS=0\n'
 printf 'SOURCE_SEMANTIC_SHA256=%s\nRESTORE_SEMANTIC_SHA256=%s\n' "$source_fp" "$restore_fp"
 printf 'RESTORE_CONSTRAINT_SEMANTICS=APPROVED\n'
