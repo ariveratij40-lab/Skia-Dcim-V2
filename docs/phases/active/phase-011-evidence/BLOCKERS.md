@@ -35,7 +35,7 @@
 ## P11-BLK-004 — Restored CHECK expression representation differs
 
 - Stage: E — Backup/restore proof
-- Status: **BLOCKED**
+- Status: **RESOLVED**
 - Backup and restore operations succeeded; ledger, data counts, RLS and policies
   matched.
 - Fifteen CHECK constraints were reserialized with equivalent cast placement,
@@ -44,6 +44,8 @@
   change attempted.
 - Required resolution: architectural review of a restore-stable semantic/hash
   procedure. The current gate's exact restored hash requirement was not met.
+- Resolution: semantic-equivalence and corrected-cardinality gates approved the
+  exact 16-item serializer-only set and deterministic semantic SHA.
 
 ## P11-BLK-005 — Semantic gate expected 15 serializer diffs; observed 16
 
@@ -95,9 +97,10 @@
 
 ## Final classification
 
-**BLOCKED**
+**READY FOR MAIN PROMOTION AND PRODUCTION TRAFFIC ACTIVATION GATES**
 
-Stages D and E approved. Stage F stopped on the frontend build failure before
-container creation; Stages G–H were not executed beyond final evidence. No dark
-deploy, reverse-proxy change, TLS, DNS or traffic activation occurred.
-Production remains empty, isolated and healthy with canonical RLS enabled.
+Stages D–H approved. The application is deployed dark from exact branch
+candidate `92eac07c3931c30d198b8842ee458820bcba18d6`; production remains empty,
+isolated and healthy with canonical RLS enabled. No reverse-proxy enablement,
+TLS issuance, DNS change or public traffic activation occurred. Main promotion
+and traffic activation remain separate required gates.
