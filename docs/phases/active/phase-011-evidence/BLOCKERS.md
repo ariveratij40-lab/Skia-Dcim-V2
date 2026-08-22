@@ -17,7 +17,7 @@
 ## P11-BLK-003 — Canonical RLS prestate incompatible with clean production
 
 - Stage: D — Canonical RLS and restricted runtime
-- Status: **BLOCKED**
+- Status: **RESOLVED**
 - Observed production prestate: zero policies and `RLS/FORCE=false/false` on
   all three protected tables, as produced by the approved clean bootstrap.
 - Required canonical prestate: three exact legacy policies,
@@ -29,13 +29,28 @@
 - Required resolution: an architectural decision defining a guarded
   production-empty activation path while preserving exact canonical final
   policy definitions and hashes.
+- Resolution: the clean-production activation gate and independent PHASE-011
+  artifact passed ephemeral validation and the single Stage-D execution.
+
+## P11-BLK-004 — Restored CHECK expression representation differs
+
+- Stage: E — Backup/restore proof
+- Status: **BLOCKED**
+- Backup and restore operations succeeded; ledger, data counts, RLS and policies
+  matched.
+- Fifteen CHECK constraints were reserialized with equivalent cast placement,
+  changing the constraint fingerprint and portable dump hash.
+- Safety response: restore target removed; no application build/deploy or proxy
+  change attempted.
+- Required resolution: architectural review of a restore-stable semantic/hash
+  procedure. The current gate's exact restored hash requirement was not met.
 
 ## Final classification
 
 **BLOCKED**
 
-Stage D was stopped before mutation; Stages E–H were not executed. No grants,
-RLS, backup/restore, application build,
-dark app deployment, reverse-proxy change, TLS, DNS or traffic activation
-occurred. Continuation requires a separate architectural decision.
-Isolated PostgreSQL and Redis remain healthy for review.
+Stage D approved and Stage E created a valid backup and successful disposable
+restore, but its exact comparison guard failed. Stages F–H were not executed.
+No application build, dark deploy, reverse-proxy change, TLS, DNS or traffic
+activation occurred. Production remains empty, isolated and healthy with
+canonical RLS enabled.
