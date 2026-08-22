@@ -1,9 +1,13 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { Search, Plus, X, Check, Layers, ChevronDown, AlertCircle } from 'lucide-react';
-import {
-  BackboneItem, BackboneMedia, BackboneType, BackboneStatus,
-  getBackbones, addBackbone,
-} from '../lib/backboneStore';
+import axios from 'axios';
+
+type BackboneMedia = 'Fibra Monomodo'|'Fibra Multimodo OM3'|'Fibra Multimodo OM4'|'UTP Cat6A'|'UTP Cat6'|'DAC'|'SFP+';
+type BackboneType = 'Horizontal'|'Vertical'|'Campus'|'Interbuilding';
+type BackboneStatus = 'Activo'|'Inactivo'|'Baja';
+interface BackboneItem { id:string; code:string; origen:string; destino:string; media:BackboneMedia; tipo:BackboneType; longitud_m:number; fibras_hilos:number; conector_origen:string; conector_destino:string; capacidad_gbps:number; status:BackboneStatus; no_factura:string; costo_dls:number; proveedor:string; fecha_instalacion:string; garantia_hasta:string; rfid:string; etiqueta:string; observaciones:string; centro_costos:string; anio_instalacion:number; }
+interface ApiBackbone { id?:string; codigo?:string; idf_origen?:string; idf_destino?:string; tipo_fibra?:string; longitud?:string|number; hilos?:string|number; bandwidth_gbps?:number; status?:string; marca?:string; observaciones?:string; anio_instalacion?:number; }
+const fromApi = (row: ApiBackbone): BackboneItem => ({ id:String(row.id??''), code:String(row.codigo??''), origen:String(row.idf_origen??''), destino:String(row.idf_destino??''), media:(row.tipo_fibra??'Fibra Monomodo') as BackboneMedia, tipo:'Vertical', longitud_m:Number(row.longitud??0), fibras_hilos:Number(row.hilos??0), conector_origen:'', conector_destino:'', capacidad_gbps:Number(row.bandwidth_gbps??0), status:row.status==='active'?'Activo':'Inactivo', no_factura:'', costo_dls:0, proveedor:String(row.marca??''), fecha_instalacion:'', garantia_hasta:'', rfid:'', etiqueta:'', observaciones:String(row.observaciones??''), centro_costos:'', anio_instalacion:Number(row.anio_instalacion??0) });
 
 // ── Mini form to create a new backbone inline ─────────────────────────────────
 function NewBackboneForm({ onSave, onCancel }: {
@@ -28,8 +32,8 @@ function NewBackboneForm({ onSave, onCancel }: {
   const handleSave = () => {
     if (!form.code || !form.origen || !form.destino) return;
     const bb: BackboneItem = { ...form, id: `bb-${Date.now()}` };
-    addBackbone(bb);
-    onSave(bb);
+    axios.post('/api/infra/backbone', { internal_code:bb.code, manufacturer:bb.proveedor, link_type:bb.media, origin_id:bb.origen, destination_id:bb.destino, fiber_count:bb.fibras_hilos, cable_length_m:bb.longitud_m, bandwidth_gbps:bb.capacidad_gbps, status:bb.status==='Activo'?'active':'inactive', observations:bb.observaciones, install_year:bb.anio_instalacion })
+      .then(res => onSave({...bb,id:String(res.data?.id??bb.id)}));
   };
 
   return (
@@ -141,8 +145,10 @@ export default function BackboneSelector({ value, onChange }: BackboneSelectorPr
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
-  const [backbones, setBackbones] = useState<BackboneItem[]>(() => getBackbones());
+  const [backbones, setBackbones] = useState<BackboneItem[]>([]);
   const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => { axios.get<ApiBackbone[]>('/api/infra/backbone').then(res => setBackbones(Array.isArray(res.data)?res.data.map(fromApi):[])).catch(()=>setBackbones([])); }, []);
 
   // Close on outside click
   useEffect(() => {
@@ -182,7 +188,7 @@ export default function BackboneSelector({ value, onChange }: BackboneSelectorPr
   };
 
   const handleNewSaved = (bb: BackboneItem) => {
-    setBackbones(getBackbones());
+    setBackbones(current => [bb, ...current]);
     handleSelect(bb);
   };
 

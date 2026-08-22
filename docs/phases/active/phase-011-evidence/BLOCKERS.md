@@ -66,7 +66,7 @@
 ## P11-BLK-006 — Authorized frontend source does not build
 
 - Stage: F — Application dark deploy
-- Status: **BLOCKED**
+- Status: **RESOLVED**
 - Stage E was approved by the cardinality-corrected semantic gate.
 - Backend image build succeeded from the exact authorized SHA.
 - Frontend `next build` failed because `components/BackboneSelector.tsx`
@@ -75,11 +75,12 @@
   containers, Nginx route, DNS change or traffic activation occurred.
 - Required resolution: correct the frontend in an authorized functional phase,
   promote a new immutable source SHA and obtain a continuation/deploy gate.
+- Resolution: bounded frontend build closure passed under the dedicated gate.
 
 ## P11-BLK-007 — Broader missing frontend provider discovered
 
 - Stage: F — Repository fix validation
-- Status: **BLOCKED**
+- Status: **RESOLVED**
 - Provenance: `backboneStore` has no historical implementation; the live
   selector call graph reaches the canonical backbone HTTP handler.
 - A minimal repository-only reconnection removed the original module error, but
@@ -89,6 +90,8 @@
   rebuild, application container or deploy was produced.
 - Required resolution: architectural/product review of the broader incomplete
   frontend integration rather than serially inventing missing modules.
+- Resolution: complete inventory proved the provider consumers were an
+  unreachable alternate layout subtree; no provider was invented.
 
 ## Final classification
 
