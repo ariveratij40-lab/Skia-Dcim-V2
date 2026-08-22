@@ -1,32 +1,20 @@
 # PHASE-011 — VPS Production Preflight Report
 
-## Classification
+## Result
 
-**BLOCKED BEFORE REMOTE EXECUTION**
+**APPROVED — STAGE A**
 
-- Intended origin: VPS `alvaro@108.175.9.162`
-- Local execution date: 2026-08-22 (America/Tijuana)
-- Authorized baseline: `main@8139fc4c65c3cdacc9d7467285f3b3c4b977c7cb`
-- Execution branch: `phase/011-empty-production-provisioning`
+- Host/operator: `ubuntu` / `alvaro`.
+- Baseline: `main@8139fc4c65c3cdacc9d7467285f3b3c4b977c7cb`.
+- VPS time observed: `2026-08-22T15:08:21Z`.
+- Docker Server: `29.5.0`.
+- Root filesystem: 232 GiB total, 45 GiB available (81% used).
+- Memory: 7.8 GiB total, 5.3 GiB available; swap present.
+- `/opt/apps/skia/prod`: absent before provisioning.
+- Planned loopback ports 13001/18081 and resource names: free.
+- No pre-existing SKIA production container, network or volume detected.
 
-## Connectivity result
-
-The initial read-only SSH connection failed during public-key authentication.
-No remote shell was established and none of the Stage A commands ran.
-
-A local query of the operating-system `ssh-agent` reported that it currently
-has no identities loaded. No private-key file, SSH configuration, password,
-credential or `~/.ssh` content was searched, read, copied or disclosed.
-
-## Mutation statement
-
-Because authentication failed before connection:
-
-- `/opt/apps/skia/prod` was not inspected or created;
-- no Docker container, image, network or volume was created or changed;
-- no PostgreSQL/Redis resource, role, credential or data was created;
-- Nginx, TLS, DNS and public traffic were untouched;
-- STAGING was neither inspected remotely nor modified;
-- no production secret was generated.
-
-Stage A is incomplete. Stages B–H were not executed.
+STAGING was observed read-only and remained untouched. Its checkout is a dirty,
+historically evolved tree at a different repository/SHA, reinforcing use of the
+exact canonical main archive. Reverse proxy is containerized as `global_nginx`;
+no DNS/TLS change was attempted.

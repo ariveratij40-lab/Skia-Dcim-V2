@@ -1,22 +1,21 @@
 # PHASE-011 — Blockers
 
-## P11-BLK-001 — Authorized SSH agent has no identity
+## P11-BLK-002 — Production bootstrap schema hash differs
 
-- Stage: A — VPS production preflight
+- Stage: C — Database roles and clean bootstrap
 - Status: **BLOCKED**
-- Evidence origin: LOCAL SSH client / operating-system ssh-agent
-- Observed result: the authorized host rejected public-key authentication and
-  `ssh-add -l` reported no identities in the agent.
-- Risk: attempting alternate access would require searching for private keys,
-  changing SSH configuration, or requesting interactive credentials outside
-  the autonomous gate.
-- Required resolution: the operator must load the already-authorized VPS
-  identity into the system ssh-agent or provide an expressly authorized access
-  mechanism. Secret material must not be posted in chat or committed.
+- Expected: `61bdcf58f437c5ab4d5c48ad48b14c9ba1af3a0439eb7a04f22da9d4817f3792`
+- Observed: `d0d6e0541575a70bbca89ccb5786ac8f8144c34d1d5295c740c4db8a128ba827`
+- Passed: two manifest invocations, ledger 10, restricted role attributes and
+  zero fixture rows.
+- Required resolution: architectural review and read-only structural comparison
+  against the canonical validation environment. Do not change/bypass the hash
+  without an approved decision.
 
 ## Final classification
 
 **BLOCKED**
 
-No VPS mutation occurred. PHASE-011 is not ready for production traffic
-activation and no production environment was created.
+Stages D–H were not executed. No grants, RLS, backup/restore, application build,
+dark app deployment, reverse-proxy change, TLS, DNS or traffic activation
+occurred. Isolated PostgreSQL and Redis remain healthy for review.

@@ -1,0 +1,105 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: skia_postgres_prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: skia_prod
+      POSTGRES_USER: skia_bootstrap
+      POSTGRES_PASSWORD: ${POSTGRES_BOOTSTRAP_PASSWORD:?required}
+    volumes:
+      - skia_prod_postgres_data:/var/lib/postgresql/data
+      - /opt/apps/skia/prod/backups:/backups
+    networks: [skia_prod_internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U skia_bootstrap -d skia_prod"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: skia_redis_prod
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?required}"]
+    volumes:
+      - skia_prod_redis_data:/data
+    networks: [skia_prod_internal]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?required}
+
+  backend:
+    image: skia-api-prod:${SOURCE_SHA:?required}
+    build:
+      context: /opt/apps/skia/prod/source/backend
+      dockerfile: Dockerfile
+    container_name: skia_api_prod
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      PORT: "8080"
+      DATABASE_URL: postgres://skia_runtime:${SKIA_RUNTIME_DB_PASSWORD:?required}@postgres:5432/skia_prod?sslmode=disable
+      MIGRATOR_DATABASE_URL: postgres://skia_migrator:${SKIA_MIGRATOR_DB_PASSWORD:?required}@postgres:5432/skia_prod?sslmode=disable
+      SKIA_REQUIRE_RESTRICTED_RUNTIME_DB: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?required}
+      JWT_SECRET: ${JWT_SECRET:?required}
+      FRONTEND_URL: https://skia.mx
+      GOOGLE_REDIRECT_URL: https://skia.mx/api/auth/google/callback
+      UPLOADS_DIR: /app/uploads
+    volumes:
+      - skia_prod_uploads:/app/uploads
+    ports:
+      - "127.0.0.1:18081:8080"
+    networks: [skia_prod_internal]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  frontend:
+    image: skia-web-prod:${SOURCE_SHA:?required}
+    build:
+      context: /opt/apps/skia/prod/source/frontend
+      dockerfile: /opt/apps/skia/prod/runtime/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: https://skia.mx
+    container_name: skia_web_prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: https://skia.mx
+      INTERNAL_API_URL: http://backend:8080
+    ports:
+      - "127.0.0.1:13001:3000"
+    networks: [skia_prod_internal]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+networks:
+  skia_prod_internal:
+    name: skia_prod_internal
+    internal: true
+
+volumes:
+  skia_prod_postgres_data:
+    name: skia_prod_postgres_data
+  skia_prod_redis_data:
+    name: skia_prod_redis_data
+  skia_prod_uploads:
+    name: skia_prod_uploads
