@@ -15,8 +15,8 @@ Restore into the disposable `skia_prod_restore_validation` database succeeded.
 The restored copy had ledger 10, business counts `0/0/0`, three canonical
 policies and RLS/FORCE `true/true`. The disposable database was removed.
 
-The exact comparison guard did not pass. Production and restore both contained
-225 constraints, but 15 CHECK expressions were reserialized by dump/restore
+The original exact comparison guard did not pass. Production and restore both contained
+225 constraints, but CHECK expressions were reserialized by dump/restore
 with semantically equivalent cast placement (`varchar[]::text[]` versus
 per-element `varchar::text`). Consequently:
 
@@ -31,3 +31,22 @@ All other fingerprint categories matched, including canonical policies, RLS,
 ledger, columns, indexes, functions, triggers and sequences. Nevertheless the
 required exact restore hash did not match, so Stage E is not approved and Stage
 F was not entered.
+
+## Semantic-equivalence gate revalidation — 2026-08-22
+
+The versioned `ops/phase011/validate_restore_semantics.sh` validator was applied
+to one newly restored disposable target using the same verified backup. It
+confirmed:
+
+- 225 source and 225 restored constraints;
+- every difference was a CHECK constraint paired by table and constraint name;
+- zero differences after the narrowly scoped cast-placement normalization;
+- identical deterministic semantic SHA-256:
+  `19f95417bba53f97adc66ae024abcbcde87bca9a650a0ea22f1e00024fe840b1`.
+
+The definitive enumeration contained **16** serializer-only CHECK identities,
+not the exactly 15 required by
+`ARCHITECT_DECISION_PHASE011_RESTORE_SEMANTIC_EQUIVALENCE_GATE.md`. The validator
+therefore failed closed before approval. The target was removed and Stage F was
+not entered. Accepting the additional identity requires a new architectural
+decision even though the limited normalization produced semantic equality.

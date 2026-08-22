@@ -45,12 +45,29 @@
 - Required resolution: architectural review of a restore-stable semantic/hash
   procedure. The current gate's exact restored hash requirement was not met.
 
+## P11-BLK-005 — Semantic gate expected 15 serializer diffs; observed 16
+
+- Stage: E — Backup/restore semantic revalidation
+- Status: **BLOCKED**
+- One disposable restore revalidation enumerated 225/225 constraints and paired
+  every raw difference by exact table/constraint identity.
+- Observed serializer-only CHECK identities: 16; authorized exact count: 15.
+- After the strictly limited cast normalization, semantic differences were zero
+  and both sides hashed to
+  `19f95417bba53f97adc66ae024abcbcde87bca9a650a0ea22f1e00024fe840b1`.
+- Safety response: validator failed closed, target removed, and no Stage-F
+  application operation was attempted.
+- Required resolution: a new gate must explicitly reconcile the authoritative
+  serializer-only identity set/count. Semantic equality alone cannot override
+  the exact-count guard.
+
 ## Final classification
 
 **BLOCKED**
 
 Stage D approved and Stage E created a valid backup and successful disposable
-restore, but its exact comparison guard failed. Stages F–H were not executed.
+restore, but both the original exact comparison and the subsequent exact-count
+semantic gate failed. Stages F–H were not executed.
 No application build, dark deploy, reverse-proxy change, TLS, DNS or traffic
 activation occurred. Production remains empty, isolated and healthy with
 canonical RLS enabled.
