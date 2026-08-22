@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -256,51 +255,22 @@ func TestValidateImportIDFormat_WithSpaces(t *testing.T) {
 
 // TestMultiTenantIsolation_DifferentBranches prueba aislamiento entre sucursales
 func TestMultiTenantIsolation_DifferentBranches(t *testing.T) {
-	// Configurar dos sesiones con diferentes branches
-	store := NewFakeSessionStore()
+	mock := installInventoryRouteDBMock(t)
 
-	// Usuario 1 en branch-1
-	session1 := CreateValidSession("user-1", "tenant-1", "branch-1")
-	store.AddSession(session1)
-	user1 := CreateActiveUser("user-1", "user1@example.com")
-	store.AddUser(user1)
-	store.SetTenantAccess("user-1", "tenant-1", true)
-	store.SetBranchAccess("user-1", "tenant-1", "branch-1", true)
-	store.SetPermissions("user-1", "tenant-1", map[string]bool{"inventory.import.read": true})
-
-	// Usuario 2 en branch-2
-	session2 := CreateValidSession("user-2", "tenant-1", "branch-2")
-	store.AddSession(session2)
-	user2 := CreateActiveUser("user-2", "user2@example.com")
-	store.AddUser(user2)
-	store.SetTenantAccess("user-2", "tenant-1", true)
-	store.SetBranchAccess("user-2", "tenant-1", "branch-2", true)
-	store.SetPermissions("user-2", "tenant-1", map[string]bool{"inventory.import.read": true})
-
-	SetSessionStore(store)
-	defer func() { SetSessionStore(nil) }()
-
-	// Verificar que usuario 1 puede acceder a branch-1
-	ctx := context.Background()
-	session1Ctx, err := requireSessionContext(ctx, &http.Request{}, "inventory.import.read")
-	if err != nil {
-		t.Errorf("User 1 should have access to branch-1, got error: %v", err)
-	}
-	if session1Ctx.BranchID != "branch-1" {
-		t.Errorf("Expected branch-1, got %s", session1Ctx.BranchID)
+	// Cada sesión se resuelve por el mismo contrato DB-backed y la consulta
+	// permanece limitada a su branch. El mock simula que el ID pedido solo
+	// existe en la otra branch, por lo que ambos intentos deben ocultarse.
+	expectInventoryRouteSession(mock, "branch-1-session", "user-1", "tenant-1", "branch-1")
+	mock.ExpectQuery("FROM inventory_imports").WithArgs("2", "tenant-1", "branch-1").
+		WillReturnRows(sqlmock.NewRows(inventoryImportTestColumns))
+	if got := runInventoryRouteTest(t, http.MethodGet, "/api/import/inventory/2", "branch-1-session").Code; got != http.StatusNotFound {
+		t.Fatalf("branch-1 cross-branch lookup: expected 404, got %d", got)
 	}
 
-	// Verificar que usuario 2 puede acceder a branch-2
-	session2Ctx, err := requireSessionContext(ctx, &http.Request{}, "inventory.import.read")
-	if err != nil {
-		t.Errorf("User 2 should have access to branch-2, got error: %v", err)
-	}
-	if session2Ctx.BranchID != "branch-2" {
-		t.Errorf("Expected branch-2, got %s", session2Ctx.BranchID)
-	}
-
-	// Verificar que son diferentes
-	if session1Ctx.BranchID == session2Ctx.BranchID {
-		t.Errorf("Different users should have different branch contexts")
+	expectInventoryRouteSession(mock, "branch-2-session", "user-2", "tenant-1", "branch-2")
+	mock.ExpectQuery("FROM inventory_imports").WithArgs("1", "tenant-1", "branch-2").
+		WillReturnRows(sqlmock.NewRows(inventoryImportTestColumns))
+	if got := runInventoryRouteTest(t, http.MethodGet, "/api/import/inventory/1", "branch-2-session").Code; got != http.StatusNotFound {
+		t.Fatalf("branch-2 cross-branch lookup: expected 404, got %d", got)
 	}
 }
