@@ -2,23 +2,17 @@
 
 ## Executive result
 
-**BLOCKED — architectural review required**
+**READY FOR EMPTY-PRODUCTION PROVISIONING GATE**
 
-The production-safe path excludes `003_rbac_validation_data.sql`, but clean
-bootstrap remains incomplete because active import tables are absent from the
-versioned path and their current runtime contracts conflict. No historical
-migration was modified, no schema SQL was invented, and no external system was
-accessed.
+The repository contains a deterministic, checksum-pinned PostgreSQL 16
+bootstrap. It excludes test/demo and historical repair data, creates the
+canonical scoped import contract through forward-only migrations, and
+materializes missing or embedded-only runtime schema.
 
-## Gate outcome
+Superseded unauthenticated legacy route registrations were retired. Retained
+upload writes carry user/tenant/branch context, imported-asset reads filter
+tenant plus branch, and import items inherit branch scope.
 
-- Repository reconciliation: completed to the structural decision boundary.
-- PostgreSQL 16 reconciled bootstrap: blocked because no approved canonical
-  import schema can yet be produced.
-- STAGING mutation: none.
-- Production access or mutation: none.
-- Secrets used or recorded: none.
-
-The next action is an architectural decision on the canonical import pipeline
-and `import_jobs.user_id` semantics, followed by a new forward-only migration
-and the two required empty PostgreSQL 16 runs.
+Two clean databases produced the same normalized schema hash and accepted a
+second runner invocation without reapplication. No historical migration,
+STAGING, production, secret, external role/grant or infrastructure was changed.

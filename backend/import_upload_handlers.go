@@ -40,9 +40,9 @@ func handleImportUploadStart(w http.ResponseWriter, r *http.Request) {
 	uploadID := uuid.New().String()
 
 	_, err := db.Exec(`
-		INSERT INTO import_sessions (id, tenant_id, session_token, upload_id, status, created_at)
-		VALUES ($1, $2, $3, $4, 'active', NOW())
-	`, sessionID, session.TenantID, uuid.New().String(), uploadID)
+		INSERT INTO import_sessions (id, tenant_id, branch_id, user_id, session_token, upload_id, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW())
+	`, sessionID, session.TenantID, session.BranchID, session.UserID, uuid.New().String(), uploadID)
 
 	if err != nil {
 		log.Printf("Error creating import session: %v", err)
@@ -364,11 +364,11 @@ func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID s
 
 		_, err := db.Exec(`
 			INSERT INTO import_items (
-				import_job_id, tenant_id, name, ip_address, mac_address,
+				import_job_id, tenant_id, branch_id, name, ip_address, mac_address,
 				model, brand, serial_number, location, category, confidence_score
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		`,
-			dbJobID, tenantID, item["name"], item["ip"], item["mac"],
+			dbJobID, tenantID, branchID, item["name"], item["ip"], item["mac"],
 			item["model"], item["brand"], item["serial"], item["location"],
 			categoryValue, 0.85,
 		)

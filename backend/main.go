@@ -253,10 +253,10 @@ func main() {
 	// Estadísticas e historial
 	http.HandleFunc("/api/import/stats", handleImportStats)
 	http.HandleFunc("/api/import/recent", handleRecentImports)
-	http.HandleFunc("/api/dcim/assets/delete", handleDeleteDCIMAsset)
-	http.HandleFunc("/api/activos", handleGetActivos)
-	http.HandleFunc("/api/activos/by-type", handleGetActivosByType)
-	http.HandleFunc("/api/activos/search", handleSearchActivos)
+	// Las rutas legacy /api/activos* y /api/dcim/assets/delete escribían o
+	// leían imported_assets sin contexto autenticado. El contrato canónico
+	// PHASE-010 las retira: /api/dcim/assets[/id] es el API vigente y las
+	// rutas /api/import/* retenidas exigen sesión + tenant + branch.
 	http.HandleFunc("/api/import/assets", handleGetImportedAssets)
 	http.HandleFunc("/api/import/details", handleGetImportDetails)
 	http.HandleFunc("/api/import/search", handleSearchAssets)

@@ -2,7 +2,12 @@
 
 ## Result
 
-**BLOCKED — STRUCTURAL IMPORT CONTRACT REQUIRED**
+**RESOLVED FOR EMPTY-DATABASE BOOTSTRAP**
+
+The gap below was the input to
+`ARCHITECT_DECISION_IMPORT_SCHEMA_CANONICAL_CONTRACT.md`. Forward-only
+migrations 017/018 now implement the approved contract; unscoped legacy route
+registrations were retired rather than weakening tenant/branch nullability.
 
 Evidence origin is repository static analysis at the PHASE-010 lineage. No
 STAGING or production query was executed.
@@ -18,9 +23,9 @@ safe creation path in the selected file migrations:
 - `inventory_clear_logs`;
 - embedded-only `capex_projects`, `capex_line_items` and `cert_evaluations`.
 
-Some optional handlers also query `tickets`, `floor_plans`, `ups_pdus` and
-create `ai_chat_history` dynamically. Their lifecycle must be explicitly
-classified before claiming that every runtime-referenced table is versioned.
+Optional dashboard queries for `tickets`, `floor_plans` and `ups_pdus` retain
+their documented optional behavior. `ai_chat_history` now has an explicit
+versioned creation path.
 
 ## Structural contradiction
 
@@ -38,10 +43,8 @@ fail-closed behavior. Making it mandatory would leave active legacy write
 handlers incompatible. Either choice changes runtime authorization/import
 semantics and therefore exceeds this gate.
 
-## Required architectural decision
+## Resolution
 
-Define which import pipeline is canonical and whether legacy unscoped handlers
-are retired, adapted, or isolated. The decision must fix the authoritative
-column set, nullability, tenant/branch FKs, ownership and lifecycle for every
-table in that pipeline. Until then, a clean bootstrap cannot honestly satisfy
-the current backend contract.
+The approved decision selected mandatory scoped imports, restrictive user
+attribution and scoped child lifecycles. Migrations 017/018 and the handler
+changes implement that choice without rewriting historical migrations.

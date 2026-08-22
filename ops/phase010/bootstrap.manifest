@@ -1,0 +1,10 @@
+migrations/001_init.sql
+migrations/004_dcim_inventory_schema.sql
+migrations/006_config_admin_schema.sql
+migrations/017_clean_bootstrap_branch_invariant.sql
+migrations/010_create_inventory_imports_schema.sql
+migrations/011_password_reset_tokens.sql
+migrations/013_dcim_assets_phase1_expand.sql
+migrations/015_naming_rules_custom_segments.sql
+migrations/018_clean_bootstrap_runtime_schema.sql
+migrations/014_dcim_assets_phase1_seed.sql

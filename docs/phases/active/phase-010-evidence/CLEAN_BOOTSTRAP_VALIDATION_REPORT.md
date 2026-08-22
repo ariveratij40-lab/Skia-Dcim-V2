@@ -2,30 +2,19 @@
 
 ## Result
 
-**BLOCKED BEFORE EXECUTION OF A RECONCILED BOOTSTRAP**
-
-The earlier isolated PostgreSQL 16 run already established that raw lexical
-replay stops in `003_rbac_validation_data.sql` on missing
-`permissions.action`. That experiment was not repeated.
-
-The reconciliation gate requires a new canonical forward-only schema for the
-missing runtime tables before two clean PostgreSQL 16 validations can be
-meaningful. Static reconciliation found incompatible active contracts for the
-import family, documented in `RUNTIME_SCHEMA_GAP_REPORT.md`. Creating a
-permissive placeholder schema merely to run PostgreSQL would not validate the
-approved application contract.
-
-Accordingly:
+**APPROVED — LOCAL / POSTGRESQL 16 EPHEMERAL**
 
 | Control | Result |
 |---|---|
-| Raw bootstrap failure reproduced | NOT EXECUTED (previous evidence reused) |
-| Reconciled manifest run 1 | BLOCKED |
-| Reconciled manifest run 2 | BLOCKED |
-| Idempotence/determinism | BLOCKED |
-| Backend tests against reconciled schema | BLOCKED |
-| Canonical PHASE-005 RLS validation against reconciled schema | BLOCKED |
-| STAGING comparison | NOT EXECUTED / not required to establish this blocker |
+| Fresh PostgreSQL 16 bootstrap runs 1 and 2 | APPROVED |
+| Second runner invocation on both databases | APPROVED; 10 ledger rows |
+| Normalized schema SHA-256, both runs | `61bdcf58f437c5ab4d5c48ad48b14c9ba1af3a0439eb7a04f22da9d4817f3792` |
+| Required tables/FKs and cross-tenant rejection | APPROVED |
+| User deletion restriction and child cascade | APPROVED |
+| Backend build | APPROVED |
+| Focused import tests | APPROVED |
+| Canonical PHASE-005 RLS local validation | APPROVED |
+| Full `go test ./...` | FAILED: inherited nil-DB panic in `TestHandleInventoryImportRoutes_DetailValid` |
 
-No PostgreSQL container was started in this gate continuation because there is
-no architecture-approved reconciled SQL to execute.
+The full-suite failure was documented previously in PHASE-008 and is not hidden
+or reclassified. No STAGING or production system was accessed.

@@ -2,25 +2,17 @@
 
 ## Status
 
-**NOT EXECUTABLE / BLOCKED**
+**APPROVED IN LOCAL/EPHEMERAL VALIDATION**
 
-The deterministic prefix that can be considered for an empty database is:
+The executable source of truth is `ops/phase010/bootstrap.manifest`, applied by
+`ops/phase010/run_clean_bootstrap.sh`. It selects ten production-safe artifacts
+in explicit order. Historical demo/test/password-repair/legacy-truncation SQL,
+the duplicate `015_assets_rls.sql`, and `016_assets_branch_scope_all.sql` are
+excluded. Canonical RLS remains a separate `ops/phase005` operation.
 
-1. `migrations/001_init.sql`
-2. `migrations/004_dcim_inventory_schema.sql`
-3. schema-only contract from `migrations/006_config_admin_schema.sql`
-4. `migrations/009_add_unique_branches_constraint.sql`
-5. `migrations/010_create_inventory_imports_schema.sql`
-6. `migrations/011_password_reset_tokens.sql`
-7. `migrations/013_dcim_assets_phase1_expand.sql`
-8. global asset-type reference portion of
-   `migrations/014_dcim_assets_phase1_seed.sql`
-9. `migrations/015_naming_rules_custom_segments.sql`
+The runner accepts only a local PostgreSQL URL, rejects missing or changed
+artifacts, records path plus SHA-256, applies pending files transactionally,
+converges on subsequent invocations and validates the resulting contract.
 
-This list is deliberately documentation, not a runner. It excludes demo/test
-data, password repair, legacy truncation and superseded RLS scripts. It cannot
-be promoted to executable form until new forward-only migrations cover the
-runtime gaps without inventing import or authorization semantics.
-
-Canonical RLS activation remains a separate post-schema operation owned by
-`ops/phase005`; it is not part of an empty schema bootstrap.
+Forward-only additions are `017_clean_bootstrap_branch_invariant.sql` and
+`018_clean_bootstrap_runtime_schema.sql`.

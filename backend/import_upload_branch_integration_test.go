@@ -78,6 +78,7 @@ func setupImportUploadSchema(t *testing.T, adminDB *sql.DB) {
 			id BIGSERIAL PRIMARY KEY,
 			import_job_id BIGINT NOT NULL,
 			tenant_id UUID NOT NULL,
+			branch_id UUID NOT NULL,
 			name VARCHAR(255),
 			ip_address VARCHAR(64),
 			mac_address VARCHAR(64),
