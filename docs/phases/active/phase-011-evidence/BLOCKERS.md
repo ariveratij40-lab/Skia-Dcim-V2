@@ -76,6 +76,20 @@
 - Required resolution: correct the frontend in an authorized functional phase,
   promote a new immutable source SHA and obtain a continuation/deploy gate.
 
+## P11-BLK-007 — Broader missing frontend provider discovered
+
+- Stage: F — Repository fix validation
+- Status: **BLOCKED**
+- Provenance: `backboneStore` has no historical implementation; the live
+  selector call graph reaches the canonical backbone HTTP handler.
+- A minimal repository-only reconnection removed the original module error, but
+  production build then failed on absent `@/providers/SkiaContextProvider`
+  imported by `components/layout/AppShell.tsx`.
+- Safety response: candidate functional change withdrawn; no fix commit, image
+  rebuild, application container or deploy was produced.
+- Required resolution: architectural/product review of the broader incomplete
+  frontend integration rather than serially inventing missing modules.
+
 ## Final classification
 
 **BLOCKED**

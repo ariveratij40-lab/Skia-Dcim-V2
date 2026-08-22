@@ -22,3 +22,22 @@ Because the combined build command failed, `docker compose up` was not reached.
 No backend/frontend production containers were created, no internal endpoint
 was activated and no partial application deploy occurred. Correcting the
 authorized source requires a separate functional phase and new immutable SHA.
+
+## Frontend blocker diagnosis gate
+
+Repository history and all available refs show that `backboneStore` never
+existed; the broken import was present in the initial commit. The active call
+graph is `SwitchAdmin -> BackboneSelector`, so the component is not dead. The
+canonical backbone persistence contract is the existing
+`GET/POST /api/infra/backbone` handler, also used by the Backbone page.
+
+A repository-only minimal API reconnection was evaluated locally. `npm ci`
+succeeded, and the original `backboneStore` resolution error disappeared.
+However, the same production build then stopped at an unrelated missing module:
+`components/layout/AppShell.tsx` imports absent
+`@/providers/SkiaContextProvider`.
+
+This is the gate's explicit broader-incomplete-integration hard stop. The
+candidate Backbone change was withdrawn and was neither committed nor deployed.
+No application source fix is claimed approved. Existing dependency audit output
+remained 1 moderate and 6 high findings; no dependency mutation was authorized.
