@@ -45,6 +45,7 @@ services:
       PORT: "8080"
       DATABASE_URL: postgres://skia_runtime:${SKIA_RUNTIME_DB_PASSWORD:?required}@postgres:5432/skia_prod?sslmode=disable
       MIGRATOR_DATABASE_URL: postgres://skia_migrator:${SKIA_MIGRATOR_DB_PASSWORD:?required}@postgres:5432/skia_prod?sslmode=disable
+      ONBOARDING_DATABASE_URL: postgres://skia_onboarding:${SKIA_ONBOARDING_DB_PASSWORD:?required}@postgres:5432/skia_prod?sslmode=disable
       SKIA_REQUIRE_RESTRICTED_RUNTIME_DB: "true"
       REDIS_HOST: redis
       REDIS_PORT: "6379"

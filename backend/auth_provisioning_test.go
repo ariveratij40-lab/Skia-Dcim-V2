@@ -85,6 +85,45 @@ func TestRegisterCommitsCompleteTenantAndBranchAuthorization(t *testing.T) {
 	}
 }
 
+func TestRegisterHandlerUsesOnlyInjectedOnboardingPool(t *testing.T) {
+	onboardingDB, onboardingMock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer onboardingDB.Close()
+	runtimeDB, runtimeMock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtimeDB.Close()
+
+	expectEmailAvailable(onboardingMock)
+	onboardingMock.ExpectBegin()
+	for _, statement := range registrationStatements {
+		expectRegistrationExec(onboardingMock, statement, nil)
+	}
+	expectAdminRole(onboardingMock)
+	onboardingMock.ExpectExec("INSERT INTO user_roles").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "role-admin").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	onboardingMock.ExpectCommit()
+
+	previousRuntimeDB := db
+	db = runtimeDB
+	defer func() { db = previousRuntimeDB }()
+	recorder := httptest.NewRecorder()
+	newRegisterHandler(onboardingDB)(recorder, registrationRequest())
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("registration status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := onboardingMock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("onboarding pool expectations: %v", err)
+	}
+	if err := runtimeMock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("runtime pool must remain unused: %v", err)
+	}
+}
+
 func TestRegisterRollsBackEveryMandatoryProvisioningFailure(t *testing.T) {
 	failurePoints := []string{"user", "branch", "user_tenants", "user_branches", "user_roles"}
 	statementIndex := map[string]int{"user": 1, "branch": 2, "user_tenants": 3, "user_branches": 4}
