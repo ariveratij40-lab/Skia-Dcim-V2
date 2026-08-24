@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
@@ -15,7 +16,8 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -348,6 +350,12 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	sessionCookie, err := newSessionCookie("")
+	if err != nil {
+		log.Printf("Invalid session cookie configuration: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -359,7 +367,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	// Buscar usuario con password_hash
 	var userID, userName, passwordHash string
-	err := db.QueryRow(
+	err = db.QueryRow(
 		"SELECT id, name, password_hash FROM users WHERE email = $1 AND status = 'active' LIMIT 1",
 		req.Email,
 	).Scan(&userID, &userName, &passwordHash)
@@ -410,9 +418,13 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	autoBranchID := ""
 	if autoTenantID != "" {
 		err = db.QueryRow(
-			`SELECT ub.branch_id FROM user_branches ub
-			 WHERE ub.user_id = $1 LIMIT 1`,
-			userID,
+			`SELECT ub.branch_id
+			 FROM user_branches ub
+			 JOIN branches b ON b.id = ub.branch_id
+			 WHERE ub.user_id = $1 AND b.tenant_id = $2
+			 ORDER BY b.created_at, b.id
+			 LIMIT 1`,
+			userID, autoTenantID,
 		).Scan(&autoBranchID)
 		if err != nil && err != sql.ErrNoRows {
 			log.Printf("Error fetching branch: %v", err)
@@ -445,18 +457,13 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("Error saving session: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
 
 	// Establecer cookie HttpOnly
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_token",
-		Value:    sessionToken,
-		HttpOnly: true,
-		Secure:   false, // true en producción con HTTPS
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   86400, // 24 horas
-		Path:     "/",
-	})
+	sessionCookie.Value = sessionToken
+	http.SetCookie(w, sessionCookie)
 
 	response := LoginResponse{
 		SessionToken: sessionToken,
@@ -881,6 +888,15 @@ type RegisterRequest struct {
 }
 
 func handleRegister(w http.ResponseWriter, r *http.Request) {
+	handleRegisterWithDB(w, r, db)
+}
+
+type registrationDB interface {
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+func handleRegisterWithDB(w http.ResponseWriter, r *http.Request, registrationDB registrationDB) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != "POST" {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -905,81 +921,119 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	// Verificar si el email ya existe
 	var existingID string
-	err := db.QueryRow("SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)
+	err := registrationDB.QueryRowContext(r.Context(), "SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingID)
 	if err == nil {
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(map[string]string{"error": "El correo ya está registrado"})
 		return
 	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("Error checking existing registration email: %v", err)
+		writeRegistrationInternalError(w)
+		return
+	}
 	// Hash de la contraseña
 	pwdHash := hashPassword(req.Password)
+	tx, err := registrationDB.BeginTx(r.Context(), nil)
+	if err != nil {
+		log.Printf("Error beginning registration transaction: %v", err)
+		writeRegistrationInternalError(w)
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 	// Crear tenant
 	tenantID := generateID()
-	_, err = db.Exec(
+	_, err = tx.ExecContext(r.Context(),
 		`INSERT INTO tenants (id, name, logo, created_at) VALUES ($1, $2, '', NOW())`,
 		tenantID, req.OrgName,
 	)
 	if err != nil {
 		log.Printf("Error creating tenant: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Error al crear la organización: " + err.Error()})
+		writeRegistrationInternalError(w)
 		return
 	}
 	// Crear usuario con password_hash
 	userID := generateID()
-	_, err = db.Exec(
+	_, err = tx.ExecContext(r.Context(),
 		`INSERT INTO users (id, email, name, password_hash, status, created_at) VALUES ($1, $2, $3, $4, 'active', NOW())`,
 		userID, req.Email, req.Name, pwdHash,
 	)
 	if err != nil {
 		log.Printf("Error creating user: %v", err)
-		// Rollback tenant
-		db.Exec("DELETE FROM tenants WHERE id = $1", tenantID)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Error al crear el usuario: " + err.Error()})
+		if isUniqueViolation(err) {
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "El correo ya está registrado"})
+			return
+		}
+		writeRegistrationInternalError(w)
 		return
 	}
 	// Crear branch (sede) por defecto para el nuevo tenant
 	defaultBranchID := generateID()
-	_, err = db.Exec(
+	_, err = tx.ExecContext(r.Context(),
 		`INSERT INTO branches (id, tenant_id, name, city, status, created_at) VALUES ($1, $2, $3, 'Principal', 'active', NOW())`,
 		defaultBranchID, tenantID, req.OrgName+" - Sede Principal",
 	)
 	if err != nil {
-		log.Printf("Warning: could not create default branch: %v", err)
-		defaultBranchID = ""
+		log.Printf("Error creating default branch: %v", err)
+		writeRegistrationInternalError(w)
+		return
 	}
 	// Asociar usuario con tenant (sin columna role)
-	_, err = db.Exec(
+	_, err = tx.ExecContext(r.Context(),
 		`INSERT INTO user_tenants (user_id, tenant_id) VALUES ($1, $2)`,
 		userID, tenantID,
 	)
 	if err != nil {
 		log.Printf("Error creating user_tenant: %v", err)
+		writeRegistrationInternalError(w)
+		return
+	}
+	// La autorización de sucursal es explícita; el rol no sustituye este mapping.
+	_, err = tx.ExecContext(r.Context(),
+		`INSERT INTO user_branches (user_id, branch_id) VALUES ($1, $2)`,
+		userID, defaultBranchID,
+	)
+	if err != nil {
+		log.Printf("Error creating user_branch: %v", err)
+		writeRegistrationInternalError(w)
+		return
 	}
 	// Crear rol admin para el nuevo tenant y asignarlo al usuario
 	roleID := generateID()
-	_, err = db.Exec(
+	err = tx.QueryRowContext(r.Context(),
 		`INSERT INTO roles (id, tenant_id, name, description, is_global, created_at)
 		 VALUES ($1, $2, 'admin', 'Administrador del Tenant', FALSE, NOW())
 		 ON CONFLICT (tenant_id, name) DO UPDATE SET id = roles.id RETURNING id`,
 		roleID, tenantID,
-	)
+	).Scan(&roleID)
 	if err != nil {
-		// Si falla el RETURNING, obtener el id existente
-		db.QueryRow("SELECT id FROM roles WHERE tenant_id = $1 AND name = 'admin'", tenantID).Scan(&roleID)
+		log.Printf("Error creating admin role: %v", err)
+		writeRegistrationInternalError(w)
+		return
 	}
 	// Asignar rol al usuario
-	if roleID != "" {
-		_, err = db.Exec(
-			`INSERT INTO user_roles (id, user_id, tenant_id, role_id, created_at)
-			 VALUES ($1, $2, $3, $4, NOW()) ON CONFLICT DO NOTHING`,
-			generateID(), userID, tenantID, roleID,
-		)
-		if err != nil {
-			log.Printf("Error assigning role: %v", err)
-		}
+	_, err = tx.ExecContext(r.Context(),
+		`INSERT INTO user_roles (id, user_id, tenant_id, role_id, created_at)
+		 VALUES ($1, $2, $3, $4, NOW())`,
+		generateID(), userID, tenantID, roleID,
+	)
+	if err != nil {
+		log.Printf("Error assigning role: %v", err)
+		writeRegistrationInternalError(w)
+		return
 	}
+	if err = tx.Commit(); err != nil {
+		log.Printf("Error committing registration transaction: %v", err)
+		writeRegistrationInternalError(w)
+		return
+	}
+	committed = true
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "created",
@@ -988,6 +1042,16 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		"user_id":   userID,
 		"branch_id": defaultBranchID,
 	})
+}
+
+func writeRegistrationInternalError(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusInternalServerError)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "No fue posible crear la organización"})
+}
+
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
 type ForgotPasswordRequest struct {
