@@ -101,19 +101,60 @@ var db *sql.DB
 // ==========================================
 
 func main() {
-	runtimeDSN, migratorDSN, requireRestricted, err := databaseDSNsFromEnv()
+	runtimeDSN, migratorDSN, onboardingDSN, requireRestricted, err := databaseDSNsFromEnv()
 	if err != nil {
 		log.Fatalf("Database configuration invalid: %v", err)
 	}
 
+	db, err = sql.Open("postgres", runtimeDSN)
+	if err != nil {
+		log.Fatalf("Error opening runtime database: %v", err)
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		log.Fatalf("Runtime database ping failed: %v", err)
+	}
+	if requireRestricted {
+		if err := validateRestrictedRuntimeDB(db); err != nil {
+			_ = db.Close()
+			log.Fatalf("Runtime database security gate failed: %v", err)
+		}
+	}
+
 	migratorDB, err := sql.Open("postgres", migratorDSN)
 	if err != nil {
+		_ = db.Close()
 		log.Fatalf("Error opening migrator database: %v", err)
 	}
 	if err := migratorDB.Ping(); err != nil {
 		_ = migratorDB.Close()
+		_ = db.Close()
 		log.Fatalf("Migrator database ping failed: %v", err)
 	}
+
+	onboardingDB, err := sql.Open("postgres", onboardingDSN)
+	if err != nil {
+		_ = migratorDB.Close()
+		_ = db.Close()
+		log.Fatalf("Error opening onboarding database: %v", err)
+	}
+	if err := onboardingDB.Ping(); err != nil {
+		_ = onboardingDB.Close()
+		_ = migratorDB.Close()
+		_ = db.Close()
+		log.Fatalf("Onboarding database ping failed: %v", err)
+	}
+	if requireRestricted {
+		if err := validateOnboardingDB(onboardingDB); err != nil {
+			_ = onboardingDB.Close()
+			_ = migratorDB.Close()
+			_ = db.Close()
+			log.Fatalf("Onboarding database security gate failed: %v", err)
+		}
+	}
+	defer db.Close()
+	defer migratorDB.Close()
+	defer onboardingDB.Close()
 
 	// Aplicar migraciones pendientes automáticamente
 	if err := runMigrations(migratorDB); err != nil {
@@ -124,24 +165,7 @@ func main() {
 
 	// Migrar tabla de historial IA
 	migrateAIChatHistory(migratorDB)
-	if err := migratorDB.Close(); err != nil {
-		log.Fatalf("Failed to close migrator database: %v", err)
-	}
-
-	db, err = sql.Open("postgres", runtimeDSN)
-	if err != nil {
-		log.Fatalf("Error opening runtime database: %v", err)
-	}
-	defer db.Close()
-	if err := db.Ping(); err != nil {
-		log.Fatalf("Runtime database ping failed: %v", err)
-	}
-	if requireRestricted {
-		if err := validateRestrictedRuntimeDB(db); err != nil {
-			log.Fatalf("Runtime database security gate failed: %v", err)
-		}
-	}
-	log.Println("✅ Connected to runtime database")
+	log.Println("✅ Connected to runtime, migrator, and onboarding databases")
 
 	// Inicializar SessionStore exclusivamente con el pool runtime.
 	if err := InitializeSessionStore(db); err != nil {
@@ -158,7 +182,7 @@ func main() {
 	http.HandleFunc("/api/health", handleHealth)
 	http.HandleFunc("/api/dashboard/stats", handleDashboardStats)
 	http.HandleFunc("/api/auth/login", handleLogin)
-	http.HandleFunc("/api/auth/register", handleRegister)
+	http.HandleFunc("/api/auth/register", newRegisterHandler(onboardingDB))
 	http.HandleFunc("/api/auth/forgot-password", handleForgotPassword)
 	http.HandleFunc("/api/auth/reset-password", handleResetPassword)
 	http.HandleFunc("/api/auth/tenants", handleGetTenants)
@@ -887,8 +911,10 @@ type RegisterRequest struct {
 	Phone    string `json:"phone"`
 }
 
-func handleRegister(w http.ResponseWriter, r *http.Request) {
-	handleRegisterWithDB(w, r, db)
+func newRegisterHandler(registrationDB registrationDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		handleRegisterWithDB(w, r, registrationDB)
+	}
 }
 
 type registrationDB interface {
@@ -1007,9 +1033,16 @@ func handleRegisterWithDB(w http.ResponseWriter, r *http.Request, registrationDB
 	// Crear rol admin para el nuevo tenant y asignarlo al usuario
 	roleID := generateID()
 	err = tx.QueryRowContext(r.Context(),
-		`INSERT INTO roles (id, tenant_id, name, description, is_global, created_at)
-		 VALUES ($1, $2, 'admin', 'Administrador del Tenant', FALSE, NOW())
-		 ON CONFLICT (tenant_id, name) DO UPDATE SET id = roles.id RETURNING id`,
+		`WITH inserted_role AS (
+			 INSERT INTO roles (id, tenant_id, name, description, is_global, created_at)
+			 VALUES ($1, $2, 'admin', 'Administrador del Tenant', FALSE, NOW())
+			 ON CONFLICT (tenant_id, name) DO NOTHING
+			 RETURNING id
+		 )
+		 SELECT id FROM inserted_role
+		 UNION ALL
+		 SELECT id FROM roles WHERE tenant_id = $2 AND name = 'admin'
+		 LIMIT 1`,
 		roleID, tenantID,
 	).Scan(&roleID)
 	if err != nil {
