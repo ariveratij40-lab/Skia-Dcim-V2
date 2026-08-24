@@ -21,6 +21,7 @@ type branchSelectionHarness struct {
 	tenantID      string
 	allowed       map[string]bool
 	authorizeErr  error
+	loadErr       error
 	updateCalled  bool
 	updatedBranch string
 	updateResult  bool
@@ -29,7 +30,7 @@ type branchSelectionHarness struct {
 func (h *branchSelectionHarness) deps() branchSelectionDeps {
 	return branchSelectionDeps{
 		loadSession: func(string, int64) (string, string, error) {
-			return h.userID, h.tenantID, nil
+			return h.userID, h.tenantID, h.loadErr
 		},
 		userHasBranchAccess: func(userID, tenantID, branchID string) (bool, error) {
 			if h.authorizeErr != nil {
@@ -107,6 +108,14 @@ func TestSelectBranchAuthorizationErrorFailsClosed(t *testing.T) {
 	rec := executeBranchSelection(h, testBranchA1)
 	if rec.Code != http.StatusInternalServerError || h.updateCalled {
 		t.Fatalf("authorization error: status=%d update=%v", rec.Code, h.updateCalled)
+	}
+}
+
+func TestSelectBranchSessionDatabaseErrorFailsClosed(t *testing.T) {
+	h := &branchSelectionHarness{loadErr: errors.New("database unavailable"), allowed: map[string]bool{}, updateResult: true}
+	rec := executeBranchSelection(h, testBranchA1)
+	if rec.Code != http.StatusInternalServerError || h.updateCalled {
+		t.Fatalf("session database error: status=%d update=%v", rec.Code, h.updateCalled)
 	}
 }
 

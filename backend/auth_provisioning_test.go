@@ -231,3 +231,56 @@ func TestLoginAfterRegistrationPersistsTenantAndAuthorizedBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLoginUnknownUserReturnsGenericUnauthorized(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	previousDB := db
+	db = database
+	defer func() { db = previousDB }()
+	t.Setenv("APP_ENV", "test")
+	t.Setenv("SESSION_COOKIE_SECURE", "false")
+	mock.ExpectQuery("SELECT id, name, password_hash FROM users").
+		WithArgs("missing@example.test").WillReturnError(sql.ErrNoRows)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"missing@example.test","password":"secret123"}`))
+	recorder := httptest.NewRecorder()
+	handleLogin(recorder, request)
+	if recorder.Code != http.StatusUnauthorized || !strings.Contains(recorder.Body.String(), "Invalid credentials") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoginUserLookupDatabaseErrorReturnsGenericInternalError(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	previousDB := db
+	db = database
+	defer func() { db = previousDB }()
+	t.Setenv("APP_ENV", "test")
+	t.Setenv("SESSION_COOKIE_SECURE", "false")
+	mock.ExpectQuery("SELECT id, name, password_hash FROM users").
+		WithArgs("admin@example.test").WillReturnError(errors.New("permission denied for table users"))
+
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"admin@example.test","password":"secret123"}`))
+	recorder := httptest.NewRecorder()
+	handleLogin(recorder, request)
+	if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), "Internal server error") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "permission denied") {
+		t.Fatal("database details leaked to login client")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
