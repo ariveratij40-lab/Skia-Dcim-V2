@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Grid3x3, Tag, MapPin, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
-import NomenclatureCodeField from './NomenclatureCodeField';
-import AssetPlacementSelector,{AssetPlacement} from './AssetPlacementSelector';
+import {AssetPlacement} from './AssetPlacementSelector';
+import AssetPlacementStep, { placementMatchesActiveBranch } from './AssetPlacementStep';
 
 export type PPType = 'Angulado' | 'Plano' | 'Keystone' | 'Fibra Óptica' | 'Blindado' | 'Modular';
 export type PPStatus = 'Activo' | 'Inactivo' | 'Baja';
@@ -26,9 +26,9 @@ interface Props {
 }
 
 const STAGES = [
-  { id: 1, label: 'Alta rápida', icon: Grid3x3,   desc: 'Identificación básica' },
-  { id: 2, label: 'Técnico',     icon: Tag,        desc: 'Puertos y categoría' },
-  { id: 3, label: 'Ubicación',   icon: MapPin,     desc: 'Localización física' },
+  { id: 1, label: 'Ubicación',   icon: MapPin,     desc: 'Sucursal y ubicación' },
+  { id: 2, label: 'Identificación', icon: Grid3x3, desc: 'Identificación básica' },
+  { id: 3, label: 'Técnico',     icon: Tag,        desc: 'Puertos y categoría' },
   { id: 4, label: 'Financiero',  icon: DollarSign, desc: 'Costos y proveedor' },
   { id: 5, label: 'Resumen',     icon: Shield,     desc: 'Confirmar y guardar' },
 ];
@@ -56,21 +56,22 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
   const [saving, setSaving] = useState(false);
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
   const [placement,setPlacement]=useState<AssetPlacement>();
+  const [placementBranchID,setPlacementBranchID]=useState('');
 
   const set = (field: keyof PatchPanelWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.name && form.type && form.status && nomenclatureAvailable) c.push(1);
-    if (form.ports_total) c.push(2);
-    if (form.placement_id) c.push(3);
+    if (form.placement_id && nomenclatureAvailable) c.push(1);
+    if (form.name && form.type && form.status) c.push(2);
+    if (form.ports_total) c.push(3);
     if (form.supplier) c.push(4);
     return c;
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.type || !nomenclatureAvailable || !form.placement_id) return;
+    if (!form.name || !form.type || !nomenclatureAvailable || !form.placement_id || !await placementMatchesActiveBranch(placementBranchID,form.placement_id)) { setStage(1); return; }
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -117,9 +118,11 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
   const renderStage = () => {
     switch (stage) {
       case 1: return (
+        <AssetPlacementStep assetType="PATCH_PANEL" placementID={form.placement_id} placement={placement} onBranchChange={setPlacementBranchID} onNomenclatureAvailability={setNomenclatureAvailable} onPlacementChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('location',p?.name||'');if(p?.type==='WAREHOUSE')set('status','Inactivo')}} />
+      );
+      case 2: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>{fld('Código técnico', <NomenclatureCodeField assetType="PATCH_PANEL" placementCode={placement?.canonical_code} onAvailability={setNomenclatureAvailable} />)}</div>
             <div>{fld('Nombre descriptivo', inp('name', 'Panel de parcheo principal'), true)}</div>
             <div>{fld('No. Serie', inp('serial', 'PAN-001'))}</div>
             <div>{fld('Marca', (
@@ -130,22 +133,17 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
             ))}</div>
             <div>{fld('Modelo', inp('model', 'CPP48WBLY'))}</div>
             <div style={{ gridColumn: '1/-1' }}>{fld('Tipo', chips(TYPES, form.type, v => set('type', v as PPType), TYPE_COLORS))}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Estado', chips(STATUSES, form.status, v => set('status', v as PPStatus), STATUS_COLORS))}</div>
+            <div style={{ gridColumn: '1/-1' }}>{fld('Estado', placement?.type==='WAREHOUSE' ? <div style={{padding:10,background:'#FFF7ED',color:'#9A3412',borderRadius:8,fontWeight:700}}>Inactivo — activo en Almacén</div> : chips(STATUSES, form.status, v => set('status', v as PPStatus), STATUS_COLORS))}</div>
           </div>
         </div>
       );
-      case 2: return (
+      case 3: return (
         <div>
           {fld('Puertos totales', chips(PORT_COUNTS, form.ports_total, v => set('ports_total', v)))}
           <div style={{ height: 14 }} />
           {fld('Puertos libres', inp('ports_free', '0', 'number'))}
           {fld('Año de instalación', inp('install_year', '2024', 'number'))}
           {fld('Fecha de compra', inp('purchase_date', '', 'date'))}
-        </div>
-      );
-      case 3: return (
-        <div>
-          <AssetPlacementSelector assetType="PATCH_PANEL" value={form.placement_id} onChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('location',p?.name||'')}} />
           {fld('Referencia en plano', inp('floor_plan_ref', 'Plano IDF2 Prod'))}
           {fld('Etiqueta RFID', inp('rfid_tag', 'RFID-PP-001'))}
           {fld('Observaciones', (
@@ -218,7 +216,7 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
             const isDone = completed.includes(s.id);
             const Icon = s.icon;
             return (
-              <button key={s.id} onClick={() => setStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
+              <button key={s.id} disabled={s.id>1&&!form.placement_id} onClick={() => (s.id===1||form.placement_id)&&setStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: s.id>1&&!form.placement_id?'not-allowed':'pointer', opacity:s.id>1&&!form.placement_id?0.55:1, background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
                 <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isActive ? '#4361EE' : isDone ? '#22C55E' : '#E2E8F0' }}>
                   {isDone && !isActive ? <Check size={14} color="#fff" /> : <Icon size={13} color={isActive ? '#fff' : '#94A3B8'} />}
                 </div>
@@ -236,12 +234,12 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
             <ChevronLeft size={16} /> Anterior
           </button>
           {stage < STAGES.length ? (
-            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: '#4361EE', color: '#fff', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))} disabled={stage===1&&(!form.placement_id||!nomenclatureAvailable)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'#CBD5E1':'#4361EE', color: '#fff', cursor: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'not-allowed':'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.name || !form.type || !nomenclatureAvailable || saving}
+            <button onClick={handleSave} disabled={!form.name || !form.type || !form.placement_id || !nomenclatureAvailable || saving}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.name || !form.type || !nomenclatureAvailable) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.name || !form.type || !nomenclatureAvailable) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               {saving ? '...' : <><Check size={16} /> Guardar Patch Panel</>}
             </button>

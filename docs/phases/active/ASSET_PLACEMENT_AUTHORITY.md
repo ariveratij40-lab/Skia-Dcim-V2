@@ -79,3 +79,23 @@ reloads placements on focus, and clears placement when branch changes. Legacy
 assets are not renamed or assigned a placement without evidence; they remain
 `legacy_unresolved_placement` remediation debt. Rack-internal hierarchy and
 more specific placement compatibility are future phases.
+
+## Wizard Placement-First
+
+Every installable-asset wizard now begins with the shared placement gate:
+
+`Sucursal → Ubicación → preview normativo → Identificación → Técnico → Financiero/documentación → Resumen → backend commit`.
+
+Switch, Rack, Patch Panel, UPS, PDU and Node cannot expose identification,
+technical or financial capture until an authorized session branch and a valid
+placement have been selected. Stage indicators cannot bypass the gate. Returning
+to the first step preserves the selection; changing branch clears placement and
+preview immediately.
+
+The zero state and MDF/IDF/Warehouse roundtrip remain inside
+`AssetPlacementSelector`. Warehouse is visibly described as inactive and its
+status control is locked to an inactive-equivalent value, matching backend
+authority. Immediately before submit, the frontend reloads branch-scoped
+placements and confirms that the selected placement still belongs to the active
+session branch. Only `placement_id` is sent; `branch_id` is never added to the
+asset payload.
