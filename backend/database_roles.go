@@ -42,16 +42,21 @@ func databaseDSNsFromEnv() (runtimeDSN, migratorDSN, onboardingDSN string, requi
 type runtimeRoleState struct {
 	RoleName               string
 	Superuser              bool
+	CreateDB               bool
+	CreateRole             bool
 	BypassRLS              bool
 	OwnsProtectedTables    bool
 	InheritsPrivilegedRole bool
+	MissingRequiredGrants  bool
+	UnexpectedTableGrants  bool
+	UnsafeProtectedGrants  bool
 }
 
 func validateRuntimeRoleState(state runtimeRoleState) error {
-	if state.RoleName == "" {
-		return errors.New("runtime role identity is empty")
+	if state.RoleName != "skia_runtime" {
+		return fmt.Errorf("runtime database identity must be skia_runtime, got %q", state.RoleName)
 	}
-	if state.Superuser || state.BypassRLS || state.OwnsProtectedTables || state.InheritsPrivilegedRole {
+	if state.Superuser || state.CreateDB || state.CreateRole || state.BypassRLS || state.OwnsProtectedTables || state.InheritsPrivilegedRole || state.MissingRequiredGrants || state.UnexpectedTableGrants || state.UnsafeProtectedGrants {
 		return fmt.Errorf("runtime role %q does not satisfy restricted-role requirements", state.RoleName)
 	}
 	return nil
@@ -63,9 +68,25 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 			SELECT roleid FROM pg_auth_members WHERE member = (SELECT oid FROM pg_roles WHERE rolname = current_user)
 			UNION
 			SELECT m.roleid FROM pg_auth_members m JOIN inherited i ON m.member = i.roleid
+		), required(table_name, privilege_type) AS (
+			VALUES ('users','SELECT'),('user_tenants','SELECT'),('tenants','SELECT'),
+			       ('user_branches','SELECT'),('branches','SELECT'),
+			       ('sessions','SELECT'),('sessions','INSERT'),('sessions','UPDATE'),('sessions','DELETE'),
+			       ('user_roles','SELECT'),('roles','SELECT'),
+			       ('role_permissions','SELECT'),('permissions','SELECT')
+		), protected(table_name, privilege_type) AS (
+			VALUES ('assets','SELECT'),('assets','INSERT'),('assets','UPDATE'),('assets','DELETE'),
+			       ('asset_logs','SELECT'),('asset_logs','INSERT'),('asset_logs','UPDATE'),('asset_logs','DELETE'),
+			       ('asset_relationships','SELECT'),('asset_relationships','INSERT'),('asset_relationships','UPDATE'),('asset_relationships','DELETE')
+		), actual AS (
+			SELECT table_name, privilege_type
+			FROM information_schema.role_table_grants
+			WHERE grantee = current_user AND table_schema = 'public'
 		)
 		SELECT current_user,
 		       current_setting('is_superuser') = 'on',
+		       r.rolcreatedb,
+		       r.rolcreaterole,
 		       r.rolbypassrls,
 		       EXISTS (
 			 SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -74,16 +95,28 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 		       ),
 		       EXISTS (
 			 SELECT 1 FROM inherited i JOIN pg_roles inherited_role ON inherited_role.oid=i.roleid
-			 WHERE inherited_role.rolsuper OR inherited_role.rolbypassrls
-		       )
+			 WHERE inherited_role.rolsuper OR inherited_role.rolcreatedb OR inherited_role.rolcreaterole OR inherited_role.rolbypassrls
+		       ),
+		       EXISTS (SELECT * FROM required EXCEPT SELECT * FROM actual),
+		       EXISTS (SELECT * FROM actual EXCEPT (SELECT * FROM required UNION ALL SELECT * FROM protected)),
+		       (SELECT count(*) FROM actual a JOIN protected p USING (table_name, privilege_type)) NOT IN (0, 12)
+		       OR ((SELECT count(*) FROM actual a JOIN protected p USING (table_name, privilege_type)) = 12
+		           AND NOT (SELECT bool_and(c.relrowsecurity AND c.relforcerowsecurity)
+		                    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+		                    WHERE n.nspname='public' AND c.relname IN ('assets','asset_logs','asset_relationships')))
 		FROM pg_roles r WHERE r.rolname=current_user`
 	var state runtimeRoleState
 	if err := database.QueryRow(query).Scan(
 		&state.RoleName,
 		&state.Superuser,
+		&state.CreateDB,
+		&state.CreateRole,
 		&state.BypassRLS,
 		&state.OwnsProtectedTables,
 		&state.InheritsPrivilegedRole,
+		&state.MissingRequiredGrants,
+		&state.UnexpectedTableGrants,
+		&state.UnsafeProtectedGrants,
 	); err != nil {
 		return fmt.Errorf("cannot inspect runtime role: %w", err)
 	}

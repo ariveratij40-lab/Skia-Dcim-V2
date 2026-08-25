@@ -11,10 +11,16 @@ func TestValidateRuntimeRoleState(t *testing.T) {
 	}
 
 	cases := []runtimeRoleState{
-		{RoleName: "skia_user", Superuser: true},
-		{RoleName: "runtime_bypass", BypassRLS: true},
-		{RoleName: "runtime_owner", OwnsProtectedTables: true},
-		{RoleName: "runtime_inherited", InheritsPrivilegedRole: true},
+		{RoleName: "skia_user"},
+		{RoleName: "skia_runtime", Superuser: true},
+		{RoleName: "skia_runtime", CreateDB: true},
+		{RoleName: "skia_runtime", CreateRole: true},
+		{RoleName: "skia_runtime", BypassRLS: true},
+		{RoleName: "skia_runtime", OwnsProtectedTables: true},
+		{RoleName: "skia_runtime", InheritsPrivilegedRole: true},
+		{RoleName: "skia_runtime", MissingRequiredGrants: true},
+		{RoleName: "skia_runtime", UnexpectedTableGrants: true},
+		{RoleName: "skia_runtime", UnsafeProtectedGrants: true},
 	}
 	for _, state := range cases {
 		if err := validateRuntimeRoleState(state); err == nil {

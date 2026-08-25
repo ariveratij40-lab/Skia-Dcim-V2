@@ -30,9 +30,9 @@ func (s *PostgresSessionStore) FindSessionByToken(
 	}
 
 	query := `
-		SELECT session_id, user_id, tenant_id, branch_id, revoked, expires_at, created_at
-		FROM sessions
-		WHERE session_id = $1
+			SELECT id, user_id, tenant_id, branch_id, false, to_timestamp(expires_at), created_at
+			FROM sessions
+			WHERE token = $1
 	`
 
 	row := s.db.QueryRowContext(ctx, query, token)
@@ -66,7 +66,7 @@ func (s *PostgresSessionStore) UserHasTenantAccess(
 ) (bool, error) {
 	query := `
 		SELECT EXISTS(
-			SELECT 1 FROM user_tenant_access
+				SELECT 1 FROM user_tenants
 			WHERE user_id = $1 AND tenant_id = $2
 		)
 	`
@@ -89,8 +89,10 @@ func (s *PostgresSessionStore) UserHasBranchAccess(
 ) (bool, error) {
 	query := `
 		SELECT EXISTS(
-			SELECT 1 FROM user_branch_access
-			WHERE user_id = $1 AND tenant_id = $2 AND branch_id = $3
+				SELECT 1
+				FROM user_branches ub
+				JOIN branches b ON b.id = ub.branch_id
+				WHERE ub.user_id = $1 AND b.tenant_id = $2 AND ub.branch_id = $3
 		)
 	`
 
@@ -110,9 +112,11 @@ func (s *PostgresSessionStore) LoadRoles(
 	tenantID string,
 ) ([]string, error) {
 	query := `
-		SELECT role_name FROM user_roles
-		WHERE user_id = $1 AND tenant_id = $2
-		ORDER BY role_name
+			SELECT r.name
+			FROM user_roles ur
+			JOIN roles r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+			WHERE ur.user_id = $1 AND ur.tenant_id = $2
+			ORDER BY r.name
 	`
 
 	rows, err := s.db.QueryContext(ctx, query, userID, tenantID)
@@ -144,9 +148,13 @@ func (s *PostgresSessionStore) LoadPermissions(
 	tenantID string,
 ) (map[string]bool, error) {
 	query := `
-		SELECT permission_name FROM user_permissions
-		WHERE user_id = $1 AND tenant_id = $2
-		ORDER BY permission_name
+			SELECT DISTINCT p.code
+			FROM user_roles ur
+			JOIN roles r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+			JOIN role_permissions rp ON rp.role_id = r.id
+			JOIN permissions p ON p.id = rp.permission_id
+			WHERE ur.user_id = $1 AND ur.tenant_id = $2
+			ORDER BY p.code
 	`
 
 	rows, err := s.db.QueryContext(ctx, query, userID, tenantID)
@@ -177,7 +185,7 @@ func (s *PostgresSessionStore) GetUserInfo(
 	userID string,
 ) (*UserInfo, error) {
 	query := `
-		SELECT id, email, name, false as disabled, 'active' as status
+			SELECT id, email, name, status <> 'active', status
 		FROM users
 		WHERE id = $1
 	`

@@ -395,9 +395,13 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		"SELECT id, name, password_hash FROM users WHERE email = $1 AND status = 'active' LIMIT 1",
 		req.Email,
 	).Scan(&userID, &userName, &passwordHash)
-	if err != nil {
-		// Respuesta genérica para no revelar si el email existe
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	if err != nil {
+		log.Printf("Login user lookup failed: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	// Verificar contraseña con argon2id
@@ -427,9 +431,16 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var t Tenant
 		if err := rows.Scan(&t.ID, &t.Name, &t.Logo); err != nil {
-			continue
+			log.Printf("Login tenant row scan failed: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
 		}
 		tenants = append(tenants, t)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("Login tenant iteration failed: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
 
 	// Auto-asignar tenant si el usuario tiene exactamente uno
@@ -450,9 +461,11 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			 LIMIT 1`,
 			userID, autoTenantID,
 		).Scan(&autoBranchID)
-		if err != nil && err != sql.ErrNoRows {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("Error fetching branch: %v", err)
-		} else if err == sql.ErrNoRows {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		} else if errors.Is(err, sql.ErrNoRows) {
 			log.Printf("No branch found for user %s", userID)
 		} else {
 			log.Printf("Branch found for user %s: %s", userID, autoBranchID)
@@ -517,8 +530,13 @@ func handleGetTenants(w http.ResponseWriter, r *http.Request) {
 		sessionToken, time.Now().Unix(),
 	).Scan(&userID)
 
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Invalid session", http.StatusUnauthorized)
+		return
+	}
+	if err != nil {
+		log.Printf("Get tenants session lookup failed: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -572,16 +590,26 @@ func handleSelectTenant(w http.ResponseWriter, r *http.Request) {
 		"SELECT user_id FROM sessions WHERE token = $1 AND expires_at > $2",
 		sessionToken, time.Now().Unix(),
 	).Scan(&userID)
-	if err != nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err != nil {
+		log.Printf("Select tenant session lookup failed: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	// SEGURIDAD CRITICA: verificar que el tenant pertenece al usuario
 	var belongs bool
-	db.QueryRow(
+	err = db.QueryRow(
 		"SELECT EXISTS(SELECT 1 FROM user_tenants WHERE user_id = $1 AND tenant_id = $2)",
 		userID, req.TenantID,
 	).Scan(&belongs)
+	if err != nil {
+		log.Printf("Select tenant authorization check failed: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	if !belongs {
 		log.Printf("SECURITY: user %s attempted to access tenant %s without permission", userID, req.TenantID)
 		http.Error(w, "Forbidden", http.StatusForbidden)
@@ -675,7 +703,16 @@ func handleSelectBranchWithDeps(w http.ResponseWriter, r *http.Request, deps bra
 	}
 	now := time.Now().Unix()
 	userID, tenantID, err := deps.loadSession(sessionToken, now)
-	if err != nil || userID == "" || tenantID == "" {
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		log.Printf("ERROR select-branch session lookup failed: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if userID == "" || tenantID == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -782,7 +819,11 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	sessionToken := extractSessionToken(r)
 	if sessionToken != "" {
-		db.Exec("DELETE FROM sessions WHERE token = $1", sessionToken)
+		if _, err := db.Exec("DELETE FROM sessions WHERE token = $1", sessionToken); err != nil {
+			log.Printf("Logout session deletion failed: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	http.SetCookie(w, &http.Cookie{

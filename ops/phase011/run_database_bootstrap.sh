@@ -30,8 +30,11 @@ docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" skia_postgres_prod \
   -v onboarding_password="$SKIA_ONBOARDING_DB_PASSWORD" \
   -f /tmp/provision_database_roles.sql >/dev/null
 docker cp source/ops/phase011/validate_onboarding_role.sql skia_postgres_prod:/tmp/validate_onboarding_role.sql
+docker cp source/ops/phase011/validate_runtime_auth_role.sql skia_postgres_prod:/tmp/validate_runtime_auth_role.sql
 docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" skia_postgres_prod \
   psql -X -U skia_bootstrap -d skia_prod -f /tmp/validate_onboarding_role.sql
+docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" skia_postgres_prod \
+  psql -X -U skia_bootstrap -d skia_prod -f /tmp/validate_runtime_auth_role.sql
 
 schema_hash="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" skia_postgres_prod \
   pg_dump -U skia_migrator -d skia_prod --schema-only --no-owner --no-privileges |
