@@ -67,6 +67,8 @@ docker exec -i -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_ru
 BEGIN;
 SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true);
 SELECT set_config('app.branch_id','82000000-0000-0000-0000-000000000001',true);
+INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,last_seq,active,include_branch)
+VALUES ('84000000-0000-0000-0000-000000000002','81000000-0000-0000-0000-000000000001','RACK','RK',0,true,false);
 UPDATE naming_rules SET last_seq=last_seq+1 WHERE id='84000000-0000-0000-0000-000000000001';
 INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,internal_code,name,nomenclature_id,nomenclature_sequence)
 SELECT '85000000-0000-0000-0000-000000000001','81000000-0000-0000-0000-000000000001',
@@ -83,6 +85,20 @@ VALUES ('86000000-0000-0000-0000-000000000001','85000000-0000-0000-0000-00000000
 SELECT id FROM switches WHERE id='86000000-0000-0000-0000-000000000001';
 COMMIT;
 SQL
+
+# The normative row is tenant-scoped, must begin at sequence zero, and its
+# structure becomes immutable after the first issued sequence. Metadata/state
+# remain editable because they do not rewrite an already-issued identity.
+if docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -v ON_ERROR_STOP=1 \
+  -c "BEGIN; SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true); INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,last_seq) VALUES ('84000000-0000-0000-0000-000000000003','81000000-0000-0000-0000-000000000001','PDU','PDU',7); COMMIT;" >/dev/null 2>&1; then
+  die 'runtime unexpectedly created a rule with client-controlled last_seq'
+fi
+if docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -v ON_ERROR_STOP=1 \
+  -c "BEGIN; SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true); UPDATE naming_rules SET prefix='DETACHED' WHERE id='84000000-0000-0000-0000-000000000001'; COMMIT;" >/dev/null 2>&1; then
+  die 'issued nomenclature structure was unexpectedly mutable'
+fi
+docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -v ON_ERROR_STOP=1 \
+  -c "BEGIN; SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true); UPDATE naming_rules SET description='Operational metadata',active=false WHERE id='84000000-0000-0000-0000-000000000001'; COMMIT;" >/dev/null
 
 # Without the request transaction GUCs, FORCE RLS exposes neither rules nor
 # satellite rows even though the role has the exact table privileges.

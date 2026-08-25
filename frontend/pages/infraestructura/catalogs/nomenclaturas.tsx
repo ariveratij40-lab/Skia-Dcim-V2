@@ -1,421 +1,55 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import AppLayout from '../../../components/AppLayout';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { Tag, Edit2, RefreshCw, Eye, Hash, ChevronRight, CheckCircle, Info, Sliders } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Edit2, Eye, Hash, Plus, RefreshCw, ShieldCheck, Tag } from 'lucide-react';
+import AppLayout from '../../../components/AppLayout';
 
 interface NamingRule {
-  id: string;
-  asset_type_code: string;
-  asset_type_name: string;
-  prefix: string;
-  separator: string;
-  include_branch: boolean;
-  include_location: boolean;
-  seq_digits: number;
-  reset_per_location: boolean;
-  last_seq: number;
-  updated_at: string;
-  next_code_preview: string;
-  active: boolean;
-  description: string;
-  // Campos genéricos de personalización
-  custom_segment_1: string;
-  custom_segment_2: string;
-  custom_segment_1_label: string;
-  custom_segment_2_label: string;
+  id: string; asset_type_code: string; asset_type_name: string; prefix: string; separator: string;
+  include_branch: boolean; seq_digits: number;
+  last_seq: number; next_code_preview: string; active: boolean; description: string;
+  custom_segment_1: string; custom_segment_2: string; custom_segment_1_label: string; custom_segment_2_label: string;
+}
+interface CatalogType { code: string; name: string; description: string; requires_nomenclature: boolean; rule: NamingRule | null; }
+interface FormState {
+  description: string; prefix: string; separator: string; include_branch: boolean;
+  seq_digits: number; active: boolean; custom_segment_1: string;
+  custom_segment_2: string; custom_segment_1_label: string; custom_segment_2_label: string;
 }
 
-type FormState = Partial<NamingRule>;
+const DEFAULT_PREFIX: Record<string, string> = { MDF:'MDF', IDF:'IDF', RACK:'RK', SWITCH:'SW', PATCH_PANEL:'PP', NODE:'ND', UPS:'UPS', PDU:'PDU', BACKBONE:'BB', SERVER:'SRV', FIREWALL:'FW', CCTV:'CCTV', AC_UNIT:'AC' };
+const ICONS: Record<string, string> = { SWITCH:'🔀', RACK:'🗄️', MDF:'🏢', IDF:'📦', UPS:'⚡', PDU:'🔌', SERVER:'💻', PATCH_PANEL:'🔗', BACKBONE:'🌐', CCTV:'📷', AC_UNIT:'❄️', NODE:'📡', FIREWALL:'🛡️' };
+const blankForm = (code: string): FormState => ({ description:'', prefix:DEFAULT_PREFIX[code] || code.slice(0,4), separator:'-', include_branch:true, seq_digits:4, active:true, custom_segment_1:'', custom_segment_2:'', custom_segment_1_label:'Segmento 1', custom_segment_2_label:'Segmento 2' });
+const formFromRule = (r: NamingRule): FormState => ({ description:r.description || '', prefix:r.prefix, separator:r.separator, include_branch:r.include_branch, seq_digits:r.seq_digits, active:r.active, custom_segment_1:r.custom_segment_1 || '', custom_segment_2:r.custom_segment_2 || '', custom_segment_1_label:r.custom_segment_1_label || 'Segmento 1', custom_segment_2_label:r.custom_segment_2_label || 'Segmento 2' });
 
 export default function NomenclaturasPage() {
-  const [rules, setRules] = useState<NamingRule[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<NamingRule | null>(null);
-  const [form, setForm] = useState<FormState>({});
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState('');
-  // Tipo resaltado al llegar desde el wizard (parámetro ?type=MDF)
-  const [highlightType, setHighlightType] = useState<string | null>(null);
-  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [catalog,setCatalog]=useState<CatalogType[]>([]); const [canManage,setCanManage]=useState(false);
+  const [loading,setLoading]=useState(true); const [selected,setSelected]=useState<CatalogType|null>(null);
+  const [form,setForm]=useState<FormState>(blankForm('SWITCH')); const [saving,setSaving]=useState(false);
+  const [error,setError]=useState(''); const [saved,setSaved]=useState(false); const [highlightType,setHighlightType]=useState('');
+  const [fromWizard,setFromWizard]=useState(false); const openedFromQuery=useRef(false); const cardRefs=useRef<Record<string,HTMLDivElement|null>>({});
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get('/api/dcim/catalogs/naming-rules');
-      setRules(res.data.naming_rules || []);
-    } catch { setRules([]); }
-    setLoading(false);
-  }, []);
+  const load=useCallback(async()=>{ setLoading(true); try { const res=await axios.get('/api/dcim/catalogs/naming-rules'); setCatalog(res.data?.asset_types || []); setCanManage(Boolean(res.data?.can_manage)); setError(''); } catch { setCatalog([]); setError('No fue posible cargar el catálogo normativo.'); } finally { setLoading(false); } },[]);
+  useEffect(()=>{ const p=new URLSearchParams(window.location.search); setHighlightType((p.get('type')||'').toUpperCase()); setFromWizard(p.get('from')==='wizard'); load(); },[load]);
+  const openEditor=useCallback((item:CatalogType)=>{ setSelected(item); setForm(item.rule?formFromRule(item.rule):blankForm(item.code)); setError(''); setSaved(false); },[]);
+  useEffect(()=>{ if(loading||!highlightType||openedFromQuery.current)return; const item=catalog.find(x=>x.code===highlightType); if(!item)return; openedFromQuery.current=true; cardRefs.current[highlightType]?.scrollIntoView({behavior:'smooth',block:'center'}); if(canManage)openEditor(item); },[loading,highlightType,catalog,canManage,openEditor]);
 
-  useEffect(() => { load(); }, [load]);
+  const structuralLocked=Boolean(selected?.rule&&selected.rule.last_seq>0);
+  const preview=useMemo(()=>{ if(!selected)return ''; const parts=[form.prefix.trim().toUpperCase()||'PREFIX']; if(form.include_branch)parts.push('BRANCH'); if(form.custom_segment_1.trim())parts.push(form.custom_segment_1.trim().toUpperCase().replace(/\s+/g,'')); if(form.custom_segment_2.trim())parts.push(form.custom_segment_2.trim().toUpperCase().replace(/\s+/g,'')); parts.push(String((selected.rule?.last_seq||0)+1).padStart(form.seq_digits,'0')); return parts.join(form.separator); },[selected,form]);
 
-  // Leer ?type= de la URL y hacer scroll + highlight cuando las reglas carguen
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    const typeParam = params.get('type')?.toUpperCase() ?? null;
-    if (typeParam) setHighlightType(typeParam);
-  }, []);
+  const save=async()=>{ if(!selected||!form.prefix.trim()){setError('El prefijo es obligatorio.');return;} setSaving(true);setError(''); const payload={asset_type_code:selected.code,prefix:form.prefix.trim().toUpperCase(),separator:form.separator,include_branch:form.include_branch,seq_digits:form.seq_digits,active:form.active,description:form.description,custom_segment_1:form.custom_segment_1||null,custom_segment_2:form.custom_segment_2||null,custom_segment_1_label:form.custom_segment_1_label||'Segmento 1',custom_segment_2_label:form.custom_segment_2_label||'Segmento 2'}; try { if(selected.rule)await axios.put(`/api/dcim/catalogs/naming-rules/${selected.rule.id}`,payload); else await axios.post('/api/dcim/catalogs/naming-rules',payload); setSaved(true);setSelected(null);await load(); } catch(e:unknown){ const response=(e as {response?:{status?:number;data?:{error?:string}}}).response; if(response?.status===409&&response.data?.error==='normative_version_required')setError('Esta norma ya emitió códigos. Los cambios estructurales requieren una nueva versión normativa.'); else if(response?.status===409)setError('Este tipo ya tiene una norma configurada.'); else if(response?.status===403)setError('Solo un administrador puede modificar normas.'); else setError(response?.data?.error||'No fue posible guardar la norma.'); } finally{setSaving(false);} };
+  const returnToWizard=()=>{window.close();setTimeout(()=>window.history.back(),150);};
+  const input={width:'100%',padding:'9px 10px',borderRadius:7,border:'1px solid #dbe1ea',fontSize:13,boxSizing:'border-box' as const}; const label={display:'block',fontSize:12,fontWeight:700,color:'#475569',marginBottom:4};
 
-  // Cuando las reglas carguen y haya un tipo a resaltar, hacer scroll y abrir editor
-  useEffect(() => {
-    if (!highlightType || loading || rules.length === 0) return;
-    // Pequeño delay para que el DOM esté listo
-    const timer = setTimeout(() => {
-      const el = cardRefs.current[highlightType];
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        // Abrir el editor de esa regla automáticamente
-        const rule = rules.find(r => r.asset_type_code === highlightType);
-        if (rule && !editing) openEdit(rule);
-      }
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [highlightType, loading, rules]);
-
-  const openEdit = (rule: NamingRule) => {
-    setEditing(rule);
-    setForm({
-      prefix: rule.prefix,
-      separator: rule.separator,
-      seq_digits: rule.seq_digits,
-      include_branch: rule.include_branch,
-      include_location: rule.include_location,
-      reset_per_location: rule.reset_per_location,
-      active: rule.active,
-      description: rule.description || '',
-      custom_segment_1: rule.custom_segment_1 || '',
-      custom_segment_2: rule.custom_segment_2 || '',
-      custom_segment_1_label: rule.custom_segment_1_label || 'Segmento 1',
-      custom_segment_2_label: rule.custom_segment_2_label || 'Segmento 2',
-    });
-    setError(''); setSaved(false);
-  };
-
-  const handleSave = async () => {
-    if (!editing) return;
-    if (!form.prefix?.trim()) { setError('El prefijo es obligatorio.'); return; }
-    setSaving(true); setError(''); setSaved(false);
-    try {
-      await axios.put(`/api/dcim/catalogs/naming-rules/${editing.id}`, {
-        prefix: form.prefix,
-        separator: form.separator,
-        seq_digits: form.seq_digits,
-        include_branch: form.include_branch,
-        include_location: form.include_location,
-        reset_per_location: form.reset_per_location,
-        active: form.active,
-        description: form.description || '',
-        custom_segment_1: form.custom_segment_1 || null,
-        custom_segment_2: form.custom_segment_2 || null,
-        custom_segment_1_label: form.custom_segment_1_label || 'Segmento 1',
-        custom_segment_2_label: form.custom_segment_2_label || 'Segmento 2',
-      });
-      setSaved(true);
-      setEditing(null);
-      await load();
-      setTimeout(() => setSaved(false), 3000);
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      setError(msg || 'Error al guardar.');
-    }
-    setSaving(false);
-  };
-
-  // Preview en tiempo real — incluye los segmentos genéricos
-  const previewCode = () => {
-    if (!editing) return '';
-    const pfx = (form.prefix ?? editing.prefix).toUpperCase();
-    const sep = form.separator !== undefined ? form.separator : editing.separator;
-    const digits = form.seq_digits ?? editing.seq_digits;
-    const nextSeq = editing.last_seq + 1;
-    const seg1 = (form.custom_segment_1 ?? '').trim().toUpperCase().replace(/\s+/g, '');
-    const seg2 = (form.custom_segment_2 ?? '').trim().toUpperCase().replace(/\s+/g, '');
-    const parts = [pfx];
-    if (seg1) parts.push(seg1);
-    if (seg2) parts.push(seg2);
-    parts.push(String(nextSeq).padStart(digits, '0'));
-    return parts.join(sep);
-  };
-
-  const ASSET_TYPE_ICONS: Record<string, string> = {
-    SWITCH: '🔀', RACK: '🗄️', MDF: '🏢', IDF: '📦', UPS: '⚡', PDU: '🔌',
-    SERVER: '💻', PATCH_PANEL: '🔗', BACKBONE: '🌐', CCTV: '📷', AC_UNIT: '❄️', NODE: '📡', FIREWALL: '🛡️',
-  };
-
-  const inputStyle = {
-    width: '100%', padding: '8px 10px', borderRadius: 7,
-    border: '1px solid #e5e7eb', fontSize: 13, outline: 'none',
-    boxSizing: 'border-box' as const,
-  };
-
-  const labelStyle = {
-    display: 'block', fontSize: 12, fontWeight: 600 as const,
-    color: '#374151', marginBottom: 4,
-  };
-
-  return (
-    <AppLayout title="Nomenclaturas" breadcrumb={[{ label: 'Infraestructura' }, { label: 'Catálogos' }, { label: 'Nomenclaturas' }]}>
-      <div style={{ padding: '24px 28px', maxWidth: 1060 }}>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, color: '#1a1d2e', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Tag size={22} color="#4361EE" /> Reglas de Nomenclatura
-            </h1>
-            <p style={{ color: '#6b7280', fontSize: 13, margin: '4px 0 0' }}>
-              Define el prefijo, separador, segmentos personalizados y dígitos del consecutivo para cada tipo de activo.
-            </p>
-          </div>
-          <button onClick={load} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#374151', cursor: 'pointer', fontSize: 13 }}>
-            <RefreshCw size={14} /> Actualizar
-          </button>
-        </div>
-
-        {/* Banner contextual cuando viene del wizard */}
-        {highlightType && (
-          <div style={{ background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 10, padding: '10px 16px', marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
-            <span style={{ fontSize: 16 }}>📋</span>
-            <div style={{ fontSize: 13, color: '#92400E', lineHeight: 1.5 }}>
-              <strong>Abierto desde el wizard de alta.</strong>{' '}
-              Estás viendo la regla de nomenclatura para{' '}
-              <strong>{highlightType === 'MDF' ? 'Main Distribution Frame (MDF)' : highlightType === 'IDF' ? 'Intermediate Distribution Frame (IDF)' : highlightType}</strong>.
-              {' '}Edita el prefijo, separador y dígitos, luego guarda y regresa al wizard.
-            </div>
-          </div>
-        )}
-
-        {/* Banner informativo */}
-        <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '12px 16px', marginBottom: 24, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-          <Info size={16} color="#3b82f6" style={{ flexShrink: 0, marginTop: 1 }} />
-          <div style={{ fontSize: 13, color: '#1e40af', lineHeight: 1.6 }}>
-            <strong>Estructura del código:</strong>{' '}
-            <code style={{ background: '#dbeafe', padding: '1px 6px', borderRadius: 4 }}>
-              [PREFIJO][SEP][SEGMENTO 1][SEP][SEGMENTO 2][SEP][CONSECUTIVO]
-            </code>
-            {' '}— Los <strong>Segmentos Genéricos</strong> son opcionales y permiten agregar clasificadores propios (ciudad, zona, área, proyecto, etc.).
-            Ejemplo: <code style={{ background: '#dbeafe', padding: '1px 6px', borderRadius: 4 }}>SW-CDMX-NORTE-0001</code>
-          </div>
-        </div>
-
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: 60, color: '#9ca3af' }}>Cargando reglas...</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {rules.map(rule => {
-              const isHighlighted = highlightType === rule.asset_type_code;
-              const isEditing = editing?.id === rule.id;
-              return (
-              <div
-                key={rule.id}
-                id={`rule-${rule.asset_type_code}`}
-                ref={el => { cardRefs.current[rule.asset_type_code] = el; }}
-                style={{
-                  background: '#fff', borderRadius: 12, overflow: 'hidden', transition: 'border 150ms, box-shadow 150ms',
-                  border: isEditing ? '2px solid #4361EE' : isHighlighted ? '2px solid #F59E0B' : '1px solid #e5e7eb',
-                  boxShadow: isHighlighted && !isEditing ? '0 0 0 4px #FEF3C7, 0 4px 16px rgba(245,158,11,0.15)' : 'none',
-                }}>
-
-                {/* Cabecera */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', borderBottom: editing?.id === rule.id ? '1px solid #e5e7eb' : 'none' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <span style={{ fontSize: 22 }}>{ASSET_TYPE_ICONS[rule.asset_type_code] || '📦'}</span>
-                    <div>
-                      <div style={{ fontWeight: 700, color: '#111827', fontSize: 14 }}>{rule.asset_type_name}</div>
-                      <div style={{ fontSize: 11, color: '#9ca3af' }}>Código: <code style={{ background: '#f3f4f6', padding: '1px 5px', borderRadius: 4 }}>{rule.asset_type_code}</code></div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 2 }}>Próximo código</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Eye size={13} color="#9ca3af" />
-                        <code style={{ fontSize: 15, fontWeight: 700, color: '#4361EE', background: '#eff6ff', padding: '3px 10px', borderRadius: 6 }}>
-                          {editing?.id === rule.id ? previewCode() : rule.next_code_preview}
-                        </code>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 2 }}>Último consecutivo</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
-                        <Hash size={12} color="#9ca3af" />
-                        <span style={{ fontWeight: 600, color: '#374151' }}>{rule.last_seq}</span>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => editing?.id === rule.id ? setEditing(null) : openEdit(rule)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8, border: '1px solid #e5e7eb', background: editing?.id === rule.id ? '#f3f4f6' : '#fff', color: '#374151', cursor: 'pointer', fontSize: 13 }}>
-                      <Edit2 size={13} /> {editing?.id === rule.id ? 'Cancelar' : 'Editar'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Editor inline */}
-                {editing?.id === rule.id && (
-                  <div style={{ padding: '18px 18px 16px', background: '#fafafa' }}>
-                    {error && <div style={{ background: '#fee2e2', color: '#dc2626', borderRadius: 8, padding: '8px 12px', marginBottom: 14, fontSize: 13 }}>{error}</div>}
-
-                    {/* Fila 1: Prefijo, Separador, Dígitos, Preview */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 14, marginBottom: 14 }}>
-                      <div>
-                        <label style={labelStyle}>Prefijo <span style={{ color: '#dc2626' }}>*</span></label>
-                        <input value={form.prefix ?? ''} onChange={e => setForm(f => ({ ...f, prefix: e.target.value.toUpperCase() }))}
-                          placeholder="ej. SW, RK, MDF..."
-                          style={{ ...inputStyle, fontFamily: 'monospace', fontWeight: 700, letterSpacing: 1 }} />
-                      </div>
-                      <div>
-                        <label style={labelStyle}>Separador</label>
-                        <input value={form.separator ?? ''} onChange={e => setForm(f => ({ ...f, separator: e.target.value }))}
-                          placeholder="ej. - o ." maxLength={3}
-                          style={{ ...inputStyle, fontFamily: 'monospace', textAlign: 'center' }} />
-                      </div>
-                      <div>
-                        <label style={labelStyle}>Dígitos del consecutivo</label>
-                        <select value={form.seq_digits ?? 4} onChange={e => setForm(f => ({ ...f, seq_digits: parseInt(e.target.value) }))}
-                          style={{ ...inputStyle }}>
-                          {[2, 3, 4, 5, 6].map(n => (
-                            <option key={n} value={n}>{n} dígitos (ej. {String(rule.last_seq + 1).padStart(n, '0')})</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                        <div style={{ background: '#eff6ff', borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
-                          <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>Vista previa en tiempo real</div>
-                          <code style={{ fontSize: 16, fontWeight: 800, color: '#4361EE' }}>{previewCode()}</code>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Fila 2: Segmentos genéricos */}
-                    <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '14px 16px', marginBottom: 14 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                        <Sliders size={15} color="#16a34a" />
-                        <span style={{ fontSize: 13, fontWeight: 700, color: '#15803d' }}>Segmentos Genéricos de Personalización</span>
-                        <span style={{ fontSize: 11, color: '#6b7280', marginLeft: 4 }}>(opcionales — se insertan entre el prefijo y el consecutivo)</span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 14 }}>
-                        <div>
-                          <label style={labelStyle}>
-                            {form.custom_segment_1_label || 'Segmento 1'} — Etiqueta
-                          </label>
-                          <input
-                            value={form.custom_segment_1_label ?? 'Segmento 1'}
-                            onChange={e => setForm(f => ({ ...f, custom_segment_1_label: e.target.value }))}
-                            placeholder="ej. Ciudad, Sitio, Región..."
-                            style={inputStyle}
-                          />
-                        </div>
-                        <div>
-                          <label style={labelStyle}>
-                            Valor del Segmento 1
-                          </label>
-                          <input
-                            value={form.custom_segment_1 ?? ''}
-                            onChange={e => setForm(f => ({ ...f, custom_segment_1: e.target.value.toUpperCase() }))}
-                            placeholder="ej. CDMX, MTY, TIJ..."
-                            maxLength={30}
-                            style={{ ...inputStyle, fontFamily: 'monospace', fontWeight: 600 }}
-                          />
-                          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3 }}>Dejar vacío para no incluirlo</div>
-                        </div>
-                        <div>
-                          <label style={labelStyle}>
-                            {form.custom_segment_2_label || 'Segmento 2'} — Etiqueta
-                          </label>
-                          <input
-                            value={form.custom_segment_2_label ?? 'Segmento 2'}
-                            onChange={e => setForm(f => ({ ...f, custom_segment_2_label: e.target.value }))}
-                            placeholder="ej. Zona, Área, Edificio..."
-                            style={inputStyle}
-                          />
-                        </div>
-                        <div>
-                          <label style={labelStyle}>
-                            Valor del Segmento 2
-                          </label>
-                          <input
-                            value={form.custom_segment_2 ?? ''}
-                            onChange={e => setForm(f => ({ ...f, custom_segment_2: e.target.value.toUpperCase() }))}
-                            placeholder="ej. NORTE, PISO2, EDIF-A..."
-                            maxLength={30}
-                            style={{ ...inputStyle, fontFamily: 'monospace', fontWeight: 600 }}
-                          />
-                          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3 }}>Dejar vacío para no incluirlo</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Fila 3: Checkboxes */}
-                    <div style={{ display: 'flex', gap: 20, marginBottom: 16, flexWrap: 'wrap' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#374151' }}>
-                        <input type="checkbox" checked={form.include_branch ?? false} onChange={e => setForm(f => ({ ...f, include_branch: e.target.checked }))} />
-                        Incluir código de sucursal
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#374151' }}>
-                        <input type="checkbox" checked={form.include_location ?? false} onChange={e => setForm(f => ({ ...f, include_location: e.target.checked }))} />
-                        Incluir código de ubicación
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#374151' }}>
-                        <input type="checkbox" checked={form.reset_per_location ?? false} onChange={e => setForm(f => ({ ...f, reset_per_location: e.target.checked }))} />
-                        Reiniciar consecutivo por ubicación
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#374151' }}>
-                        <input type="checkbox" checked={form.active ?? false} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />
-                        Nomenclatura activa
-                      </label>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                      <button onClick={() => setEditing(null)} style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#fff', color: '#374151', cursor: 'pointer', fontSize: 13 }}>
-                        Cancelar
-                      </button>
-                      <button onClick={handleSave} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', borderRadius: 8, border: 'none', background: '#4361EE', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600, opacity: saving ? 0.7 : 1 }}>
-                        {saving ? 'Guardando...' : <><CheckCircle size={14} /> Guardar Regla</>}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Resumen cuando no está editando */}
-                {editing?.id !== rule.id && (
-                  <div style={{ padding: '8px 18px 12px', display: 'flex', gap: 16, fontSize: 12, color: '#6b7280', flexWrap: 'wrap' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <ChevronRight size={12} />
-                      Formato: <code style={{ background: '#f3f4f6', padding: '1px 6px', borderRadius: 4, fontWeight: 600 }}>
-                        {rule.prefix}
-                        {rule.custom_segment_1 ? `${rule.separator}${rule.custom_segment_1.toUpperCase()}` : ''}
-                        {rule.custom_segment_2 ? `${rule.separator}${rule.custom_segment_2.toUpperCase()}` : ''}
-                        {rule.separator}<span style={{ color: '#9ca3af' }}>{'0'.repeat(rule.seq_digits)}</span>
-                      </code>
-                    </span>
-                    {rule.custom_segment_1 && (
-                      <span style={{ background: '#f0fdf4', color: '#15803d', padding: '1px 8px', borderRadius: 12, fontWeight: 600 }}>
-                        {rule.custom_segment_1_label || 'Seg.1'}: {rule.custom_segment_1.toUpperCase()}
-                      </span>
-                    )}
-                    {rule.custom_segment_2 && (
-                      <span style={{ background: '#f0fdf4', color: '#15803d', padding: '1px 8px', borderRadius: 12, fontWeight: 600 }}>
-                        {rule.custom_segment_2_label || 'Seg.2'}: {rule.custom_segment_2.toUpperCase()}
-                      </span>
-                    )}
-                    {rule.include_branch && <span>· Incluye sucursal</span>}
-                    {rule.include_location && <span>· Incluye ubicación</span>}
-                    {rule.reset_per_location && <span>· Reinicia por ubicación</span>}
-                  </div>
-                )}
-              </div>
-            );
-            })}
-          </div>
-        )}
-
-        {saved && (
-          <div style={{ position: 'fixed', bottom: 24, right: 24, background: '#065f46', color: '#fff', borderRadius: 10, padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
-            <CheckCircle size={16} /> Regla de nomenclatura guardada correctamente
-          </div>
-        )}
-      </div>
-    </AppLayout>
-  );
+  return <AppLayout title="Normativa de Nomenclaturas" breadcrumb={[{label:'Infraestructura'},{label:'Catálogos'},{label:'Normativa de Nomenclaturas'}]}><div style={{padding:'24px 28px',maxWidth:1120}}>
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'start',gap:16,marginBottom:18}}><div><h1 style={{margin:0,fontSize:23,display:'flex',gap:9,alignItems:'center'}}><ShieldCheck color="#4361EE"/> Normativa de Nomenclaturas</h1><p style={{color:'#64748b',fontSize:13}}>Catálogo normativo de identificación técnica por tipo de activo.</p></div><div style={{display:'flex',gap:8}}>{fromWizard&&<button onClick={returnToWizard} style={{padding:'8px 13px',borderRadius:8,border:'1px solid #f59e0b',background:'#fffbeb',color:'#92400e',cursor:'pointer',display:'flex',gap:5}}><ArrowLeft size={14}/> Regresar al alta de {highlightType}</button>}<button onClick={load} style={{padding:'8px 13px',borderRadius:8,border:'1px solid #dbe1ea',background:'#fff',cursor:'pointer',display:'flex',gap:5}}><RefreshCw size={14}/> Actualizar</button></div></div>
+    {highlightType&&<div style={{padding:12,borderRadius:9,background:'#fff7ed',border:'1px solid #fdba74',color:'#9a3412',marginBottom:16}}>Tipo solicitado desde el alta: <strong>{highlightType}</strong>. {canManage?'El formulario correspondiente se abrió automáticamente.':'Consulta la norma; solo un administrador puede definirla.'}</div>}
+    {saved&&<div style={{padding:12,borderRadius:9,background:'#ecfdf5',color:'#047857',marginBottom:16,display:'flex',gap:6}}><CheckCircle size={15}/> Norma guardada correctamente. El wizard recargará el preview al regresar.</div>}
+    {error&&!selected&&<div style={{padding:12,borderRadius:9,background:'#fef2f2',color:'#b91c1c',marginBottom:16}}>{error}</div>}
+    {loading?<div style={{padding:60,textAlign:'center',color:'#94a3b8'}}>Cargando catálogo normativo…</div>:<div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(310px,1fr))',gap:14}}>{catalog.map(item=>{const state=!item.rule?'NO CONFIGURADA':item.rule.active?'ACTIVA':'INACTIVA';const color=state==='ACTIVA'?'#047857':state==='INACTIVA'?'#b45309':'#b91c1c';return <div key={item.code} ref={el=>{cardRefs.current[item.code]=el;}} style={{background:'#fff',borderRadius:12,padding:16,border:highlightType===item.code?'2px solid #f59e0b':'1px solid #e2e8f0',boxShadow:highlightType===item.code?'0 0 0 3px #fef3c7':'none'}}><div style={{display:'flex',justifyContent:'space-between',gap:10}}><div style={{display:'flex',gap:10}}><span style={{fontSize:24}}>{ICONS[item.code]||'📦'}</span><div><strong>{item.name}</strong><div style={{fontSize:11,color:'#64748b'}}>{item.code} · {item.requires_nomenclature?'Tipo administrado':'Configurable futuro'}</div></div></div><span style={{color,background:`${color}12`,padding:'3px 8px',borderRadius:20,fontSize:10,fontWeight:800,height:18}}>{state}</span></div><p style={{minHeight:34,fontSize:12,color:'#64748b'}}>{item.rule?.description||item.description||'Sin descripción normativa.'}</p><div style={{background:'#f8fafc',borderRadius:8,padding:10,display:'flex',justifyContent:'space-between'}}><div><small>Preview</small><div><Eye size={12}/> <code>{item.rule?.next_code_preview||'—'}</code></div></div><div style={{textAlign:'right'}}><small>Último consecutivo</small><div><Hash size={12}/> {item.rule?.last_seq??0}</div></div></div>{canManage&&<button onClick={()=>openEditor(item)} style={{marginTop:12,width:'100%',padding:8,borderRadius:8,border:'1px solid #c7d2fe',background:'#eef2ff',color:'#3730a3',cursor:'pointer',fontWeight:700}}>{item.rule?<><Edit2 size={13}/> Editar norma</>:<><Plus size={13}/> Definir norma</>}</button>}</div>;})}</div>}
+    {selected&&<div style={{marginTop:20,padding:20,background:'#fff',border:'2px solid #4361ee',borderRadius:12}}><h2 style={{marginTop:0}}><Tag size={18}/> {selected.rule?'Editar':'Definir'} norma · {selected.code}</h2>{structuralLocked&&<div style={{padding:10,background:'#fff7ed',color:'#9a3412',borderRadius:8,marginBottom:14}}>Esta norma ya emitió códigos. La estructura está bloqueada; solo pueden cambiar descripción y estado.</div>}{error&&<div style={{padding:10,background:'#fef2f2',color:'#b91c1c',borderRadius:8,marginBottom:14}}>{error}</div>}<div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr',gap:12}}>
+      <div><label style={label}>Nombre / descripción normativa</label><input style={input} value={form.description} onChange={e=>setForm({...form,description:e.target.value})} placeholder={`Estándar corporativo para ${selected.name}`}/></div><div><label style={label}>Prefijo</label><input disabled={structuralLocked} style={input} value={form.prefix} onChange={e=>setForm({...form,prefix:e.target.value.toUpperCase()})}/></div><div><label style={label}>Separador</label><input disabled={structuralLocked} maxLength={5} style={input} value={form.separator} onChange={e=>setForm({...form,separator:e.target.value})}/></div><div><label style={label}>Dígitos</label><select disabled={structuralLocked} style={input} value={form.seq_digits} onChange={e=>setForm({...form,seq_digits:Number(e.target.value)})}>{[2,3,4,5,6].map(n=><option key={n}>{n}</option>)}</select></div>
+      <div><label style={label}>Etiqueta segmento 1</label><input disabled={structuralLocked} style={input} value={form.custom_segment_1_label} onChange={e=>setForm({...form,custom_segment_1_label:e.target.value})}/></div><div><label style={label}>Valor segmento 1</label><input disabled={structuralLocked} style={input} value={form.custom_segment_1} onChange={e=>setForm({...form,custom_segment_1:e.target.value.toUpperCase()})}/></div><div><label style={label}>Etiqueta segmento 2</label><input disabled={structuralLocked} style={input} value={form.custom_segment_2_label} onChange={e=>setForm({...form,custom_segment_2_label:e.target.value})}/></div><div><label style={label}>Valor segmento 2</label><input disabled={structuralLocked} style={input} value={form.custom_segment_2} onChange={e=>setForm({...form,custom_segment_2:e.target.value.toUpperCase()})}/></div></div>
+      <div style={{display:'flex',gap:16,flexWrap:'wrap',margin:'14px 0'}}><label><input disabled={structuralLocked} type="checkbox" checked={form.include_branch} onChange={e=>setForm({...form,include_branch:e.target.checked})}/> Incluir sucursal</label><label><input type="checkbox" checked={form.active} onChange={e=>setForm({...form,active:e.target.checked})}/> Norma activa</label></div>
+      <div style={{background:'#eef2ff',color:'#3730a3',padding:12,borderRadius:8}}><strong>Preview:</strong> <code>{preview}</code></div><div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:14}}><button onClick={()=>setSelected(null)}>Cancelar</button><button disabled={saving} onClick={save} style={{padding:'9px 18px',border:0,borderRadius:8,background:'#4361ee',color:'#fff',fontWeight:700}}>{saving?'Guardando…':'Guardar norma'}</button></div></div>}
+  </div></AppLayout>;
 }

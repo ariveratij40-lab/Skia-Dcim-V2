@@ -51,16 +51,25 @@ func TestGenerateInternalCodeUsesLockedSequence(t *testing.T) {
 	mock.ExpectQuery("SELECT id, prefix, separator").
 		WithArgs("tenant-1", "SWITCH").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "custom_segment_1", "custom_segment_2"}).
-			AddRow("rule-1", "SW", "-", 3, 41, false, "TIJ", ""))
+			AddRow("rule-1", "SW", "-", 4, 41, true, "EDGE", "CORE"))
 	mock.ExpectExec("UPDATE naming_rules SET last_seq").
 		WithArgs(42, "rule-1", "tenant-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT city, name FROM branches").WithArgs("branch-1", "tenant-1").
+		WillReturnRows(sqlmock.NewRows([]string{"city", "name"}).AddRow("Tijuana", "Principal"))
 
 	assignment, err := (&DCIMHandler{}).generateInternalCode(database, "tenant-1", "branch-1", "SWITCH")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assignment.ID != "rule-1" || assignment.Sequence != 42 || assignment.Code != "SW-TIJ-042" {
+	if assignment.ID != "rule-1" || assignment.Sequence != 42 || assignment.Code != "SW-TIJ-EDGE-CORE-0042" {
 		t.Fatalf("unexpected assignment: %#v", assignment)
+	}
+	preview := namingRulePreview(namingRuleResponse{
+		Prefix: "SW", Separator: "-", IncludeBranch: true, SeqDigits: 4,
+		LastSeq: 41, CustomSegment1: "EDGE", CustomSegment2: "CORE",
+	})
+	if strings.Replace(preview, "BRANCH", "TIJ", 1) != assignment.Code {
+		t.Fatalf("preview %q does not match generated code %q", preview, assignment.Code)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
