@@ -79,7 +79,7 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
   const [tenantName, setTenantName] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [showAI, setShowAI] = useState(false);
   const currentPath = router.pathname;
 
@@ -130,7 +130,14 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
   useEffect(() => {
     try {
       const activeGroup = NAVIGATION.find(n => n.children?.some(c => currentPath === c.path || currentPath.startsWith(c.path + '/')));
-      setExpanded(activeGroup?.id ?? null);
+      if (activeGroup) {
+        setExpanded(prev => {
+          if (prev.has(activeGroup.id)) return prev;
+          const next = new Set(prev);
+          next.add(activeGroup.id);
+          return next;
+        });
+      }
     } catch {}
   }, [currentPath]);
 
@@ -149,7 +156,12 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
   };
 
   const toggleExpand = (id: string) => {
-    setExpanded(prev => prev === id ? null : id);
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   // ── Mangos-inspired tokens ────────────────────────────────────────────────
@@ -303,7 +315,7 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
           {NAVIGATION.map(item => {
             const Icon = item.icon;
             const hasChildren = !!(item.children?.length);
-            const isExpanded = expanded === item.id;
+            const isExpanded = expanded.has(item.id);
             const isActive = currentPath === item.path;
             const hasActiveChild = item.children?.some(c => currentPath === c.path || currentPath.startsWith(c.path + '/'));
             const isHighlighted = isActive || hasActiveChild;
