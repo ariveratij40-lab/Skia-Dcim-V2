@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { Search, Plus, X, Check, Layers, ChevronDown, AlertCircle } from 'lucide-react';
 import axios from 'axios';
+import NomenclatureCodeField from './NomenclatureCodeField';
 
 type BackboneMedia = 'Fibra Monomodo'|'Fibra Multimodo OM3'|'Fibra Multimodo OM4'|'UTP Cat6A'|'UTP Cat6'|'DAC'|'SFP+';
 type BackboneType = 'Horizontal'|'Vertical'|'Campus'|'Interbuilding';
@@ -27,13 +28,14 @@ function NewBackboneForm({ onSave, onCancel }: {
     anio_instalacion: new Date().getFullYear(),
   };
   const [form, setForm] = useState<BackboneItem>(blank);
+  const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
   const set = (k: keyof BackboneItem, v: unknown) => setForm(f => ({ ...f, [k]: v }));
 
   const handleSave = () => {
-    if (!form.code || !form.origen || !form.destino) return;
+    if (!nomenclatureAvailable || !form.origen || !form.destino) return;
     const bb: BackboneItem = { ...form, id: `bb-${Date.now()}` };
-    axios.post('/api/infra/backbone', { internal_code:bb.code, manufacturer:bb.proveedor, link_type:bb.media, origin_id:bb.origen, destination_id:bb.destino, fiber_count:bb.fibras_hilos, cable_length_m:bb.longitud_m, bandwidth_gbps:bb.capacidad_gbps, status:bb.status==='Activo'?'active':'inactive', observations:bb.observaciones, install_year:bb.anio_instalacion })
-      .then(res => onSave({...bb,id:String(res.data?.id??bb.id)}));
+    axios.post('/api/infra/backbone', { internal_code:'', name:`Backbone ${bb.origen} – ${bb.destino}`, manufacturer:bb.proveedor, link_type:bb.media, origin_id:bb.origen, destination_id:bb.destino, fiber_count:bb.fibras_hilos, cable_length_m:bb.longitud_m, bandwidth_gbps:bb.capacidad_gbps, status:bb.status==='Activo'?'active':'inactive', observations:bb.observaciones, install_year:bb.anio_instalacion })
+      .then(res => onSave({...bb,id:String(res.data?.id??bb.id),code:String(res.data?.internal_code??bb.code)}));
   };
 
   return (
@@ -44,12 +46,7 @@ function NewBackboneForm({ onSave, onCancel }: {
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <div className="col-span-2">
-          <label className="block text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-0.5">Código *</label>
-          <input value={form.code} onChange={e => set('code', e.target.value)}
-            placeholder="Ej. BB-MDF-A-IDF2-003"
-            className="w-full px-2.5 py-1.5 text-xs bg-[#F0F2FA] border border-[#E8EBF4] rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-300 font-mono"/>
-        </div>
+        <div className="col-span-2"><NomenclatureCodeField assetType="BACKBONE" onAvailability={setNomenclatureAvailable}/></div>
         <div>
           <label className="block text-[12px] font-semibold text-slate-500 uppercase tracking-wider mb-0.5">Origen *</label>
           <input value={form.origen} onChange={e => set('origen', e.target.value)}
@@ -107,15 +104,15 @@ function NewBackboneForm({ onSave, onCancel }: {
         </div>
       </div>
 
-      {(!form.code || !form.origen || !form.destino) && (
+      {(!nomenclatureAvailable || !form.origen || !form.destino) && (
         <div className="flex items-center gap-1.5 text-[12px] text-amber-600">
-          <AlertCircle size={10}/>Código, Origen y Destino son obligatorios
+          <AlertCircle size={10}/>Nomenclatura activa, Origen y Destino son obligatorios
         </div>
       )}
 
       <div className="flex justify-end gap-2 pt-1">
         <button onClick={onCancel} className="px-3 py-1.5 text-[12px] font-medium text-slate-600 hover:bg-slate-200 rounded-lg">Cancelar</button>
-        <button onClick={handleSave} disabled={!form.code || !form.origen || !form.destino}
+        <button onClick={handleSave} disabled={!nomenclatureAvailable || !form.origen || !form.destino}
           className="flex items-center gap-1 px-3 py-1.5 text-[12px] font-bold text-white bg-cyan-600 hover:bg-cyan-700 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed">
           <Check size={10}/>Crear y seleccionar
         </button>

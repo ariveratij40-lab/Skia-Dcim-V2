@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Zap, Battery, MapPin, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
+import NomenclatureCodeField from './NomenclatureCodeField';
 
 export type DeviceType = 'UPS' | 'PDU';
 export type UPSTopology = 'Online' | 'Interactiva' | 'Offline' | 'Modular';
@@ -67,13 +68,14 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
   const [stage, setStage] = useState(1);
   const [form, setForm] = useState<UpsPduWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
+  const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
 
   const set = (field: keyof UpsPduWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.code && form.device_type && form.status) c.push(1);
+    if (form.name && form.device_type && form.status && nomenclatureAvailable) c.push(1);
     if (form.device_type === 'UPS' ? form.kva : form.total_outlets) c.push(2);
     if (form.building && form.room) c.push(3);
     if (form.manufacturer) c.push(4);
@@ -81,7 +83,7 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.code || !form.device_type) return;
+    if (!form.name || !form.device_type || !nomenclatureAvailable) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -131,7 +133,7 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div style={{ gridColumn: '1/-1' }}>{fld('Tipo de dispositivo', chips(DEVICE_TYPES, form.device_type, v => set('device_type', v as DeviceType), TYPE_COLORS))}</div>
-            <div>{fld('Código', inp('code', 'UPS-MDF-001'), true)}</div>
+            <div>{fld('Código técnico', <NomenclatureCodeField assetType={form.device_type} onAvailability={setNomenclatureAvailable} />)}</div>
             <div>{fld('Nombre descriptivo', inp('name', 'UPS Principal MDF'))}</div>
             <div>{fld('Fabricante', (
               <select value={form.manufacturer} onChange={e => set('manufacturer', e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}>
@@ -278,8 +280,8 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.code || !form.device_type || saving}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.code || !form.device_type) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.code || !form.device_type) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button onClick={handleSave} disabled={!form.name || !form.device_type || !nomenclatureAvailable || saving}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.name || !form.device_type || !nomenclatureAvailable) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.name || !form.device_type || !nomenclatureAvailable) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               {saving ? '...' : <><Check size={16} /> Guardar {form.device_type}</>}
             </button>
           )}

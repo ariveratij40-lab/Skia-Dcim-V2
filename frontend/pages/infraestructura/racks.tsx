@@ -793,7 +793,8 @@ export default function RacksPage() {
             };
             // Persistir en el backend
             axios.post('/api/infra/racks', {
-              internal_code: data.code,
+              internal_code: '',
+              name: data.name,
               location: data.location,
               total_u: data.height_u,
               status: data.status === 'Operativo' ? 'active' : data.status === 'Atención' ? 'maintenance' : 'inactive',
@@ -802,10 +803,8 @@ export default function RacksPage() {
               observations: data.observations ?? '',
             }).then(resp => {
               const saved = resp.data;
-              setRacks(prev => [{ ...newRack, id: saved.id ?? newRack.id }, ...prev]);
-            }).catch(() => {
-              setRacks(prev => [newRack, ...prev]);
-            });
+              setRacks(prev => [{ ...newRack, id: saved.id ?? newRack.id, code: saved.internal_code ?? newRack.code }, ...prev]);
+            }).catch(() => undefined);
             setShowWizard(false);
           }}
         />

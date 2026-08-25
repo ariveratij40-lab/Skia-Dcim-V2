@@ -229,8 +229,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
 
   // ── Estado para nomenclatura de ejemplo ──────────────────────────────────
   const [namingExample, setNamingExample] = useState<string | null>(null);
-  const [namingPattern, setNamingPattern] = useState<RegExp | null>(null);
-  const [nameWarning, setNameWarning] = useState(false);
+  const [hasActiveNomenclature, setHasActiveNomenclature] = useState(false);
 
   // ── Estado para mini-modales de alta rápida ───────────────────────────────
   type QuickCreateType = 'manufacturer' | 'provider' | null;
@@ -254,7 +253,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
 
   // Cargar ejemplo de nomenclatura cuando cambia el tipo de activo
   useEffect(() => {
-    if (!form.asset_type_code) { setNamingExample(null); setNamingPattern(null); return; }
+    if (!form.asset_type_code) { setNamingExample(null); setHasActiveNomenclature(false); return; }
     axios.get('/api/dcim/catalogs/naming-rules')
       .then(r => {
         const rules: {
@@ -264,32 +263,22 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
           sequential_digits: number;
           custom_segment_1?: string;
           custom_segment_2?: string;
+          seq_digits: number;
+          active: boolean;
         }[] = r.data?.naming_rules ?? [];
-        const rule = rules.find(nr => nr.asset_type_code === form.asset_type_code);
-        if (!rule) { setNamingExample(null); setNamingPattern(null); return; }
+        const rule = rules.find(nr => nr.asset_type_code === form.asset_type_code && nr.active);
+        if (!rule) { setNamingExample(null); setHasActiveNomenclature(false); return; }
+        setHasActiveNomenclature(true);
         const sep = rule.separator || '-';
-        const escapedSep = sep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const parts = [rule.prefix];
         if (rule.custom_segment_1) parts.push(rule.custom_segment_1);
         if (rule.custom_segment_2) parts.push(rule.custom_segment_2);
-        const digits = rule.sequential_digits || 4;
+        const digits = rule.seq_digits || 4;
         parts.push('0001'.padStart(digits, '0'));
         setNamingExample(parts.join(sep));
-        // Construir patrón de validación: PREFIX[-SEG1][-SEG2]-NNNN
-        const patternParts = [rule.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')];
-        if (rule.custom_segment_1) patternParts.push(rule.custom_segment_1.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        if (rule.custom_segment_2) patternParts.push(rule.custom_segment_2.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        patternParts.push(`\\d{${digits}}`);
-        setNamingPattern(new RegExp(`^${patternParts.join(escapedSep)}`, 'i'));
       })
-      .catch(() => { setNamingExample(null); setNamingPattern(null); });
+      .catch(() => { setNamingExample(null); setHasActiveNomenclature(false); });
   }, [form.asset_type_code]);
-
-  // Validar nombre contra patrón de nomenclatura
-  useEffect(() => {
-    if (!namingPattern || !form.name) { setNameWarning(false); return; }
-    setNameWarning(!namingPattern.test(form.name));
-  }, [form.name, namingPattern]);
 
   // Alta inline de modelo
   const handleAddModel = async () => {
@@ -443,7 +432,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
   // ── handleSave ────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
-    if (!form.asset_type_id || !form.name) return;
+    if (!form.asset_type_id || !form.name || !hasActiveNomenclature) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -556,30 +545,38 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                {/* Nombre descriptivo con validación de nomenclatura */}
+                {/* Código técnico autoritativo y nombre descriptivo independiente */}
                 <div style={{ gridColumn: '1/-1', marginBottom: 14 }}>
+                  {lbl('Código técnico')}
+                  <div style={{ padding: '10px 14px', borderRadius: 10, background: '#EEF2FF', color: '#4361EE', fontWeight: 700, marginBottom: 12 }}>
+                    {hasActiveNomenclature ? `Se generará automáticamente${namingExample ? ` (${namingExample})` : ''}` : 'Nomenclatura requerida'}
+                  </div>
+                  {!hasActiveNomenclature && form.asset_type_code && (
+                    <div style={{ padding: 12, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 8, marginBottom: 12 }}>
+                      No existe una nomenclatura configurada para este tipo de activo. Antes de registrar el activo debe definir su nomenclatura.{' '}
+                      <a href={`/infraestructura/catalogs/nomenclaturas?type=${form.asset_type_code}`}>Configurar nomenclatura</a>
+                    </div>
+                  )}
                   {lbl('Nombre descriptivo', true)}
                   <input
                     type="text"
-                    placeholder={namingExample
-                      ? `Ej. ${namingExample} — Switch Core MDF Principal`
-                      : 'Switch Core MDF Principal'}
+                    placeholder="Ej. Switch Patio"
                     value={form.name}
                     onChange={e => set('name', e.target.value)}
                     style={{
                       width: '100%', padding: '10px 14px', borderRadius: 10,
-                      border: `1.5px solid ${nameWarning && form.name ? '#F59E0B' : '#E8EBF4'}`,
+                      border: '1.5px solid #E8EBF4',
                       fontSize: '0.875rem', outline: 'none', background: '#FAFBFF',
                       color: '#1E293B', transition: 'border-color 150ms', boxSizing: 'border-box',
                     }}
-                    onFocus={e => (e.target.style.borderColor = nameWarning && form.name ? '#F59E0B' : '#4361EE')}
-                    onBlur={e => (e.target.style.borderColor = nameWarning && form.name ? '#F59E0B' : '#E8EBF4')}
+                    onFocus={e => (e.target.style.borderColor = '#4361EE')}
+                    onBlur={e => (e.target.style.borderColor = '#E8EBF4')}
                   />
 
                   {/* Ejemplo de nomenclatura */}
                   {namingExample && (
                     <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: '#64748B', flexWrap: 'wrap' }}>
-                      <span>Nomenclatura estándar:</span>
+                      <span>Vista previa del código técnico:</span>
                       <code style={{ background: '#EEF2FF', color: '#4361EE', padding: '2px 8px', borderRadius: 6, fontWeight: 700, letterSpacing: '0.03em' }}>
                         {namingExample}
                       </code>
@@ -594,15 +591,6 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
                     </div>
                   )}
 
-                  {/* Aviso de nomenclatura no estándar */}
-                  {nameWarning && form.name && (
-                    <div style={{ marginTop: 6, display: 'flex', alignItems: 'flex-start', gap: 6, padding: '7px 10px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, fontSize: '0.75rem', color: '#92400E' }}>
-                      <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-                      <span>
-                        El nombre no sigue la nomenclatura estándar{namingExample ? ` (${namingExample})` : ''}. Puedes continuar, pero se recomienda usar el formato definido para mantener la consistencia del inventario.
-                      </span>
-                    </div>
-                  )}
                 </div>
 
                 <div>
@@ -905,8 +893,8 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
             ) : (
               <button
                 onClick={handleSave}
-                disabled={saving || !form.asset_type_id || !form.name}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.asset_type_id || !form.name) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.asset_type_id || !form.name) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+                disabled={saving || !form.asset_type_id || !form.name || !hasActiveNomenclature}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.asset_type_id || !form.name || !hasActiveNomenclature) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.asset_type_id || !form.name || !hasActiveNomenclature) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
               >
                 {saving ? '⏳ Guardando...' : '✓ Guardar Activo'}
               </button>

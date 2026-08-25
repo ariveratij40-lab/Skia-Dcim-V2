@@ -771,7 +771,8 @@ export default function PatchPanelsPage() {
             };
             // Persistir en el backend
             axios.post('/api/infra/patch-panels', {
-              internal_code: data.code,
+              internal_code: '',
+              name: data.name,
               brand: data.brand,
               model: data.model,
               serial: data.serial ?? '',
@@ -784,10 +785,8 @@ export default function PatchPanelsPage() {
               cost_center: data.cost_center ?? '',
               observations: data.observations ?? '',
             }).then(resp => {
-              setPPs(prev => [{ ...newPP, id: resp.data.id ?? newPP.id }, ...prev]);
-            }).catch(() => {
-              setPPs(prev => [newPP, ...prev]);
-            });
+              setPPs(prev => [{ ...newPP, id: resp.data.id ?? newPP.id, code: resp.data.internal_code ?? newPP.code }, ...prev]);
+            }).catch(() => undefined);
             setShowPPWizard(false);
           }}
         />

@@ -883,7 +883,8 @@ export default function NodosPage() {
             };
             // Persistir en el backend
             axios.post('/api/infra/nodos', {
-              internal_code: data.codigo,
+              internal_code: '',
+              name: data.name,
               brand: data.marca,
               part_number: data.numParte ?? '',
               category: data.categoria ?? '6',
@@ -899,10 +900,8 @@ export default function NodosPage() {
               cost_center: data.centroCostos ?? '',
               observations: data.observaciones ?? '',
             }).then(resp => {
-              handleSave({ ...item, id: resp.data.id ?? item.id });
-            }).catch(() => {
-              handleSave(item);
-            });
+              handleSave({ ...item, id: resp.data.id ?? item.id, codigo: resp.data.internal_code ?? item.codigo });
+            }).catch(() => undefined);
           }}
         />
       )}

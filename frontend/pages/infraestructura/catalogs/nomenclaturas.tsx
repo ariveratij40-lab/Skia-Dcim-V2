@@ -16,6 +16,8 @@ interface NamingRule {
   last_seq: number;
   updated_at: string;
   next_code_preview: string;
+  active: boolean;
+  description: string;
   // Campos genéricos de personalización
   custom_segment_1: string;
   custom_segment_2: string;
@@ -81,6 +83,8 @@ export default function NomenclaturasPage() {
       include_branch: rule.include_branch,
       include_location: rule.include_location,
       reset_per_location: rule.reset_per_location,
+      active: rule.active,
+      description: rule.description || '',
       custom_segment_1: rule.custom_segment_1 || '',
       custom_segment_2: rule.custom_segment_2 || '',
       custom_segment_1_label: rule.custom_segment_1_label || 'Segmento 1',
@@ -101,6 +105,8 @@ export default function NomenclaturasPage() {
         include_branch: form.include_branch,
         include_location: form.include_location,
         reset_per_location: form.reset_per_location,
+        active: form.active,
+        description: form.description || '',
         custom_segment_1: form.custom_segment_1 || null,
         custom_segment_2: form.custom_segment_2 || null,
         custom_segment_1_label: form.custom_segment_1_label || 'Segmento 1',
@@ -353,6 +359,10 @@ export default function NomenclaturasPage() {
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#374151' }}>
                         <input type="checkbox" checked={form.reset_per_location ?? false} onChange={e => setForm(f => ({ ...f, reset_per_location: e.target.checked }))} />
                         Reiniciar consecutivo por ubicación
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: '#374151' }}>
+                        <input type="checkbox" checked={form.active ?? false} onChange={e => setForm(f => ({ ...f, active: e.target.checked }))} />
+                        Nomenclatura activa
                       </label>
                     </div>
 

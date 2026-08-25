@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Grid3x3, Tag, MapPin, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
+import NomenclatureCodeField from './NomenclatureCodeField';
 
 export type PPType = 'Angulado' | 'Plano' | 'Keystone' | 'Fibra Óptica' | 'Blindado' | 'Modular';
 export type PPStatus = 'Activo' | 'Inactivo' | 'Baja';
 
 export interface PatchPanelWizardData {
-  code: string; brand: string; model: string; serial: string;
+  code: string; name: string; brand: string; model: string; serial: string;
   type: PPType; status: PPStatus;
   location: string; floor_plan_ref: string;
   ports_total: number; ports_free: number;
@@ -40,7 +41,7 @@ const TYPE_COLORS: Record<PPType, string> = {
 const PORT_COUNTS = [12, 24, 48, 96];
 
 const EMPTY: PatchPanelWizardData = {
-  code: '', brand: '', model: '', serial: '', type: 'Angulado', status: 'Activo',
+  code: '', name: '', brand: '', model: '', serial: '', type: 'Angulado', status: 'Activo',
   location: '', floor_plan_ref: '', ports_total: 24, ports_free: 0,
   rfid_tag: '', photo_url: '', observations: '',
   purchase_date: '', install_year: new Date().getFullYear(),
@@ -51,13 +52,14 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
   const [stage, setStage] = useState(1);
   const [form, setForm] = useState<PatchPanelWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
+  const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
 
   const set = (field: keyof PatchPanelWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.code && form.type && form.status) c.push(1);
+    if (form.name && form.type && form.status && nomenclatureAvailable) c.push(1);
     if (form.ports_total) c.push(2);
     if (form.location) c.push(3);
     if (form.supplier) c.push(4);
@@ -65,7 +67,7 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.code || !form.type) return;
+    if (!form.name || !form.type || !nomenclatureAvailable) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -114,7 +116,8 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
       case 1: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>{fld('Código', inp('code', 'PP-IDF2-A0001'), true)}</div>
+            <div>{fld('Código técnico', <NomenclatureCodeField assetType="PATCH_PANEL" onAvailability={setNomenclatureAvailable} />)}</div>
+            <div>{fld('Nombre descriptivo', inp('name', 'Panel de parcheo principal'), true)}</div>
             <div>{fld('No. Serie', inp('serial', 'PAN-001'))}</div>
             <div>{fld('Marca', (
               <select value={form.brand} onChange={e => set('brand', e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}>
@@ -235,8 +238,8 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.code || !form.type || saving}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.code || !form.type) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.code || !form.type) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button onClick={handleSave} disabled={!form.name || !form.type || !nomenclatureAvailable || saving}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.name || !form.type || !nomenclatureAvailable) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.name || !form.type || !nomenclatureAvailable) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               {saving ? '...' : <><Check size={16} /> Guardar Patch Panel</>}
             </button>
           )}
