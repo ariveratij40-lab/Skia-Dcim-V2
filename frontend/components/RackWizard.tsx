@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Server, MapPin, Tag, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
 import type { RackRecord, RackType, RackStatus, RackPostes } from '../pages/infraestructura/racks';
-import NomenclatureCodeField from './NomenclatureCodeField';
-import AssetPlacementSelector,{AssetPlacement} from './AssetPlacementSelector';
+import {AssetPlacement} from './AssetPlacementSelector';
+import AssetPlacementStep, { placementMatchesActiveBranch } from './AssetPlacementStep';
 
 export interface RackWizardData extends Omit<RackRecord, 'id'> { name: string; placement_id:string }
 
@@ -14,11 +14,11 @@ interface Props {
 }
 
 const STAGES = [
-  { id: 1, label: 'Alta rápida',   icon: Server,    desc: 'Datos esenciales' },
-  { id: 2, label: 'Físico',        icon: Tag,       desc: 'Dimensiones y tipo' },
-  { id: 3, label: 'Ubicación',     icon: MapPin,    desc: 'Localización y plano' },
+  { id: 1, label: 'Ubicación',     icon: MapPin,    desc: 'Sucursal y ubicación' },
+  { id: 2, label: 'Identificación',icon: Server,    desc: 'Datos esenciales' },
+  { id: 3, label: 'Físico',        icon: Tag,       desc: 'Dimensiones y tipo' },
   { id: 4, label: 'Financiero',    icon: DollarSign,desc: 'Costos y proveedor' },
-  { id: 5, label: 'Normativa',     icon: Shield,    desc: 'Auditoría y RFID' },
+  { id: 5, label: 'Resumen',       icon: Shield,    desc: 'Confirmar y guardar' },
 ];
 
 const RACK_TYPES: RackType[] = ['Rack Cableado','Rack Equipo Activo','Rack CCTV','Rack Telefonía','Rack Servidores'];
@@ -44,21 +44,22 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
   const [saving, setSaving] = useState(false);
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
   const [placement,setPlacement]=useState<AssetPlacement>();
+  const [placementBranchID,setPlacementBranchID]=useState('');
 
   const set = (field: keyof RackWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.name && form.status && form.rack_type && nomenclatureAvailable) c.push(1);
-    if (form.brand && form.height_u) c.push(2);
-    if (form.placement_id) c.push(3);
+    if (form.placement_id && nomenclatureAvailable) c.push(1);
+    if (form.name && form.status && form.rack_type) c.push(2);
+    if (form.brand && form.height_u) c.push(3);
     if (form.integrator) c.push(4);
     return c;
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.rack_type || !form.status || !nomenclatureAvailable || !form.placement_id) return;
+    if (!form.name || !form.rack_type || !form.status || !nomenclatureAvailable || !form.placement_id || !await placementMatchesActiveBranch(placementBranchID,form.placement_id)) { setStage(1); return; }
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -133,17 +134,19 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
   const renderStage = () => {
     switch (stage) {
       case 1: return (
+        <AssetPlacementStep assetType="RACK" placementID={form.placement_id} placement={placement} onBranchChange={setPlacementBranchID} onNomenclatureAvailability={setNomenclatureAvailable} onPlacementChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('location',p?.name||'');if(p?.type==='WAREHOUSE')set('status','Fuera de servicio')}} />
+      );
+      case 2: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div style={{ gridColumn: '1/-1' }}>
-              {field('Código técnico', <NomenclatureCodeField assetType="RACK" placementCode={placement?.canonical_code} onAvailability={setNomenclatureAvailable} />)}
               {field('Nombre descriptivo', inp('name', 'Rack principal IDF', 'text', true), true)}
             </div>
             <div style={{ gridColumn: '1/-1' }}>
               {field('Tipo de Rack', chipGroup(RACK_TYPES, form.rack_type, v => set('rack_type', v as RackType)))}
             </div>
             <div style={{ gridColumn: '1/-1' }}>
-              {field('Estado', chipGroup(RACK_STATUSES, form.status, v => set('status', v as RackStatus), STATUS_COLORS))}
+              {field('Estado', placement?.type==='WAREHOUSE' ? <div style={{padding:10,background:'#FFF7ED',color:'#9A3412',borderRadius:8,fontWeight:700}}>Fuera de servicio — activo en Almacén</div> : chipGroup(RACK_STATUSES, form.status, v => set('status', v as RackStatus), STATUS_COLORS))}
             </div>
             <div>
               {field('Marca', (
@@ -157,7 +160,7 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
           </div>
         </div>
       );
-      case 2: return (
+      case 3: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div>
@@ -182,11 +185,6 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
               {toggle('pdu', 'PDU instalada')}
             </div>
           </div>
-        </div>
-      );
-      case 3: return (
-        <div>
-          <AssetPlacementSelector assetType="RACK" value={form.placement_id} onChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('location',p?.name||'')}} />
           {field('Referencia en plano', inp('floor_plan_ref', 'Plano MDF-A S1'))}
           {field('Etiqueta RFID', inp('rfid_tag', 'RFID-0001'))}
           {field('Observaciones', (
@@ -275,9 +273,9 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
             const isDone = completed.includes(s.id);
             const Icon = s.icon;
             return (
-              <button key={s.id} onClick={() => setStage(s.id)} style={{
+              <button key={s.id} disabled={s.id>1&&!form.placement_id} onClick={() => (s.id===1||form.placement_id)&&setStage(s.id)} style={{
                 flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                padding: '8px 4px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                padding: '8px 4px', borderRadius: 10, border: 'none', cursor: s.id>1&&!form.placement_id?'not-allowed':'pointer', opacity:s.id>1&&!form.placement_id?0.55:1,
                 background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF',
                 transition: 'all 150ms',
               }}>
@@ -313,15 +311,15 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
           <div style={{ display: 'flex', gap: 8 }}>
             {stage < STAGES.length ? (
               <button
-                onClick={() => setStage(s => Math.min(STAGES.length, s + 1))}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: '#4361EE', color: '#fff', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+                onClick={() => setStage(s => Math.min(STAGES.length, s + 1))} disabled={stage===1&&(!form.placement_id||!nomenclatureAvailable)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'#CBD5E1':'#4361EE', color: '#fff', cursor: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'not-allowed':'pointer', fontSize: '0.875rem', fontWeight: 600 }}
               >
                 Siguiente <ChevronRight size={16} />
               </button>
             ) : (
               <button
                 onClick={handleSave}
-                disabled={!form.name || !form.rack_type || !form.status || !nomenclatureAvailable || saving}
+                disabled={!form.name || !form.rack_type || !form.status || !form.placement_id || !nomenclatureAvailable || saving}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.name || !form.rack_type || !form.status || !nomenclatureAvailable) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.name || !form.rack_type || !form.status || !nomenclatureAvailable) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
               >
                 {saving ? '...' : <><Check size={16} /> Guardar Rack</>}

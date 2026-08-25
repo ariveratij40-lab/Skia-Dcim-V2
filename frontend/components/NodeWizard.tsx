@@ -11,8 +11,8 @@ import {
   LONGITUDES_PATCHCORD, LONGITUDES_CABLE, AREAS_COMUNES,
   INTEGRADORES, ANIOS_INSTALACION,
 } from '@/data/catalogos';
-import NomenclatureCodeField from './NomenclatureCodeField';
-import AssetPlacementSelector,{AssetPlacement} from './AssetPlacementSelector';
+import {AssetPlacement} from './AssetPlacementSelector';
+import AssetPlacementStep, { placementMatchesActiveBranch } from './AssetPlacementStep';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface NodeWizardData {
@@ -66,11 +66,12 @@ interface Props {
 
 // ─── Etapas ───────────────────────────────────────────────────────────────────
 const STEPS = [
-  { id: 1, label: 'Alta rápida',   icon: MapPin,          desc: 'Datos esenciales para empezar' },
-  { id: 2, label: 'Técnico',       icon: Cpu,             desc: 'Especificaciones del cable' },
-  { id: 3, label: 'Documentos',    icon: Camera,          desc: 'Fotos, Fluke y Panduit' },
-  { id: 4, label: 'Relaciones',    icon: Link2,           desc: 'Conexiones y trazabilidad' },
-  { id: 5, label: 'Normativa',     icon: ClipboardCheck,  desc: 'Certificación y observaciones' },
+  { id: 1, label: 'Ubicación',     icon: MapPin,          desc: 'Sucursal y ubicación' },
+  { id: 2, label: 'Identificación',icon: Info,            desc: 'Datos esenciales para empezar' },
+  { id: 3, label: 'Técnico',       icon: Cpu,             desc: 'Especificaciones del cable' },
+  { id: 4, label: 'Documentos',    icon: Camera,          desc: 'Fotos, Fluke y Panduit' },
+  { id: 5, label: 'Relaciones',    icon: Link2,           desc: 'Conexiones y trazabilidad' },
+  { id: 6, label: 'Normativa',     icon: ClipboardCheck,  desc: 'Certificación y observaciones' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -148,26 +149,21 @@ function ChipSelector({ value, onChange, options }: {
   );
 }
 
-// ─── Step 1: Alta rápida ──────────────────────────────────────────────────────
-function Step1({ form, set, onNomenclature }: { form: NodeWizardData; set: (k: keyof NodeWizardData, v: any) => void; onNomenclature: (available: boolean) => void }) {
-  const [placement,setPlacement]=useState<AssetPlacement>();
+// ─── Step 2: Identificación ───────────────────────────────────────────────────
+function StepIdentification({ form, set, warehouse }: { form: NodeWizardData; set: (k: keyof NodeWizardData, v: any) => void; warehouse: boolean }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '10px', padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
         <Info size={16} color="#2563EB" style={{ flexShrink: 0, marginTop: 1 }} />
         <p style={{ fontSize: '0.78rem', color: '#1e40af', margin: 0, lineHeight: 1.5 }}>
-          Solo necesitas <strong>5 campos</strong> para crear el nodo. Puedes completar los detalles técnicos, fotos y relaciones después.
+          Completa la identificación después de haber resuelto sucursal y ubicación.
         </p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-        <Field label="Código técnico" required>
-          <NomenclatureCodeField assetType="NODE" placementCode={placement?.canonical_code} onAvailability={onNomenclature} />
-        </Field>
         <Field label="Nombre descriptivo" required>
           <input value={form.name} onChange={e => set('name', e.target.value)} style={inp} placeholder="Nodo oficina recepción" />
         </Field>
-        <div style={{gridColumn:'1/-1'}}><AssetPlacementSelector assetType="NODE" value={form.placement_id} onChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('idf',p?.name||'')}} /></div>
       </div>
 
       <Field label="Área / Zona de trabajo" required hint="Dónde está físicamente el nodo">
@@ -189,11 +185,11 @@ function Step1({ form, set, onNomenclature }: { form: NodeWizardData; set: (k: k
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
         <Field label="Estado">
-          <ChipSelector
+          {warehouse ? <div style={{padding:10,background:'#FFF7ED',color:'#9A3412',borderRadius:8,fontWeight:700}}>Inactivo — activo en Almacén</div> : <ChipSelector
             value={form.estado}
             onChange={v => set('estado', v)}
             options={ESTADOS_ACTIVO.map(e => ({ value: e.value, label: e.label, color: e.color }))}
-          />
+          />}
         </Field>
         <Field label="Responsable técnico">
           <input value={form.responsable} onChange={e => set('responsable', e.target.value)} style={inp} placeholder="Ing. García" />
@@ -597,15 +593,18 @@ export default function NodeWizard({ item, onClose, onSave }: Props) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<NodeWizardData>(item ?? blank);
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
+  const [placement, setPlacement] = useState<AssetPlacement>();
+  const [placementBranchID, setPlacementBranchID] = useState('');
   const set = (k: keyof NodeWizardData, v: any) => setForm(f => ({ ...f, [k]: v }));
 
   const canNext = () => {
-    if (step === 1) return nomenclatureAvailable && !!form.name && !!form.placement_id && !!form.area;
+    if (step === 1) return nomenclatureAvailable && !!form.placement_id;
+    if (step === 2) return !!form.name && !!form.area;
     return true;
   };
 
-  const handleSave = () => {
-    if (!nomenclatureAvailable || !form.name || !form.placement_id || !form.area) { setStep(1); return; }
+  const handleSave = async () => {
+    if (!nomenclatureAvailable || !form.name || !form.placement_id || !form.area || !await placementMatchesActiveBranch(placementBranchID,form.placement_id)) { setStep(1); return; }
     onSave({ ...form, id: form.id || `n${Date.now()}` });
   };
 
@@ -675,11 +674,12 @@ export default function NodeWizard({ item, onClose, onSave }: Props) {
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '1.5rem' }}>
-          {step === 1 && <Step1 form={form} set={set} onNomenclature={setNomenclatureAvailable} />}
-          {step === 2 && <Step2 form={form} set={set} />}
-          {step === 3 && <Step3 form={form} set={set} />}
-          {step === 4 && <Step4 form={form} set={set} />}
-          {step === 5 && <Step5 form={form} set={set} />}
+          {step === 1 && <AssetPlacementStep assetType="NODE" placementID={form.placement_id} placement={placement} onBranchChange={setPlacementBranchID} onNomenclatureAvailability={setNomenclatureAvailable} onPlacementChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('idf',p?.name||'');if(p?.type==='WAREHOUSE')set('estado','Inactivo')}} />}
+          {step === 2 && <StepIdentification form={form} set={set} warehouse={placement?.type==='WAREHOUSE'} />}
+          {step === 3 && <Step2 form={form} set={set} />}
+          {step === 4 && <Step3 form={form} set={set} />}
+          {step === 5 && <Step4 form={form} set={set} />}
+          {step === 6 && <Step5 form={form} set={set} />}
         </div>
 
         {/* Footer */}
@@ -714,6 +714,7 @@ export default function NodeWizard({ item, onClose, onSave }: Props) {
             ) : (
               <button
                 onClick={handleSave}
+                disabled={!form.placement_id || !nomenclatureAvailable}
                 style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 24px', background: '#22c55e', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 700 }}
               >
                 <Check size={16} /> {item ? 'Guardar cambios' : 'Crear nodo'}

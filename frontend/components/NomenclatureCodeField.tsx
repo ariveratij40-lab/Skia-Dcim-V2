@@ -5,15 +5,20 @@ interface Props {
   assetType: string;
   onAvailability?: (available: boolean) => void;
   placementCode?: string;
+  branchSelected?: boolean;
 }
 
-export default function NomenclatureCodeField({ assetType, onAvailability, placementCode }: Props) {
+export default function NomenclatureCodeField({ assetType, onAvailability, placementCode, branchSelected = true }: Props) {
   const [preview, setPreview] = useState('');
   const [available, setAvailable] = useState(false);
 
   const loadRule = useCallback(() => {
     setAvailable(false);
     setPreview('');
+    if (!branchSelected) {
+      onAvailability?.(false);
+      return;
+    }
     axios.get('/api/dcim/catalogs/naming-rules').then(res => {
       const rules = res.data?.naming_rules ?? [];
       const rule = rules.find((item: { asset_type_code: string; active: boolean }) =>
@@ -27,7 +32,7 @@ export default function NomenclatureCodeField({ assetType, onAvailability, place
       setAvailable(false);
       onAvailability?.(false);
     });
-  }, [assetType, onAvailability, placementCode]);
+  }, [assetType, branchSelected, onAvailability, placementCode]);
 
   useEffect(() => {
     loadRule();
@@ -36,6 +41,9 @@ export default function NomenclatureCodeField({ assetType, onAvailability, place
     return () => window.removeEventListener('focus', reloadOnReturn);
   }, [loadRule]);
 
+  if (!branchSelected) {
+    return <div style={{ padding: '10px 14px', borderRadius: 8, background: '#EEF2FF', color: '#3730A3', fontWeight: 700 }}>Código técnico: Seleccione sucursal</div>;
+  }
   if (!available) {
     return (
       <div style={{ padding: 12, borderRadius: 8, background: '#FFF7ED', border: '1px solid #FDBA74', color: '#9A3412', fontSize: 13 }}>
@@ -46,7 +54,7 @@ export default function NomenclatureCodeField({ assetType, onAvailability, place
   }
   return (
     <div style={{ padding: '10px 14px', borderRadius: 8, background: '#EEF2FF', color: '#3730A3', fontWeight: 700 }}>
-      Código técnico: {placementCode?'Se generará automáticamente':'Seleccione ubicación para generar preview'}{placementCode&&preview ? ` (${preview})` : ''}
+      Código técnico: {!branchSelected?'Seleccione sucursal':placementCode?'Se generará automáticamente':'Seleccione ubicación'}{placementCode&&preview ? ` (${preview})` : ''}
     </div>
   );
 }

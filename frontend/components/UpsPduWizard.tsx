@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Zap, Battery, MapPin, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
-import NomenclatureCodeField from './NomenclatureCodeField';
-import AssetPlacementSelector,{AssetPlacement} from './AssetPlacementSelector';
+import {AssetPlacement} from './AssetPlacementSelector';
+import AssetPlacementStep, { placementMatchesActiveBranch } from './AssetPlacementStep';
 
 export type DeviceType = 'UPS' | 'PDU';
 export type UPSTopology = 'Online' | 'Interactiva' | 'Offline' | 'Modular';
@@ -33,9 +33,9 @@ interface Props {
 }
 
 const STAGES = [
-  { id: 1, label: 'Alta rápida', icon: Zap,        desc: 'Tipo y estado' },
-  { id: 2, label: 'Técnico',     icon: Battery,    desc: 'Capacidad y parámetros' },
-  { id: 3, label: 'Ubicación',   icon: MapPin,     desc: 'Localización física' },
+  { id: 1, label: 'Ubicación',   icon: MapPin,     desc: 'Sucursal y ubicación' },
+  { id: 2, label: 'Identificación', icon: Zap,     desc: 'Tipo e identificación' },
+  { id: 3, label: 'Técnico',     icon: Battery,    desc: 'Capacidad y parámetros' },
   { id: 4, label: 'Financiero',  icon: DollarSign, desc: 'Costos y proveedor' },
   { id: 5, label: 'Resumen',     icon: Shield,     desc: 'Confirmar y guardar' },
 ];
@@ -72,21 +72,22 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
   const [saving, setSaving] = useState(false);
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
   const [placement,setPlacement]=useState<AssetPlacement>();
+  const [placementBranchID,setPlacementBranchID]=useState('');
 
   const set = (field: keyof UpsPduWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.name && form.device_type && form.status && nomenclatureAvailable) c.push(1);
-    if (form.device_type === 'UPS' ? form.kva : form.total_outlets) c.push(2);
-    if (form.placement_id) c.push(3);
+    if (form.placement_id && nomenclatureAvailable) c.push(1);
+    if (form.name && form.device_type && form.status) c.push(2);
+    if (form.device_type === 'UPS' ? form.kva : form.total_outlets) c.push(3);
     if (form.manufacturer) c.push(4);
     return c;
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.device_type || !nomenclatureAvailable || !form.placement_id) return;
+    if (!form.name || !form.device_type || !nomenclatureAvailable || !form.placement_id || !await placementMatchesActiveBranch(placementBranchID,form.placement_id)) { setStage(1); return; }
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -133,10 +134,12 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
   const renderStage = () => {
     switch (stage) {
       case 1: return (
+        <AssetPlacementStep assetType={form.device_type} placementID={form.placement_id} placement={placement} onBranchChange={setPlacementBranchID} onNomenclatureAvailability={setNomenclatureAvailable} onPlacementChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('mdf_idf_name',p?.name||'');if(p?.type==='WAREHOUSE')set('status','Fuera de servicio')}} />
+      );
+      case 2: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Tipo de dispositivo', chips(DEVICE_TYPES, form.device_type, v => set('device_type', v as DeviceType), TYPE_COLORS))}</div>
-            <div>{fld('Código técnico', <NomenclatureCodeField assetType={form.device_type} placementCode={placement?.canonical_code} onAvailability={setNomenclatureAvailable} />)}</div>
+            <div style={{ gridColumn: '1/-1' }}>{fld('Tipo de dispositivo', chips(DEVICE_TYPES, form.device_type, v => {if(v!==form.device_type){set('device_type',v as DeviceType);setNomenclatureAvailable(false);setStage(1)}}, TYPE_COLORS))}</div>
             <div>{fld('Nombre descriptivo', inp('name', 'UPS Principal MDF'))}</div>
             <div>{fld('Fabricante', (
               <select value={form.manufacturer} onChange={e => set('manufacturer', e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}>
@@ -147,13 +150,13 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
             <div>{fld('Modelo', inp('model', 'Smart-UPS SRT 10kVA'))}</div>
             <div>{fld('No. Serie', inp('serial', 'APC-SRT10-001'))}</div>
             <div>{fld('Responsable', inp('responsible', 'Ing. Carlos Méndez'))}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Estado', chips(STATUSES, form.status, v => set('status', v as DeviceStatus), STATUS_COLORS))}</div>
+            <div style={{ gridColumn: '1/-1' }}>{fld('Estado', placement?.type==='WAREHOUSE' ? <div style={{padding:10,background:'#FFF7ED',color:'#9A3412',borderRadius:8,fontWeight:700}}>Fuera de servicio — activo en Almacén</div> : chips(STATUSES, form.status, v => set('status', v as DeviceStatus), STATUS_COLORS))}</div>
           </div>
         </div>
       );
-      case 2: return form.device_type === 'UPS' ? (
-        <div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      case 3: return (
+        <div style={{ display: 'grid', gap: 14 }}>
+          {form.device_type === 'UPS' ? <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div>{fld('Topología UPS', chips(UPS_TOPOLOGIES, form.ups_topology ?? 'Online', v => set('ups_topology', v as UPSTopology)))}</div>
             <div style={{ gridColumn: '1/-1' }} />
             <div>{fld('Capacidad (kVA)', inp('kva', '10', 'number'))}</div>
@@ -166,40 +169,30 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
             <div>{fld('IP de gestión', inp('mgmt_ip', '10.0.0.10'))}</div>
             <div>{fld('Último reemplazo batería', inp('battery_last_replace', '', 'date'))}</div>
             <div>{fld('Próximo reemplazo', inp('battery_next_replace', '', 'date'))}</div>
-          </div>
-        </div>
-      ) : (
-        <div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          </div> : <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div style={{ gridColumn: '1/-1' }}>{fld('Tipo de PDU', chips(PDU_TYPES, form.pdu_type ?? 'Básica', v => set('pdu_type', v as PDUType)))}</div>
             <div>{fld('Total de salidas', inp('total_outlets', '24', 'number'))}</div>
             <div>{fld('Salidas usadas', inp('used_outlets', '0', 'number'))}</div>
             <div>{fld('Amperaje (A)', inp('amperage', '32', 'number'))}</div>
             <div>{fld('Voltaje (V)', inp('voltage', '220', 'number'))}</div>
             <div>{fld('IP de gestión', inp('mgmt_ip', '10.0.0.20'))}</div>
-          </div>
-        </div>
-      );
-      case 3: return (
-        <div>
+          </div>}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>{fld('Edificio', inp('building', 'Torre A'), true)}</div>
-            <div>{fld('Piso', inp('floor', 'Sótano 1'), true)}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Cuarto / Sala', inp('room', 'MDF Principal'), true)}</div>
-            <div>{fld('Rack', inp('rack_name', 'Rack Principal MDF'))}</div>
-            <div>{fld('Unidades de rack (U)', inp('rack_u', '7-10U'))}</div>
-            <div style={{gridColumn:'1/-1'}}><AssetPlacementSelector assetType={form.device_type} value={form.placement_id} onChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('mdf_idf_name',p?.name||'')}} /></div>
-            <div>{fld('Fecha de instalación', inp('install_date', '', 'date'))}</div>
-            <div>{fld('Último mantenimiento', inp('last_maintenance', '', 'date'))}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Notas', (
-              <textarea placeholder="Observaciones sobre el equipo..." value={form.notes} onChange={e => set('notes', e.target.value)} rows={3}
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B', resize: 'vertical', outline: 'none' }} />
-            ))}</div>
+          <div>{fld('Edificio', inp('building', 'Torre A'))}</div>
+          <div>{fld('Piso', inp('floor', 'Sótano 1'))}</div>
+          <div>{fld('Rack', inp('rack_name', 'Rack Principal MDF'))}</div>
+          <div>{fld('Unidades de rack (U)', inp('rack_u', '7-10U'))}</div>
+          <div>{fld('Fecha de instalación', inp('install_date', '', 'date'))}</div>
+          <div>{fld('Último mantenimiento', inp('last_maintenance', '', 'date'))}</div>
           </div>
         </div>
       );
       case 4: return (
         <div>
+          <div style={{ gridColumn: '1/-1' }}>{fld('Notas', (
+              <textarea placeholder="Observaciones sobre el equipo..." value={form.notes} onChange={e => set('notes', e.target.value)} rows={3}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B', resize: 'vertical', outline: 'none' }} />
+            ))}</div>
           <div style={{ padding: 12, background: '#F0F9FF', borderRadius: 10, border: '1px solid #BAE6FD', fontSize: '0.82rem', color: '#0369A1', marginBottom: 16 }}>
             Los datos financieros se completan desde el módulo de Administración → Integradores.
           </div>
@@ -260,7 +253,7 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
             const isDone = completed.includes(s.id);
             const Icon = s.icon;
             return (
-              <button key={s.id} onClick={() => setStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
+              <button key={s.id} disabled={s.id>1&&!form.placement_id} onClick={() => (s.id===1||form.placement_id)&&setStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: s.id>1&&!form.placement_id?'not-allowed':'pointer', opacity:s.id>1&&!form.placement_id?0.55:1, background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
                 <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isActive ? '#4361EE' : isDone ? '#22C55E' : '#E2E8F0' }}>
                   {isDone && !isActive ? <Check size={14} color="#fff" /> : <Icon size={13} color={isActive ? '#fff' : '#94A3B8'} />}
                 </div>
@@ -278,12 +271,12 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
             <ChevronLeft size={16} /> Anterior
           </button>
           {stage < STAGES.length ? (
-            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: '#4361EE', color: '#fff', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))} disabled={stage===1&&(!form.placement_id||!nomenclatureAvailable)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'#CBD5E1':'#4361EE', color: '#fff', cursor: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'not-allowed':'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.name || !form.device_type || !nomenclatureAvailable || saving}
+            <button onClick={handleSave} disabled={!form.name || !form.device_type || !form.placement_id || !nomenclatureAvailable || saving}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.name || !form.device_type || !nomenclatureAvailable) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.name || !form.device_type || !nomenclatureAvailable) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               {saving ? '...' : <><Check size={16} /> Guardar {form.device_type}</>}
             </button>
