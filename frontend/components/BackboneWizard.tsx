@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Cable, Tag, MapPin, DollarSign, Shield, AlertCircle, Loader2 } from 'lucide-react';
 import axios from 'axios';
+import NomenclatureCodeField from './NomenclatureCodeField';
 
 export type FiberType = 'OM2' | 'OM3' | 'OM4' | 'OS1' | 'OS2' | 'UTP Cat6' | 'UTP Cat6A';
 export type JumperLen = '3 Pies' | '7 Pies' | '10 Pies' | '15 Pies' | '20 Pies' | 'Otro';
 export type BBStatus = 'Activo' | 'Inactivo' | 'Baja' | 'En mantenimiento';
 
 export interface BackboneWizardData {
-  codigo: string; marca: string; tipo_fibra: FiberType;
+  codigo: string; name: string; marca: string; tipo_fibra: FiberType;
   idf_origen: string; idf_destino: string;
   panel_mdf: string; panel_idf: string;
   jumper: JumperLen; switch_ref: string;
@@ -46,7 +47,7 @@ const FIBER_COLORS: Record<FiberType, string> = {
 const HILOS = ['2 hilos','4 hilos','6 hilos','8 hilos','12 hilos','24 hilos','48 hilos'];
 
 const EMPTY: BackboneWizardData = {
-  codigo: '', marca: '', tipo_fibra: 'OM4',
+  codigo: '', name: '', marca: '', tipo_fibra: 'OM4',
   idf_origen: '', idf_destino: '',
   panel_mdf: '', panel_idf: '',
   jumper: '7 Pies', switch_ref: '',
@@ -62,6 +63,7 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
   const [stage, setStage] = useState(1);
   const [form, setForm] = useState<BackboneWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
+  const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
 
   // ── Catálogo de fabricantes ──────────────────────────────────────────────
   const [manufacturers, setManufacturers] = useState<{ id: string; name: string }[]>([]);
@@ -109,19 +111,6 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
       })
       .catch(() => setManufacturers([]));
 
-    // Sugerencia de código inicial (solo en creación)
-    if (!initial?.codigo) {
-      axios.get('/api/infra/backbone/check')
-        .then(res => {
-          const suggestion = res.data?.suggestion ?? '';
-          if (suggestion) {
-            setForm(f => ({ ...f, codigo: suggestion }));
-            setCodeSuggestion(suggestion);
-            setCodeAvailable(true);
-          }
-        })
-        .catch(() => {});
-    }
   }, []);
 
   // Validar código en tiempo real con debounce 600ms
@@ -148,7 +137,7 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.codigo && form.tipo_fibra && form.status && codeAvailable !== false) c.push(1);
+    if (form.name && form.tipo_fibra && form.status && nomenclatureAvailable) c.push(1);
     if (form.hilos && form.longitud) c.push(2);
     if (form.idf_origen && form.idf_destino) c.push(3);
     if (form.integrador) c.push(4);
@@ -156,7 +145,7 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.codigo || !form.tipo_fibra || codeAvailable === false) return;
+    if (!form.name || !form.tipo_fibra || !nomenclatureAvailable) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -216,38 +205,8 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             {/* ── Campo Código con validación de unicidad ── */}
             <div style={{ gridColumn: '1/-1', marginBottom: 14 }}>
-              {lbl('Código del backbone', true)}
-              <div style={{ position: 'relative' }}>
-                <input
-                  type="text"
-                  placeholder="BB-0001"
-                  value={form.codigo}
-                  onChange={e => handleCodeChange(e.target.value)}
-                  style={{
-                    width: '100%', padding: '10px 14px', paddingRight: 40,
-                    borderRadius: 10, fontSize: '0.875rem', outline: 'none',
-                    background: '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms',
-                    border: `1.5px solid ${codeAvailable === false ? '#EF4444' : codeAvailable === true ? '#22C55E' : '#E8EBF4'}`,
-                  }}
-                  onFocus={e => e.target.style.borderColor = '#4361EE'}
-                  onBlur={e => e.target.style.borderColor = codeAvailable === false ? '#EF4444' : codeAvailable === true ? '#22C55E' : '#E8EBF4'}
-                />
-                {codeChecking && (
-                  <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8' }}>
-                    <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                  </span>
-                )}
-                {!codeChecking && codeAvailable === true && (
-                  <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#22C55E' }}>
-                    <Check size={14} />
-                  </span>
-                )}
-                {!codeChecking && codeAvailable === false && (
-                  <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#EF4444' }}>
-                    <AlertCircle size={14} />
-                  </span>
-                )}
-              </div>
+              {lbl('Código técnico', true)}
+              <NomenclatureCodeField assetType="BACKBONE" onAvailability={setNomenclatureAvailable} />
               {/* Error de duplicado */}
               {codeError && (
                 <div style={{ marginTop: 6, padding: '6px 10px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, fontSize: '0.75rem', color: '#DC2626', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -274,6 +233,8 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
                 </div>
               )}
             </div>
+
+            <div style={{ gridColumn: '1/-1' }}>{fld('Nombre descriptivo', inp('name', 'Backbone principal MDF-IDF'), true)}</div>
 
             <div style={{ gridColumn: '1/-1' }}>{fld('Tipo de fibra / cable', chips(FIBER_TYPES, form.tipo_fibra, v => set('tipo_fibra', v as FiberType), FIBER_COLORS))}</div>
             <div style={{ gridColumn: '1/-1' }}>{fld('Estado', chips(BB_STATUSES, form.status, v => set('status', v as BBStatus), STATUS_COLORS))}</div>
@@ -425,7 +386,7 @@ export default function BackboneWizard({ onClose, onSave, initial }: Props) {
   };
 
   const completed = completedStages();
-  const canSave = !!form.codigo && !!form.tipo_fibra && codeAvailable !== false;
+  const canSave = !!form.name && !!form.tipo_fibra && nomenclatureAvailable;
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>

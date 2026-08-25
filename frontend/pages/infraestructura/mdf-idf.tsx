@@ -2342,7 +2342,7 @@ function MdfIdfContent() {
             };
             import('axios').then(({ default: axios }) => {
               axios.post('/api/infra/mdf-idf', {
-                internal_code: d.code,
+                internal_code: '',
                 name: d.name,
                 site_type: d.type ?? 'IDF',
                 status: 'active',
@@ -2357,10 +2357,8 @@ function MdfIdfContent() {
                 power_kva: d.power_kva ?? 0,
                 notes: d.notes ?? '',
               }).then(resp => {
-                setData(prev => [{ ...newRecord, id: resp.data.id ?? newRecord.id }, ...prev]);
-              }).catch(() => {
-                setData(prev => [newRecord, ...prev]);
-              });
+                setData(prev => [{ ...newRecord, id: resp.data.id ?? newRecord.id, code: resp.data.internal_code ?? newRecord.code }, ...prev]);
+              }).catch(() => undefined);
             });
             setShowMdfWizard(false);
           }}

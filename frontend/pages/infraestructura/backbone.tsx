@@ -514,7 +514,8 @@ export default function BackbonePage() {
             };
             // Persistir en el backend
             axios.post('/api/infra/backbone', {
-              internal_code: data.codigo,
+              internal_code: '',
+              name: data.name,
               fiber_type: data.tipo_fibra ?? 'OM4',
               strands: data.hilos ?? '',
               length_m: parseFloat(data.longitud ?? '0') || 0,
@@ -527,10 +528,8 @@ export default function BackbonePage() {
               cost_center: data.centro_costos ?? '',
               observations: data.observaciones ?? '',
             }).then(resp => {
-              setItems(prev => [{ ...newBB, id: resp.data.id ?? newBB.id }, ...prev]);
-            }).catch(() => {
-              setItems(prev => [newBB, ...prev]);
-            });
+              setItems(prev => [{ ...newBB, id: resp.data.id ?? newBB.id, codigo: resp.data.internal_code ?? newBB.codigo }, ...prev]);
+            }).catch(() => undefined);
             setShowBBWizard(false);
           }}
         />

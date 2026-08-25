@@ -489,7 +489,8 @@ export default function SwitchesPage() {
             };
             import('axios').then(({ default: axios }) => {
               axios.post('/api/infra/switches', {
-                internal_code: data.code,
+                internal_code: '',
+                name: data.name,
                 brand: data.brand,
                 model: data.model,
                 serial: data.serie ?? '',
@@ -501,10 +502,8 @@ export default function SwitchesPage() {
                 ports_free: data.puertos_libres ?? 0,
                 observations: data.observaciones ?? '',
               }).then(resp => {
-                setSwitches(ss => [{ ...newSw, id: resp.data.id ?? newSw.id }, ...ss]);
-              }).catch(() => {
-                setSwitches(ss => [newSw, ...ss]);
-              });
+                setSwitches(ss => [{ ...newSw, id: resp.data.id ?? newSw.id, code: resp.data.internal_code ?? newSw.code }, ...ss]);
+              }).catch(() => undefined);
             });
             setShowSwWizard(false);
           }}

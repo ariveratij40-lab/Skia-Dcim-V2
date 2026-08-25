@@ -1182,7 +1182,7 @@ export default function UpsPdusPage() {
             };
             import('axios').then(({ default: axios }) => {
               axios.post('/api/infra/ups-pdus', {
-                internal_code: data.code,
+                internal_code: '',
                 name: data.name,
                 device_type: data.device_type ?? 'UPS',
                 status: data.status === 'Operativo' ? 'active' : 'inactive',
@@ -1194,10 +1194,8 @@ export default function UpsPdusPage() {
                 battery_runtime_min: data.battery_runtime_min ?? 0,
                 observations: data.notes ?? '',
               }).then(resp => {
-                setDevices(prev => [{ ...newDev, id: resp.data.id ?? newDev.id }, ...prev]);
-              }).catch(() => {
-                setDevices(prev => [newDev, ...prev]);
-              });
+                setDevices(prev => [{ ...newDev, id: resp.data.id ?? newDev.id, code: resp.data.internal_code ?? newDev.code }, ...prev]);
+              }).catch(() => undefined);
             });
             setShowUpsWizard(false);
           }}

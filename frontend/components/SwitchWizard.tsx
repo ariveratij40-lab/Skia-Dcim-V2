@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Network, Cpu, MapPin, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
+import NomenclatureCodeField from './NomenclatureCodeField';
 
 export type SwStatus = 'Activo' | 'Inactivo' | 'Baja';
 export type SwTipo = 'Core' | 'Distribución' | 'Acceso' | 'PoE' | 'Industrial' | 'Administrable' | 'No administrable';
 
 export interface SwitchWizardData {
-  code: string; brand: string; model: string; serie: string;
+  code: string; name: string; brand: string; model: string; serie: string;
   tipo: SwTipo; status: SwStatus;
   ubicacion: string; ubicacion_plano: string;
   puertos: number; puertos_libres: number; puertos_poe: number;
@@ -41,7 +42,7 @@ const TIPO_COLORS: Record<SwTipo, string> = {
 const PORT_SPEEDS = ['100M','1G','2.5G','5G','10G','25G','40G','100G'];
 
 const EMPTY: SwitchWizardData = {
-  code: '', brand: '', model: '', serie: '', tipo: 'Acceso', status: 'Activo',
+  code: '', name: '', brand: '', model: '', serie: '', tipo: 'Acceso', status: 'Activo',
   ubicacion: '', ubicacion_plano: '', puertos: 24, puertos_libres: 0, puertos_poe: 0,
   capacidad_puerto: '1G', ip: '', firmware: '',
   fecha_compra: '', expiracion_garantia: '',
@@ -54,13 +55,14 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
   const [stage, setStage] = useState(1);
   const [form, setForm] = useState<SwitchWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
+  const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
 
   const set = (field: keyof SwitchWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.code && form.tipo && form.status) c.push(1);
+    if (form.name && form.tipo && form.status && nomenclatureAvailable) c.push(1);
     if (form.puertos) c.push(2);
     if (form.ubicacion) c.push(3);
     if (form.proveedor) c.push(4);
@@ -68,7 +70,7 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.code || !form.tipo) return;
+    if (!form.name || !form.tipo || !nomenclatureAvailable) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -117,7 +119,8 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
       case 1: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>{fld('Código', inp('code', 'SW-CORE-A001'), true)}</div>
+            <div>{fld('Código técnico', <NomenclatureCodeField assetType="SWITCH" onAvailability={setNomenclatureAvailable} />)}</div>
+            <div>{fld('Nombre descriptivo', inp('name', 'Switch Patio'), true)}</div>
             <div>{fld('No. Serie', inp('serie', 'CAT2024X001'))}</div>
             <div>{fld('Marca', (
               <select value={form.brand} onChange={e => set('brand', e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}>
@@ -245,8 +248,8 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.code || !form.tipo || saving}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.code || !form.tipo) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.code || !form.tipo) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button onClick={handleSave} disabled={!form.name || !form.tipo || !nomenclatureAvailable || saving}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.name || !form.tipo || !nomenclatureAvailable) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.name || !form.tipo || !nomenclatureAvailable) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               {saving ? '...' : <><Check size={16} /> Guardar Switch</>}
             </button>
           )}

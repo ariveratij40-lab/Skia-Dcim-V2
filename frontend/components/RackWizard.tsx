@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Server, MapPin, Tag, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
 import type { RackRecord, RackType, RackStatus, RackPostes } from '../pages/infraestructura/racks';
+import NomenclatureCodeField from './NomenclatureCodeField';
 
-export interface RackWizardData extends Omit<RackRecord, 'id'> {}
+export interface RackWizardData extends Omit<RackRecord, 'id'> { name: string }
 
 interface Props {
   onClose: () => void;
@@ -28,7 +29,7 @@ const STATUS_COLORS: Record<RackStatus, string> = {
 };
 
 const EMPTY: RackWizardData = {
-  code:'', brand:'', model:'', height_u:42, type_posts:'4 Postes',
+  code:'', name:'', brand:'', model:'', height_u:42, type_posts:'4 Postes',
   rack_type:'Rack Cableado', status:'Operativo', location:'', floor_plan_ref:'',
   photo_url:'', ref_image_url:'', observations:'', org_horizontal:false,
   org_vertical:false, pdu:false, integrator:'', invoice_no:'', cost_usd:0,
@@ -40,13 +41,14 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
   const [stage, setStage] = useState(1);
   const [form, setForm] = useState<RackWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
+  const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
 
   const set = (field: keyof RackWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.code && form.status && form.rack_type) c.push(1);
+    if (form.name && form.status && form.rack_type && nomenclatureAvailable) c.push(1);
     if (form.brand && form.height_u) c.push(2);
     if (form.location) c.push(3);
     if (form.integrator) c.push(4);
@@ -54,7 +56,7 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.code || !form.rack_type || !form.status) return;
+    if (!form.name || !form.rack_type || !form.status || !nomenclatureAvailable) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -132,7 +134,8 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div style={{ gridColumn: '1/-1' }}>
-              {field('Código del Rack', inp('code', 'RCK-MDF-A0001', 'text', true), true)}
+              {field('Código técnico', <NomenclatureCodeField assetType="RACK" onAvailability={setNomenclatureAvailable} />)}
+              {field('Nombre descriptivo', inp('name', 'Rack principal IDF', 'text', true), true)}
             </div>
             <div style={{ gridColumn: '1/-1' }}>
               {field('Tipo de Rack', chipGroup(RACK_TYPES, form.rack_type, v => set('rack_type', v as RackType)))}
@@ -316,8 +319,8 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
             ) : (
               <button
                 onClick={handleSave}
-                disabled={!form.code || !form.rack_type || !form.status || saving}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.code || !form.rack_type || !form.status) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.code || !form.rack_type || !form.status) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+                disabled={!form.name || !form.rack_type || !form.status || !nomenclatureAvailable || saving}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.name || !form.rack_type || !form.status || !nomenclatureAvailable) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.name || !form.rack_type || !form.status || !nomenclatureAvailable) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
               >
                 {saving ? '...' : <><Check size={16} /> Guardar Rack</>}
               </button>

@@ -66,6 +66,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     separator: string; seq_digits: number; last_seq: number;
     next_code_preview: string;
     custom_segment_1?: string; custom_segment_2?: string;
+    active: boolean;
   }
   const [namingRules, setNamingRules] = useState<NamingRule[]>([]);
   const [codeSuggestions, setCodeSuggestions] = useState<string[]>([]);
@@ -84,14 +85,14 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
       const res = await fetch('/api/dcim/catalogs/naming-rules');
       if (!res.ok) return;
       const data = await res.json();
-      setNamingRules(data.rules ?? []);
+      setNamingRules(data.naming_rules ?? []);
     } catch { /* silencioso */ }
   };
 
   // Construir el patrón legible para mostrar como etiqueta (ej: MDF-001, IDF-A-001)
   const buildCodePattern = (type: MdfIdfType, rules: NamingRule[]): string | null => {
     const typeCode = TYPE_TO_CODE[type];
-    const rule = rules.find(r => r.asset_type_code === typeCode);
+    const rule = rules.find(r => r.asset_type_code === typeCode && r.active);
     if (!rule) return null;
     const sep = rule.separator || '-';
     const digits = rule.seq_digits || 3;
@@ -104,12 +105,9 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
   const buildCodeSuggestions = (type: MdfIdfType, rules: NamingRule[]): string[] => {
     const code = TYPE_TO_CODE[type];
-    const rule = rules.find(r => r.asset_type_code === code);
+    const rule = rules.find(r => r.asset_type_code === code && r.active);
     if (!rule) {
-      // Fallback genérico si no hay regla configurada
-      const prefix = type === 'MDF' ? 'MDF' : type === 'IDF' ? 'IDF' : type === 'Site' ? 'SITE' : 'ST';
-      return Array.from({ length: 5 }, (_, i) =>
-        `${prefix}-${String(i + 1).padStart(3, '0')}`);
+      return [];
     }
     const sep = rule.separator || '-';
     const digits = rule.seq_digits || 3;
@@ -289,9 +287,6 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     const suggestions = buildCodeSuggestions(form.type, namingRules);
     setCodeSuggestions(suggestions);
     // Si el campo código está vacío, pre-llenar con el primer código sugerido
-    if (!form.code && suggestions.length > 0) {
-      setForm(f => ({ ...f, code: suggestions[0] }));
-    }
     // Calcular el patrón de referencia (ej: MDF-000)
     const pattern = buildCodePattern(form.type, namingRules);
     setCodePattern(pattern);
@@ -349,7 +344,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.code && form.name && form.type && form.status) c.push(1);
+    if (codePattern && form.name && form.type && form.status) c.push(1);
     if (form.building) c.push(2);
     if (form.capacity_u) c.push(3);
     if (form.responsible) c.push(4);
@@ -357,8 +352,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.code || !form.name || !form.type) return;
-    if (codeError) return; // Bloquear si hay código duplicado
+    if (!codePattern || !form.name || !form.type) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -471,15 +465,12 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             {/* Campo Código con dropdown de nomenclatura */}
             <div style={{ position: 'relative' }}>
-              {lbl('Código', true)}
+              {lbl('Código técnico', true)}
               <input
                 type="text"
-                placeholder={codeSuggestions[0] ?? 'MDF-001'}
-                value={form.code}
-                onChange={e => handleCodeChange(e.target.value)}
-                onFocus={() => setShowCodeSuggestions(true)}
-                onBlur={() => setTimeout(() => setShowCodeSuggestions(false), 150)}
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: `1.5px solid ${codeError ? '#EF4444' : form.code ? '#4361EE' : '#E8EBF4'}`, fontSize: '0.875rem', outline: 'none', background: codeError ? '#FFF5F5' : '#FAFBFF', color: '#1E293B', transition: 'border-color 150ms', boxSizing: 'border-box' }}
+                value={codePattern ? `Se generará automáticamente (${codeSuggestions[0] ?? codePattern})` : 'Nomenclatura requerida'}
+                readOnly
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: `1.5px solid ${codePattern ? '#4361EE' : '#F59E0B'}`, fontSize: '0.875rem', outline: 'none', background: codePattern ? '#EEF2FF' : '#FFF7ED', color: '#1E293B', boxSizing: 'border-box' }}
               />
               {/* Indicador de verificación / error de duplicado */}
               {checkingCode && (
@@ -920,8 +911,8 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.code || !form.name || saving || !!codeError || checkingCode}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.code || !form.name || !!codeError || checkingCode) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.code || !form.name || !!codeError || checkingCode) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+            <button onClick={handleSave} disabled={!codePattern || !form.name || saving}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!codePattern || !form.name) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!codePattern || !form.name) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
               title={codeError ? 'Corrige el código duplicado antes de guardar' : ''}>
               {saving ? '...' : checkingCode ? 'Verificando...' : <><Check size={16} /> Guardar MDF/IDF</>}
             </button>

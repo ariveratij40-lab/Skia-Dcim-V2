@@ -198,9 +198,9 @@ type MdfIdfRecord struct {
 // handleMdfIdfCheck — GET /api/infra/mdf-idf/check?code=X&name=Y
 // Valida en tiempo real si un código o nombre ya existe para el tenant
 func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	_, tenantID, _, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
@@ -217,23 +217,23 @@ func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
 
 	if code != "" {
 		var count int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
+		_ = tenantTx.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
 			tenantID, code).Scan(&count)
 		if count > 0 {
 			result["code_available"] = false
 			result["code_error"] = fmt.Sprintf("El código '%s' ya existe. Elige uno diferente.", code)
-			result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
+			result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, code)
 		}
 	}
 	if name != "" {
 		var count int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(name)=LOWER($2)`,
+		_ = tenantTx.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(name)=LOWER($2)`,
 			tenantID, name).Scan(&count)
 		if count > 0 {
 			result["name_available"] = false
 			result["name_error"] = fmt.Sprintf("El nombre '%s' ya existe. Elige uno diferente.", name)
 			if result["suggestion"] == "" {
-				result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
+				result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, code)
 			}
 		}
 	}
@@ -241,17 +241,15 @@ func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
-	var err error
-
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 				SELECT a.id, a.internal_code, COALESCE(a.name, a.internal_code),
 					COALESCE(m.type,'MDF'),
 					COALESCE(a.status,'active'),
@@ -307,87 +305,35 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		// Normalizar aliases del wizard
-		if req.Code == "" && req.InternalCode != "" {
-			req.Code = req.InternalCode
-		}
 		if req.Type == "" && req.SiteType != "" {
 			req.Type = req.SiteType
 		}
 		if req.Status == "" {
 			req.Status = "active"
 		}
-		if req.Code == "" {
-			req.Code = fmt.Sprintf("MDF-%s", generateID()[:8])
-		}
-		if req.Name == "" {
-			req.Name = req.Code
-		}
-
-		// ─── Validar unicidad de código por tenant ───────────────────────────────
-		var codeExists int
-		_ = db.QueryRow(`
-			SELECT COUNT(*) FROM assets
-			WHERE tenant_id = $1 AND LOWER(internal_code) = LOWER($2)`,
-			tenantID, req.Code).Scan(&codeExists)
-		if codeExists > 0 {
-			// Sugerir el siguiente código disponible
-			nextCode := suggestNextMdfCode(db, tenantID, req.Code)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error":      "duplicate_code",
-				"message":    fmt.Sprintf("El código '%s' ya existe en esta organización.", req.Code),
-				"suggestion": nextCode,
-			})
-			return
-		}
-		// ─── Validar unicidad de nombre por tenant ────────────────────────────────
-		var nameExists int
-		_ = db.QueryRow(`
-			SELECT COUNT(*) FROM assets
-			WHERE tenant_id = $1 AND LOWER(name) = LOWER($2)`,
-			tenantID, req.Name).Scan(&nameExists)
-		if nameExists > 0 {
-			nextCode := suggestNextMdfCode(db, tenantID, req.Code)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict)
-			json.NewEncoder(w).Encode(map[string]string{
-				"error":      "duplicate_name",
-				"message":    fmt.Sprintf("El nombre '%s' ya existe en esta organización.", req.Name),
-				"suggestion": nextCode,
-			})
-			return
-		}
-
-		atID, _ := ensureAssetType(db, tenantID, "MDF_IDF", "network")
-		assetID := generateID()
-		_, err = db.Exec(`
-			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
-				internal_code, name, status, observations, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-			assetID, tenantID, branchID, atID,
-			req.Code, req.Name, req.Status, req.Observations, userID)
-		if err != nil {
-			http.Error(w, "Error creating asset: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
 		// Determinar el tipo MDF o IDF
 		mdfType := req.Type
 		if mdfType != "MDF" && mdfType != "IDF" {
 			mdfType = "MDF"
 		}
-		mdfID := generateID()
-		_, err = db.Exec(`
-			INSERT INTO mdf_idf (id, asset_id, tenant_id, branch_id, type)
-			VALUES ($1,$2,$3,$4,$5)`,
-			mdfID, assetID, tenantID, branchID, mdfType)
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
+			AssetTypeCode: mdfType, Name: req.Name, ManualCode: req.Code + req.InternalCode,
+			Status: req.Status, Observations: req.Observations,
+		})
 		if err != nil {
-			http.Error(w, "Error creating mdf_idf: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, mdfType)
 			return
 		}
-		jsonResp(w, 201, map[string]string{"id": assetID, "mdf_id": mdfID})
+		mdfID := generateID()
+		_, err = tenantTx.Exec(`
+			INSERT INTO mdf_idf (id, asset_id, tenant_id, branch_id, type)
+			VALUES ($1,$2,$3,$4,$5)`,
+			mdfID, managed.AssetID, tenantID, branchID, mdfType)
+		if err != nil {
+			writeManagedAssetError(w, err, mdfType)
+			return
+		}
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "mdf_id": mdfID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -429,17 +375,15 @@ type RackRecord struct {
 }
 
 func handleRacks(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
-	var err error
-
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code,
 				COALESCE(a.manufacturer,''), COALESCE(a.model,''),
 				COALESCE(rk.total_u,42),
@@ -482,6 +426,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			InternalCode string `json:"internal_code"`
+			Name         string `json:"name"`
 			Location     string `json:"location"`
 			TotalU       int    `json:"total_u"`
 			Status       string `json:"status"`
@@ -499,38 +444,28 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 		if req.Status == "" {
 			req.Status = "active"
 		}
-		if req.InternalCode == "" {
-			req.InternalCode = fmt.Sprintf("RCK-%s", generateID()[:8])
-		}
 		if req.TotalU == 0 {
 			req.TotalU = 42
 		}
 
-		atID, _ := ensureAssetType(db, tenantID, "RACK", "infrastructure")
-		log.Printf("DEBUG RACK INSERT: tenantID=%s branchID=%s atID=%s", tenantID, branchID, atID)
-		assetID := generateID()
-		_, err = db.Exec(`
-			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
-				internal_code, name, status, manufacturer, model, observations, install_year, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-			assetID, tenantID, branchID, atID,
-			req.InternalCode, req.InternalCode, req.Status,
-			req.Manufacturer, req.Model, req.Observations, req.InstallYear, userID)
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
+			AssetTypeCode: "RACK", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
+			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
+		})
 		if err != nil {
-			http.Error(w, "Error creating asset: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "RACK")
 			return
 		}
-
 		rackID := generateID()
-		_, err = db.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u)
 			VALUES ($1,$2,$3,$4,$5)`,
-			rackID, assetID, tenantID, branchID, req.TotalU)
+			rackID, managed.AssetID, tenantID, branchID, req.TotalU)
 		if err != nil {
-			http.Error(w, "Error creating rack: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "RACK")
 			return
 		}
-		jsonResp(w, 201, map[string]string{"id": assetID, "rack_id": rackID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "rack_id": rackID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -552,9 +487,9 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, `{"error":"missing tenant context"}`, http.StatusInternalServerError)
 		return
 	}
@@ -602,7 +537,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 			dbStatus = mapped
 		}
 		// Actualizar asset
-		_, err = db.Exec(`
+		_, err = tenantTx.Exec(`
 			UPDATE assets SET
 				name = $1, status = $2, observations = $3,
 				photo_url = $4, ref_image_url = $5,
@@ -617,7 +552,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 		}
 		// Actualizar tipo en mdf_idf si es válido
 		if req.Type == "MDF" || req.Type == "IDF" {
-			_, _ = db.Exec(`UPDATE mdf_idf SET type = $1, updated_at = NOW() WHERE asset_id = $2 AND tenant_id = $3`,
+			_, _ = tenantTx.Exec(`UPDATE mdf_idf SET type = $1, updated_at = NOW() WHERE asset_id = $2 AND tenant_id = $3`,
 				req.Type, mdfAssetID, tenantID)
 		}
 		jsonResp(w, 200, map[string]string{"status": "ok"})
@@ -640,7 +575,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	// Obtener el mdf_idf.id y datos del asset
 	var mdfIdfID, mdfCode, mdfName string
 	var totalU int
-	err = db.QueryRow(`
+	err = tenantTx.QueryRow(`
 		SELECT m.id, a.internal_code, COALESCE(a.name, a.internal_code)
 		FROM mdf_idf m JOIN assets a ON a.id = m.asset_id
 		WHERE m.asset_id = $1 AND m.tenant_id = $2`,
@@ -663,7 +598,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	// Verificar si ya existe un rack para este mdf_idf_id
 	var existingRackID, existingRackAssetID, existingRackCode string
 	var existingTotalU int
-	err = db.QueryRow(`
+	err = tenantTx.QueryRow(`
 		SELECT rk.id, rk.asset_id, a.internal_code, rk.total_u
 		FROM racks rk JOIN assets a ON a.id = rk.asset_id
 		WHERE rk.mdf_idf_id = $1 AND rk.tenant_id = $2
@@ -682,27 +617,20 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No existe — crear el rack automáticamente
-	rackCode := fmt.Sprintf("RCK-%s", mdfCode)
-	atID, _ := ensureAssetType(db, tenantID, "RACK", "infrastructure")
-	rackAssetID := generateID()
-	_, err = db.Exec(`
-		INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
-			internal_code, name, status, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,'active',$7)`,
-		rackAssetID, tenantID, branchID, atID,
-		rackCode, fmt.Sprintf("Rack %s", mdfName), userID)
+	// No existe — crear el rack automáticamente bajo la misma nomenclatura autoritativa.
+	managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
+		AssetTypeCode: "RACK", Name: fmt.Sprintf("Rack %s", mdfName), Status: "active",
+	})
 	if err != nil {
-		log.Printf("[EnsureRack] Error creando asset del rack: %v", err)
-		http.Error(w, `{"error":"error creando rack"}`, http.StatusInternalServerError)
+		writeManagedAssetError(w, err, "RACK")
 		return
 	}
 
 	rackID := generateID()
-	_, err = db.Exec(`
+	_, err = tenantTx.Exec(`
 		INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u, mdf_idf_id)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
-		rackID, rackAssetID, tenantID, branchID, totalU, mdfIdfID)
+		rackID, managed.AssetID, tenantID, branchID, totalU, mdfIdfID)
 	if err != nil {
 		log.Printf("[EnsureRack] Error creando rack: %v", err)
 		http.Error(w, `{"error":"error creando rack"}`, http.StatusInternalServerError)
@@ -712,8 +640,8 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[EnsureRack] Rack %s creado para MDF/IDF %s (%s)", rackID, mdfIdfID, mdfCode)
 	jsonResp(w, 201, map[string]interface{}{
 		"rack_id":       rackID,
-		"rack_asset_id": rackAssetID,
-		"rack_code":     rackCode,
+		"rack_asset_id": managed.AssetID,
+		"rack_code":     managed.Assignment.Code,
 		"total_u":       totalU,
 		"is_new":        true,
 	})
@@ -745,17 +673,15 @@ type SWRecord struct {
 }
 
 func handleSwitches(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
-	var err error
-
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code,
 				COALESCE(a.manufacturer,''), COALESCE(a.model,''),
 				COALESCE(a.serial_number,''),
@@ -793,6 +719,7 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			InternalCode string `json:"internal_code"`
+			Name         string `json:"name"`
 			Ubicacion    string `json:"ubicacion"`
 			Tipo         string `json:"tipo"`
 			PortCount    int    `json:"port_count"`
@@ -812,39 +739,30 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 		if req.Status == "" {
 			req.Status = "active"
 		}
-		if req.InternalCode == "" {
-			req.InternalCode = fmt.Sprintf("SW-%s", generateID()[:8])
-		}
 		if req.PortCount == 0 {
 			req.PortCount = 24
 		}
 
-		atID, _ := ensureAssetType(db, tenantID, "SWITCH", "network")
-		assetID := generateID()
-		_, err = db.Exec(`
-			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
-				internal_code, name, status, manufacturer, model, serial_number, observations, install_year, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-			assetID, tenantID, branchID, atID,
-			req.InternalCode, req.InternalCode, req.Status,
-			req.Manufacturer, req.Model, req.Serial, req.Observations, req.InstallYear, userID)
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
+			AssetTypeCode: "SWITCH", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
+			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
+		})
 		if err != nil {
-			http.Error(w, "Error creating asset: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "SWITCH")
 			return
 		}
-
 		swID := generateID()
-		_, err = db.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO switches (id, asset_id, tenant_id, branch_id,
 				port_count, uplink_count, management_ip)
 			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-			swID, assetID, tenantID, branchID,
+			swID, managed.AssetID, tenantID, branchID,
 			req.PortCount, req.UplinkCount, req.ManagementIP)
 		if err != nil {
-			http.Error(w, "Error creating switch: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "SWITCH")
 			return
 		}
-		jsonResp(w, 201, map[string]string{"id": assetID, "switch_id": swID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "switch_id": swID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -872,19 +790,17 @@ type PowerDeviceRecord struct {
 }
 
 func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
-	var err error
-
 	switch r.Method {
 	case http.MethodGet:
 		// Query UPS
 		var list []PowerDeviceRecord
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code, a.name,
 				'ups' as device_type,
 				COALESCE(u.capacity_kva,0), COALESCE(u.battery_runtime_min,0),
@@ -911,7 +827,7 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Query PDUs
-		rows2, err2 := db.Query(`
+		rows2, err2 := tenantTx.Query(`
 			SELECT a.id, a.internal_code, a.name,
 				'pdu' as device_type,
 				0, 0, COALESCE(p.management_ip,''),
@@ -967,52 +883,35 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 		if req.DeviceType == "" {
 			req.DeviceType = "ups"
 		}
-		if req.InternalCode == "" {
-			prefix := "UPS"
-			if req.DeviceType == "pdu" {
-				prefix = "PDU"
-			}
-			req.InternalCode = fmt.Sprintf("%s-%s", prefix, generateID()[:8])
-		}
-		if req.Name == "" {
-			req.Name = req.InternalCode
-		}
-
 		category := "UPS"
-		if req.DeviceType == "pdu" {
+		if strings.EqualFold(req.DeviceType, "pdu") {
 			category = "PDU"
 		}
-		atID, _ := ensureAssetType(db, tenantID, category, "power")
-		assetID := generateID()
-		_, err = db.Exec(`
-			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
-				internal_code, name, status, manufacturer, model, observations, install_year, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-			assetID, tenantID, branchID, atID,
-			req.InternalCode, req.Name, req.Status,
-			req.Manufacturer, req.Model, req.Observations, req.InstallYear, userID)
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
+			AssetTypeCode: category, Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
+			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
+		})
 		if err != nil {
-			http.Error(w, "Error creating asset: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, category)
 			return
 		}
-
 		devID := generateID()
-		if req.DeviceType == "pdu" {
-			_, err = db.Exec(`
+		if strings.EqualFold(req.DeviceType, "pdu") {
+			_, err = tenantTx.Exec(`
 				INSERT INTO pdus (id, asset_id, tenant_id, branch_id, outlet_count, amperage, management_ip)
 				VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-				devID, assetID, tenantID, branchID, req.OutletCount, req.Amperage, req.ManagementIP)
+				devID, managed.AssetID, tenantID, branchID, req.OutletCount, req.Amperage, req.ManagementIP)
 		} else {
-			_, err = db.Exec(`
+			_, err = tenantTx.Exec(`
 				INSERT INTO ups (id, asset_id, tenant_id, branch_id, capacity_kva, battery_runtime_min, management_ip)
 				VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-				devID, assetID, tenantID, branchID, req.CapacityKva, req.BatteryRuntime, req.ManagementIP)
+				devID, managed.AssetID, tenantID, branchID, req.CapacityKva, req.BatteryRuntime, req.ManagementIP)
 		}
 		if err != nil {
-			http.Error(w, "Error creating device: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, category)
 			return
 		}
-		jsonResp(w, 201, map[string]string{"id": assetID, "device_id": devID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "device_id": devID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1044,17 +943,15 @@ type PatchPanelRecord struct {
 }
 
 func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
-	var err error
-
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code,
 				COALESCE(a.manufacturer,''), COALESCE(a.model,''),
 				COALESCE(a.serial_number,''),
@@ -1094,6 +991,7 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			InternalCode string `json:"internal_code"`
+			Name         string `json:"name"`
 			Location     string `json:"location"`
 			PanelType    string `json:"panel_type"`
 			PortCount    int    `json:"port_count"`
@@ -1111,37 +1009,28 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 		if req.Status == "" {
 			req.Status = "active"
 		}
-		if req.InternalCode == "" {
-			req.InternalCode = fmt.Sprintf("PP-%s", generateID()[:8])
-		}
 		if req.PortCount == 0 {
 			req.PortCount = 24
 		}
 
-		atID, _ := ensureAssetType(db, tenantID, "PATCH_PANEL", "network")
-		assetID := generateID()
-		_, err = db.Exec(`
-			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
-				internal_code, name, status, manufacturer, model, serial_number, observations, install_year, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-			assetID, tenantID, branchID, atID,
-			req.InternalCode, req.InternalCode, req.Status,
-			req.Manufacturer, req.Model, req.Serial, req.Observations, req.InstallYear, userID)
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
+			AssetTypeCode: "PATCH_PANEL", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
+			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
+		})
 		if err != nil {
-			http.Error(w, "Error creating asset: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "PATCH_PANEL")
 			return
 		}
-
 		ppID := generateID()
-		_, err = db.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO patch_panels (id, asset_id, tenant_id, branch_id, port_count, port_type)
 			VALUES ($1,$2,$3,$4,$5,$6)`,
-			ppID, assetID, tenantID, branchID, req.PortCount, req.PanelType)
+			ppID, managed.AssetID, tenantID, branchID, req.PortCount, req.PanelType)
 		if err != nil {
-			http.Error(w, "Error creating patch panel: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "PATCH_PANEL")
 			return
 		}
-		jsonResp(w, 201, map[string]string{"id": assetID, "pp_id": ppID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "pp_id": ppID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1167,17 +1056,15 @@ type BBRecord struct {
 }
 
 func handleBackbone(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
-	var err error
-
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code,
 				COALESCE(a.manufacturer,''),
 				COALESCE(bl.link_type,'fiber'),
@@ -1215,6 +1102,7 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			InternalCode  string  `json:"internal_code"`
+			Name          string  `json:"name"`
 			Manufacturer  string  `json:"manufacturer"`
 			LinkType      string  `json:"link_type"`
 			OriginID      string  `json:"origin_id"`
@@ -1233,45 +1121,18 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 		if req.Status == "" {
 			req.Status = "active"
 		}
-		if req.InternalCode == "" {
-			req.InternalCode = fmt.Sprintf("BB-%s", generateID()[:8])
-		}
 		if req.LinkType == "" {
 			req.LinkType = "fiber"
 		}
 
-		// ─── Validar unicidad de código por tenant ───────────────────────────────
-		if req.InternalCode != "" {
-			var codeExists int
-			_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
-				tenantID, req.InternalCode).Scan(&codeExists)
-			if codeExists > 0 {
-				nextCode := suggestNextMdfCode(db, tenantID, req.InternalCode)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusConflict)
-				json.NewEncoder(w).Encode(map[string]string{
-					"error":      "duplicate_code",
-					"message":    fmt.Sprintf("El código '%s' ya existe en esta organización.", req.InternalCode),
-					"suggestion": nextCode,
-				})
-				return
-			}
-		}
-
-		atID, _ := ensureAssetType(db, tenantID, "BACKBONE", "network")
-		assetID := generateID()
-		_, err = db.Exec(`
-			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
-				internal_code, name, status, manufacturer, observations, install_year, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-			assetID, tenantID, branchID, atID,
-			req.InternalCode, req.InternalCode, req.Status,
-			req.Manufacturer, req.Observations, req.InstallYear, userID)
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
+			AssetTypeCode: "BACKBONE", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
+			Manufacturer: req.Manufacturer, Observations: req.Observations, InstallYear: req.InstallYear,
+		})
 		if err != nil {
-			http.Error(w, "Error creating asset: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "BACKBONE")
 			return
 		}
-
 		bbID := generateID()
 		var originID, destID interface{}
 		if req.OriginID != "" {
@@ -1280,17 +1141,17 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 		if req.DestinationID != "" {
 			destID = req.DestinationID
 		}
-		_, err = db.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO backbone_links (id, asset_id, tenant_id, branch_id,
 				link_type, origin_id, destination_id, fiber_count, cable_length_m, bandwidth_gbps)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-			bbID, assetID, tenantID, branchID,
+			bbID, managed.AssetID, tenantID, branchID,
 			req.LinkType, originID, destID, req.FiberCount, req.CableLengthM, req.BandwidthGbps)
 		if err != nil {
-			http.Error(w, "Error creating backbone link: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "BACKBONE")
 			return
 		}
-		jsonResp(w, 201, map[string]string{"id": assetID, "bb_id": bbID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "bb_id": bbID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1300,9 +1161,9 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 // handleBackboneCheck — GET /api/infra/backbone/check?code=X
 // Valida unicidad de código y sugiere el siguiente disponible
 func handleBackboneCheck(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	_, tenantID, _, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
@@ -1316,28 +1177,28 @@ func handleBackboneCheck(w http.ResponseWriter, r *http.Request) {
 
 	if code != "" {
 		var count int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
+		_ = tenantTx.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
 			tenantID, code).Scan(&count)
 		if count > 0 {
 			result["code_available"] = false
 			result["code_error"] = fmt.Sprintf("El código '%s' ya existe. Elige uno diferente.", code)
-			result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
+			result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, code)
 		} else {
 			// Sugerir el siguiente aunque esté disponible (para referencia)
-			result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
+			result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, code)
 		}
 	} else {
 		// Sin código: sugerir el primero disponible basado en naming_rules
 		var prefix string
 		var seqDigits int
-		err2 := db.QueryRow(`SELECT prefix, seq_digits FROM naming_rules WHERE tenant_id=$1 AND asset_type_code='BACKBONE' LIMIT 1`,
+		err2 := tenantTx.QueryRow(`SELECT prefix, seq_digits FROM naming_rules WHERE tenant_id=$1 AND asset_type_code='BACKBONE' LIMIT 1`,
 			tenantID).Scan(&prefix, &seqDigits)
 		if err2 != nil || prefix == "" {
 			prefix = "BB"
 			seqDigits = 4
 		}
 		baseCode := fmt.Sprintf("%s-%0*d", prefix, seqDigits, 1)
-		result["suggestion"] = suggestNextMdfCode(db, tenantID, baseCode)
+		result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, baseCode)
 	}
 	jsonResp(w, 200, result)
 }
@@ -1360,17 +1221,15 @@ type NodeRecord struct {
 }
 
 func handleNodos(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
-	var err error
-
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT n.id, n.asset_id, a.internal_code,
 				COALESCE(a.manufacturer,''),
 				COALESCE(n.node_type,'endpoint'),
@@ -1405,6 +1264,7 @@ func handleNodos(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			InternalCode string `json:"internal_code"`
+			Name         string `json:"name"`
 			NodeType     string `json:"node_type"`
 			IPAddress    string `json:"ip_address"`
 			MACAddress   string `json:"mac_address"`
@@ -1425,34 +1285,24 @@ func handleNodos(w http.ResponseWriter, r *http.Request) {
 		if req.NodeType == "" {
 			req.NodeType = "endpoint"
 		}
-		if req.InternalCode == "" {
-			req.InternalCode = fmt.Sprintf("NOD-%s", generateID()[:8])
-		}
-
-		atID, _ := ensureAssetType(db, tenantID, "NODE", "network")
-		assetID := generateID()
-		_, err = db.Exec(`
-			INSERT INTO assets (id, tenant_id, branch_id, asset_type_id,
-				internal_code, name, status, manufacturer, model, observations, install_year, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-			assetID, tenantID, branchID, atID,
-			req.InternalCode, req.InternalCode, req.Status,
-			req.Manufacturer, req.Model, req.Observations, req.InstallYear, userID)
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
+			AssetTypeCode: "NODE", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
+			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
+		})
 		if err != nil {
-			http.Error(w, "Error creating asset: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "NODE")
 			return
 		}
-
 		nodeID := generateID()
-		_, err = db.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO nodes (id, asset_id, tenant_id, branch_id, node_type, ip_address, mac_address, switch_port)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-			nodeID, assetID, tenantID, branchID, req.NodeType, req.IPAddress, req.MACAddress, req.SwitchPort)
+			nodeID, managed.AssetID, tenantID, branchID, req.NodeType, req.IPAddress, req.MACAddress, req.SwitchPort)
 		if err != nil {
-			http.Error(w, "Error creating node: "+err.Error(), http.StatusInternalServerError)
+			writeManagedAssetError(w, err, "NODE")
 			return
 		}
-		jsonResp(w, 201, map[string]string{"id": nodeID, "asset_id": assetID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": nodeID, "asset_id": managed.AssetID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

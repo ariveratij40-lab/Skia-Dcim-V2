@@ -11,12 +11,14 @@ import {
   LONGITUDES_PATCHCORD, LONGITUDES_CABLE, AREAS_COMUNES,
   INTEGRADORES, ANIOS_INSTALACION,
 } from '@/data/catalogos';
+import NomenclatureCodeField from './NomenclatureCodeField';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface NodeWizardData {
   id: string;
   // Etapa 1 — Alta rápida
   codigo: string;
+  name: string;
   idf: string;
   area: string;
   servicio: string;
@@ -71,7 +73,7 @@ const STEPS = [
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const blank: NodeWizardData = {
-  id: '', codigo: '', idf: '', area: '', servicio: 'Datos', estado: 'Activo', responsable: '',
+  id: '', codigo: '', name: '', idf: '', area: '', servicio: 'Datos', estado: 'Activo', responsable: '',
   marca: 'Panduit', numParte: '', categoria: '6', clasificacion: 'CMR', color: 'Azul',
   mice: 'Bajo', gama: '', longitud: '', patchcordInterno: '3 Pies', anioInstalacion: 2025,
   foto: '', docFluke: '', docFlukeUrl: '', docPanduit: '', docPanduitUrl: '', certificadoFluke: false,
@@ -145,7 +147,7 @@ function ChipSelector({ value, onChange, options }: {
 }
 
 // ─── Step 1: Alta rápida ──────────────────────────────────────────────────────
-function Step1({ form, set }: { form: NodeWizardData; set: (k: keyof NodeWizardData, v: any) => void }) {
+function Step1({ form, set, onNomenclature }: { form: NodeWizardData; set: (k: keyof NodeWizardData, v: any) => void; onNomenclature: (available: boolean) => void }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '10px', padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
@@ -156,8 +158,11 @@ function Step1({ form, set }: { form: NodeWizardData; set: (k: keyof NodeWizardD
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-        <Field label="Código del nodo" required hint="Ej: NOD-IDF1-0001">
-          <input value={form.codigo} onChange={e => set('codigo', e.target.value)} style={inp} placeholder="NOD-IDF1-0001" />
+        <Field label="Código técnico" required>
+          <NomenclatureCodeField assetType="NODE" onAvailability={onNomenclature} />
+        </Field>
+        <Field label="Nombre descriptivo" required>
+          <input value={form.name} onChange={e => set('name', e.target.value)} style={inp} placeholder="Nodo oficina recepción" />
         </Field>
         <Field label="IDF / MDF de origen" required hint="Cuarto técnico donde termina el cable">
           <input value={form.idf} onChange={e => set('idf', e.target.value)} style={inp} placeholder="IDF1-P1-E2" />
@@ -563,7 +568,7 @@ function Step5({ form, set }: { form: NodeWizardData; set: (k: keyof NodeWizardD
         <p style={{ fontSize: '0.78rem', fontWeight: 700, color: '#475569', margin: '0 0 10px 0' }}>Resumen de completitud del nodo</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
           {[
-            { label: 'Código', ok: !!form.codigo },
+            { label: 'Nombre', ok: !!form.name },
             { label: 'IDF/MDF', ok: !!form.idf },
             { label: 'Área', ok: !!form.area },
             { label: 'Marca', ok: !!form.marca },
@@ -590,15 +595,16 @@ function Step5({ form, set }: { form: NodeWizardData; set: (k: keyof NodeWizardD
 export default function NodeWizard({ item, onClose, onSave }: Props) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<NodeWizardData>(item ?? blank);
+  const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
   const set = (k: keyof NodeWizardData, v: any) => setForm(f => ({ ...f, [k]: v }));
 
   const canNext = () => {
-    if (step === 1) return !!form.codigo && !!form.idf && !!form.area;
+    if (step === 1) return nomenclatureAvailable && !!form.name && !!form.idf && !!form.area;
     return true;
   };
 
   const handleSave = () => {
-    if (!form.codigo || !form.idf || !form.area) { setStep(1); return; }
+    if (!nomenclatureAvailable || !form.name || !form.idf || !form.area) { setStep(1); return; }
     onSave({ ...form, id: form.id || `n${Date.now()}` });
   };
 
@@ -668,7 +674,7 @@ export default function NodeWizard({ item, onClose, onSave }: Props) {
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '1.5rem' }}>
-          {step === 1 && <Step1 form={form} set={set} />}
+          {step === 1 && <Step1 form={form} set={set} onNomenclature={setNomenclatureAvailable} />}
           {step === 2 && <Step2 form={form} set={set} />}
           {step === 3 && <Step3 form={form} set={set} />}
           {step === 4 && <Step4 form={form} set={set} />}

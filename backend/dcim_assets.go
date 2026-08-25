@@ -102,6 +102,7 @@ type TechnicalData struct {
 
 type CreateAssetRequest struct {
 	AssetTypeID     string         `json:"asset_type_id"`
+	InternalCode    string         `json:"internal_code"`
 	LocationID      *string        `json:"location_id"`
 	TechnicalRoomID *string        `json:"technical_room_id"`
 	Name            string         `json:"name"`
@@ -151,6 +152,14 @@ type AssetsListResponse struct {
 	Page   int     `json:"page"`
 	Limit  int     `json:"limit"`
 }
+
+type NomenclatureAssignment struct {
+	ID       string
+	Code     string
+	Sequence int
+}
+
+var ErrNomenclatureRequired = fmt.Errorf("active nomenclature is required")
 
 // ==========================================
 // DCIMHandler
@@ -540,52 +549,47 @@ func (h *DCIMHandler) HandleHierarchy(w http.ResponseWriter, r *http.Request) {
 // Formato: [PREFIX][SEP][BRANCH_CODE][SEP][SEQ_PADDED]
 // Ejemplo: SW-TIJ-0001
 // ==========================================
-func (h *DCIMHandler) generateInternalCode(tx *sql.Tx, tenantID, branchID, assetTypeCode string) (string, error) {
+func (h *DCIMHandler) generateInternalCode(tx TenantDB, tenantID, branchID, assetTypeCode string) (NomenclatureAssignment, error) {
 	// Obtener la regla de nomenclatura con bloqueo exclusivo (FOR UPDATE)
+	var ruleID string
 	var prefix, separator string
 	var seqDigits, lastSeq int
 	var includeBranch bool
 	var customSeg1, customSeg2 sql.NullString
 	err := tx.QueryRow(
-		`SELECT prefix, separator, seq_digits, last_seq, include_branch,
+		`SELECT id, prefix, separator, seq_digits, last_seq, include_branch,
 		        COALESCE(custom_segment_1,''), COALESCE(custom_segment_2,'')
 		 FROM naming_rules
-		 WHERE tenant_id = $1 AND asset_type_code = $2
+		 WHERE tenant_id = $1 AND asset_type_code = $2 AND active = TRUE
 		 FOR UPDATE`,
 		tenantID, assetTypeCode,
-	).Scan(&prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &customSeg1, &customSeg2)
+	).Scan(&ruleID, &prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &customSeg1, &customSeg2)
 
 	if err == sql.ErrNoRows {
-		// Sin regla configurada: usar prefijo genérico basado en el tipo
-		prefix = strings.ToUpper(assetTypeCode[:minInt(3, len(assetTypeCode))])
-		separator = "-"
-		seqDigits = 4
-		lastSeq = 0
-		includeBranch = false
+		return NomenclatureAssignment{}, ErrNomenclatureRequired
 	} else if err != nil {
-		return "", fmt.Errorf("error leyendo naming_rule: %w", err)
+		return NomenclatureAssignment{}, fmt.Errorf("error leyendo naming_rule: %w", err)
 	}
 
 	// Incrementar secuencia
 	newSeq := lastSeq + 1
 
 	// Actualizar la secuencia en la BD (dentro de la misma transacción)
-	if err == nil { // Solo actualizar si la regla existe
-		_, err = tx.Exec(
-			`UPDATE naming_rules SET last_seq = $1, updated_at = NOW()
-			 WHERE tenant_id = $2 AND asset_type_code = $3`,
-			newSeq, tenantID, assetTypeCode,
-		)
-		if err != nil {
-			return "", fmt.Errorf("error actualizando naming_rule seq: %w", err)
-		}
+	if _, err = tx.Exec(
+		`UPDATE naming_rules SET last_seq = $1, updated_at = NOW()
+			 WHERE id = $2 AND tenant_id = $3`,
+		newSeq, ruleID, tenantID,
+	); err != nil {
+		return NomenclatureAssignment{}, fmt.Errorf("error actualizando naming_rule seq: %w", err)
 	}
 
 	// Obtener código corto de la sucursal (primeras 3 letras de city o name)
 	branchCode := ""
 	if includeBranch {
 		var city, name sql.NullString
-		_ = tx.QueryRow(`SELECT city, name FROM branches WHERE id = $1`, branchID).Scan(&city, &name)
+		if err := tx.QueryRow(`SELECT city, name FROM branches WHERE id = $1 AND tenant_id = $2`, branchID, tenantID).Scan(&city, &name); err != nil {
+			return NomenclatureAssignment{}, fmt.Errorf("error resolving branch component: %w", err)
+		}
 		if city.Valid && city.String != "" {
 			branchCode = strings.ToUpper(strings.ReplaceAll(city.String, " ", ""))
 			if len(branchCode) > 3 {
@@ -614,7 +618,17 @@ func (h *DCIMHandler) generateInternalCode(tx *sql.Tx, tenantID, branchID, asset
 		parts = append(parts, strings.ToUpper(strings.ReplaceAll(customSeg2.String, " ", "")))
 	}
 	parts = append(parts, seqStr)
-	return strings.Join(parts, separator), nil
+	return NomenclatureAssignment{ID: ruleID, Code: strings.Join(parts, separator), Sequence: newSeq}, nil
+}
+
+func writeNomenclatureRequired(w http.ResponseWriter, assetTypeCode string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":      "nomenclature_required",
+		"asset_type": strings.ToLower(assetTypeCode),
+		"message":    fmt.Sprintf("No existe una nomenclatura activa para %s.", assetTypeCode),
+	})
 }
 
 // minInt helper para longitud de string (evita conflicto con builtin min de Go 1.21+)
@@ -887,6 +901,10 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"name and asset_type_id are required"}`, http.StatusBadRequest)
 		return
 	}
+	if strings.TrimSpace(req.InternalCode) != "" {
+		writeManagedAssetError(w, ErrManualAssetCode, "")
+		return
+	}
 	if req.Status == "" {
 		req.Status = "active"
 	}
@@ -912,8 +930,12 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Generar internal_code transaccional (INV-DCM-0015)
-	internalCode, err := h.generateInternalCode(tx, tenantID, branchID, assetTypeCode)
+	assignment, err := h.generateInternalCode(tx, tenantID, branchID, assetTypeCode)
 	if err != nil {
+		if err == ErrNomenclatureRequired {
+			writeNomenclatureRequired(w, assetTypeCode)
+			return
+		}
 		log.Printf("ERROR generating internal_code: %v", err)
 		http.Error(w, `{"error":"could not generate internal code"}`, http.StatusInternalServerError)
 		return
@@ -925,7 +947,8 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 	_, err = tx.Exec(`
 		INSERT INTO assets (
 			id, tenant_id, branch_id, asset_type_id, location_id,
-			internal_code, name, serial_number, model, manufacturer,
+			internal_code, nomenclature_id, nomenclature_sequence,
+			name, serial_number, model, manufacturer,
 			manufacturer_id, model_id, provider_id,
 			status, inventory_status,
 			rfid_tag, qr_code, install_year, observations,
@@ -933,15 +956,17 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 			created_by, updated_by
 		) VALUES (
 			$1,$2,$3,$4,$5,
-			$6,$7,$8,$9,$10,
-			$11,$12,$13,
-			$14,$15,
-			$16,$17,$18,$19,
-			$20,$21,$22,
-			$23,$24
+			$6,$7,$8,
+			$9,$10,$11,$12,
+			$13,$14,$15,
+			$16,$17,
+			$18,$19,$20,$21,
+			$22,$23,$24,
+			$25,$26
 		)`,
 		newID, tenantID, branchID, req.AssetTypeID, req.LocationID,
-		internalCode, req.Name, req.SerialNumber, req.Model, req.Manufacturer,
+		assignment.Code, assignment.ID, assignment.Sequence,
+		req.Name, req.SerialNumber, req.Model, req.Manufacturer,
 		req.ManufacturerID, req.ModelID, req.ProviderID,
 		req.Status, req.InventoryStatus,
 		req.RFIDTag, req.QRCode, req.InstallYear, req.Observations,
@@ -1108,7 +1133,7 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 	_, logErr := tx.Exec(`
 		INSERT INTO asset_logs (id, tenant_id, asset_id, event_type, new_value, notes, performed_by)
 		VALUES ($1,$2,$3,'created',$4,'Activo creado vía ActivoWizard',$5)`,
-		logID, tenantID, newID, internalCode, userID,
+		logID, tenantID, newID, assignment.Code, userID,
 	)
 	if logErr != nil {
 		log.Printf("WARN: error registrando asset_log: %v", logErr)
@@ -1123,9 +1148,10 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]string{
-		"id":            newID,
-		"internal_code": internalCode,
-		"status":        "created",
+		"id":              newID,
+		"internal_code":   assignment.Code,
+		"nomenclature_id": assignment.ID,
+		"status":          "created",
 	}
 	if satID != "" {
 		resp["satellite_id"] = satID
@@ -1171,6 +1197,10 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 	var req UpdateAssetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if req.InternalCode != nil {
+		writeManagedAssetError(w, ErrManualAssetCode, "")
 		return
 	}
 
@@ -1768,9 +1798,14 @@ func (h *DCIMHandler) HandleProviders(w http.ResponseWriter, r *http.Request) {
 // HandleNamingRules — /api/dcim/catalogs/naming-rules y /api/dcim/catalogs/naming-rules/{id}
 func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_, tenantID, _, err := h.getSessionContext(r)
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	_, tenantID, _, ok := TenantIdentityFromContext(r.Context())
+	if !ok {
+		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
+		return
+	}
+	tdb, ok := TenantDBFromContext(r.Context())
+	if !ok {
+		http.Error(w, `{"error":"internal error: missing tenant database"}`, http.StatusInternalServerError)
 		return
 	}
 	path := r.URL.Path
@@ -1781,12 +1816,13 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := h.DB.Query(
+		rows, err := tdb.QueryContext(r.Context(),
 			`SELECT nr.id, nr.asset_type_code, at.name,
 			        nr.prefix, nr.separator, nr.include_branch, nr.include_location,
 			        nr.seq_digits, nr.reset_per_location, nr.last_seq, nr.updated_at,
 			        COALESCE(nr.custom_segment_1,''), COALESCE(nr.custom_segment_2,''),
-			        COALESCE(nr.custom_segment_1_label,'Segmento 1'), COALESCE(nr.custom_segment_2_label,'Segmento 2')
+			        COALESCE(nr.custom_segment_1_label,'Segmento 1'), COALESCE(nr.custom_segment_2_label,'Segmento 2'),
+			        nr.active, COALESCE(nr.description,'')
 			 FROM naming_rules nr
 			 JOIN asset_types at ON at.code = nr.asset_type_code
 			 WHERE nr.tenant_id=$1 ORDER BY at.name`, tenantID)
@@ -1812,6 +1848,8 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			CustomSegment2      string `json:"custom_segment_2"`
 			CustomSegment1Label string `json:"custom_segment_1_label"`
 			CustomSegment2Label string `json:"custom_segment_2_label"`
+			Active              bool   `json:"active"`
+			Description         string `json:"description"`
 		}
 		list := []Rule{}
 		for rows.Next() {
@@ -1821,7 +1859,8 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 				&rule.Prefix, &rule.Separator, &rule.IncludeBranch, &rule.IncludeLocation,
 				&rule.SeqDigits, &rule.ResetPerLocation, &rule.LastSeq, &ua,
 				&rule.CustomSegment1, &rule.CustomSegment2,
-				&rule.CustomSegment1Label, &rule.CustomSegment2Label); err == nil {
+				&rule.CustomSegment1Label, &rule.CustomSegment2Label,
+				&rule.Active, &rule.Description); err == nil {
 				rule.UpdatedAt = fmt.Sprintf("%v", ua)
 				// Preview del siguiente código con los segmentos genéricos
 				previewParts := []string{rule.Prefix}
@@ -1853,12 +1892,14 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			CustomSegment2      *string `json:"custom_segment_2"`
 			CustomSegment1Label *string `json:"custom_segment_1_label"`
 			CustomSegment2Label *string `json:"custom_segment_2_label"`
+			Active              *bool   `json:"active"`
+			Description         *string `json:"description"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
 			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
 			return
 		}
-		_, err := h.DB.Exec(
+		_, err := tdb.ExecContext(r.Context(),
 			`UPDATE naming_rules
 			 SET prefix=CASE WHEN $1!='' THEN $1 ELSE prefix END,
 			     separator=CASE WHEN $2!='' THEN $2 ELSE separator END,
@@ -1870,11 +1911,13 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			     custom_segment_2=$8,
 			     custom_segment_1_label=COALESCE($9,custom_segment_1_label),
 			     custom_segment_2_label=COALESCE($10,custom_segment_2_label),
+			     active=COALESCE($11,active),
+			     description=COALESCE($12,description),
 			     updated_at=now()
-			 WHERE id=$11 AND tenant_id=$12`,
+			 WHERE id=$13 AND tenant_id=$14`,
 			b.Prefix, b.Separator, b.IncludeBranch, b.IncludeLocation, b.SeqDigits, b.ResetPerLocation,
 			b.CustomSegment1, b.CustomSegment2, b.CustomSegment1Label, b.CustomSegment2Label,
-			ruleID, tenantID)
+			b.Active, b.Description, ruleID, tenantID)
 		if err != nil {
 			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 			return
