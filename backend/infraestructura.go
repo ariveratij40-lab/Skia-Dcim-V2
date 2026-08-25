@@ -333,6 +333,15 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			writeManagedAssetError(w, err, mdfType)
 			return
 		}
+		placementID := generateID()
+		if _, err = tenantTx.Exec(`INSERT INTO locations(id,tenant_id,branch_id,placement_type,placement_code,name,status,asset_id) VALUES($1,$2,$3,$4,$5,$6,'active',$7)`, placementID, tenantID, branchID, mdfType, managed.Assignment.Code, req.Name, managed.AssetID); err != nil {
+			writeManagedAssetError(w, err, mdfType)
+			return
+		}
+		if _, err = tenantTx.Exec(`UPDATE assets SET location_id=$1 WHERE id=$2 AND tenant_id=$3`, placementID, managed.AssetID, tenantID); err != nil {
+			writeManagedAssetError(w, err, mdfType)
+			return
+		}
 		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "mdf_id": mdfID})
 
 	default:
@@ -436,6 +445,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 			PostCount    string `json:"post_count"`
 			Observations string `json:"observations"`
 			InstallYear  int    `json:"install_year"`
+			PlacementID  string `json:"placement_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -450,7 +460,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "RACK", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
-			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
+			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear, PlacementID: req.PlacementID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "RACK")
@@ -573,13 +583,14 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Obtener el mdf_idf.id y datos del asset
-	var mdfIdfID, mdfCode, mdfName string
+	var mdfIdfID, mdfCode, mdfName, placementID string
 	var totalU int
 	err = tenantTx.QueryRow(`
-		SELECT m.id, a.internal_code, COALESCE(a.name, a.internal_code)
+		SELECT m.id, a.internal_code, COALESCE(a.name, a.internal_code), l.id
 		FROM mdf_idf m JOIN assets a ON a.id = m.asset_id
+		JOIN locations l ON l.asset_id=a.id
 		WHERE m.asset_id = $1 AND m.tenant_id = $2`,
-		mdfAssetID, tenantID).Scan(&mdfIdfID, &mdfCode, &mdfName)
+		mdfAssetID, tenantID).Scan(&mdfIdfID, &mdfCode, &mdfName, &placementID)
 	if err != nil {
 		http.Error(w, `{"error":"MDF/IDF no encontrado"}`, http.StatusNotFound)
 		return
@@ -619,7 +630,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 
 	// No existe — crear el rack automáticamente bajo la misma nomenclatura autoritativa.
 	managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
-		AssetTypeCode: "RACK", Name: fmt.Sprintf("Rack %s", mdfName), Status: "active",
+		AssetTypeCode: "RACK", Name: fmt.Sprintf("Rack %s", mdfName), Status: "active", PlacementID: placementID,
 	})
 	if err != nil {
 		writeManagedAssetError(w, err, "RACK")
@@ -731,6 +742,7 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 			Serial       string `json:"serial"`
 			Observations string `json:"observations"`
 			InstallYear  int    `json:"install_year"`
+			PlacementID  string `json:"placement_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -745,7 +757,7 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "SWITCH", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
-			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
+			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear, PlacementID: req.PlacementID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "SWITCH")
@@ -872,6 +884,7 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 			OutletCount    int     `json:"outlet_count"`
 			Amperage       float64 `json:"amperage"`
 			InstallYear    int     `json:"install_year"`
+			PlacementID    string  `json:"placement_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -889,7 +902,7 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 		}
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: category, Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
-			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
+			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear, PlacementID: req.PlacementID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, category)
@@ -1001,6 +1014,7 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 			Serial       string `json:"serial"`
 			Observations string `json:"observations"`
 			InstallYear  int    `json:"install_year"`
+			PlacementID  string `json:"placement_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -1015,7 +1029,7 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "PATCH_PANEL", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
-			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
+			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear, PlacementID: req.PlacementID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "PATCH_PANEL")
@@ -1274,6 +1288,7 @@ func handleNodos(w http.ResponseWriter, r *http.Request) {
 			Model        string `json:"model"`
 			Observations string `json:"observations"`
 			InstallYear  int    `json:"install_year"`
+			PlacementID  string `json:"placement_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Bad request", http.StatusBadRequest)
@@ -1287,7 +1302,7 @@ func handleNodos(w http.ResponseWriter, r *http.Request) {
 		}
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "NODE", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
-			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
+			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear, PlacementID: req.PlacementID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "NODE")

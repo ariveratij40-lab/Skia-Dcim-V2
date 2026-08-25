@@ -18,7 +18,7 @@ func TestGenerateInternalCodeRequiresActiveNomenclature(t *testing.T) {
 	defer database.Close()
 	mock.ExpectQuery("SELECT id, prefix, separator").
 		WithArgs("tenant-1", "SWITCH").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "custom_segment_1", "custom_segment_2"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "include_placement", "custom_segment_1", "custom_segment_2"}))
 
 	_, err = (&DCIMHandler{}).generateInternalCode(database, "tenant-1", "branch-1", "SWITCH")
 	if !errors.Is(err, ErrNomenclatureRequired) {
@@ -50,8 +50,8 @@ func TestGenerateInternalCodeUsesLockedSequence(t *testing.T) {
 	defer database.Close()
 	mock.ExpectQuery("SELECT id, prefix, separator").
 		WithArgs("tenant-1", "SWITCH").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "custom_segment_1", "custom_segment_2"}).
-			AddRow("rule-1", "SW", "-", 4, 41, true, "EDGE", "CORE"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "include_placement", "custom_segment_1", "custom_segment_2"}).
+			AddRow("rule-1", "SW", "-", 4, 41, true, false, "EDGE", "CORE"))
 	mock.ExpectExec("UPDATE naming_rules SET last_seq").
 		WithArgs(42, "rule-1", "tenant-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectQuery("SELECT city, name FROM branches").WithArgs("branch-1", "tenant-1").

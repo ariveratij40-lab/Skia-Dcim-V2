@@ -501,6 +501,7 @@ export default function SwitchesPage() {
                 ports_total: data.puertos ?? 0,
                 ports_free: data.puertos_libres ?? 0,
                 observations: data.observaciones ?? '',
+                placement_id: data.placement_id,
               }).then(resp => {
                 setSwitches(ss => [{ ...newSw, id: resp.data.id ?? newSw.id, code: resp.data.internal_code ?? newSw.code }, ...ss]);
               }).catch(() => undefined);

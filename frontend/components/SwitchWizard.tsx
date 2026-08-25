@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Network, Cpu, MapPin, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
 import NomenclatureCodeField from './NomenclatureCodeField';
+import AssetPlacementSelector, { AssetPlacement } from './AssetPlacementSelector';
 
 export type SwStatus = 'Activo' | 'Inactivo' | 'Baja';
 export type SwTipo = 'Core' | 'Distribución' | 'Acceso' | 'PoE' | 'Industrial' | 'Administrable' | 'No administrable';
@@ -10,6 +11,7 @@ export interface SwitchWizardData {
   code: string; name: string; brand: string; model: string; serie: string;
   tipo: SwTipo; status: SwStatus;
   ubicacion: string; ubicacion_plano: string;
+  placement_id:string;
   puertos: number; puertos_libres: number; puertos_poe: number;
   capacidad_puerto: string; ip: string; firmware: string;
   fecha_compra: string; expiracion_garantia: string;
@@ -43,7 +45,7 @@ const PORT_SPEEDS = ['100M','1G','2.5G','5G','10G','25G','40G','100G'];
 
 const EMPTY: SwitchWizardData = {
   code: '', name: '', brand: '', model: '', serie: '', tipo: 'Acceso', status: 'Activo',
-  ubicacion: '', ubicacion_plano: '', puertos: 24, puertos_libres: 0, puertos_poe: 0,
+  ubicacion: '', ubicacion_plano: '', placement_id:'', puertos: 24, puertos_libres: 0, puertos_poe: 0,
   capacidad_puerto: '1G', ip: '', firmware: '',
   fecha_compra: '', expiracion_garantia: '',
   no_factura: '', costo_dls: 0, proveedor: '', contrato_sla: '',
@@ -56,6 +58,7 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
   const [form, setForm] = useState<SwitchWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
+  const [placement,setPlacement]=useState<AssetPlacement|undefined>();
 
   const set = (field: keyof SwitchWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
@@ -64,13 +67,13 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
     const c: number[] = [];
     if (form.name && form.tipo && form.status && nomenclatureAvailable) c.push(1);
     if (form.puertos) c.push(2);
-    if (form.ubicacion) c.push(3);
+    if (form.placement_id) c.push(3);
     if (form.proveedor) c.push(4);
     return c;
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.tipo || !nomenclatureAvailable) return;
+    if (!form.name || !form.tipo || !nomenclatureAvailable || !form.placement_id) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -119,7 +122,7 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
       case 1: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>{fld('Código técnico', <NomenclatureCodeField assetType="SWITCH" onAvailability={setNomenclatureAvailable} />)}</div>
+            <div>{fld('Código técnico', <NomenclatureCodeField assetType="SWITCH" placementCode={placement?.canonical_code} onAvailability={setNomenclatureAvailable} />)}</div>
             <div>{fld('Nombre descriptivo', inp('name', 'Switch Patio'), true)}</div>
             <div>{fld('No. Serie', inp('serie', 'CAT2024X001'))}</div>
             <div>{fld('Marca', (
@@ -151,7 +154,7 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
       );
       case 3: return (
         <div>
-          {fld('Ubicación / Cuarto técnico', inp('ubicacion', 'MDF Principal Torre A'), true)}
+          <AssetPlacementSelector assetType="SWITCH" value={form.placement_id} onChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('ubicacion',p?.name||'')}} />
           {fld('Referencia en plano', inp('ubicacion_plano', 'Plano MDF-A S1'))}
           {fld('Etiqueta RFID', inp('rfid', 'RFID-SW-001'))}
           {fld('Observaciones', (

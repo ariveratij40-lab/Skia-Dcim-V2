@@ -4,9 +4,10 @@ import axios from 'axios';
 interface Props {
   assetType: string;
   onAvailability?: (available: boolean) => void;
+  placementCode?: string;
 }
 
-export default function NomenclatureCodeField({ assetType, onAvailability }: Props) {
+export default function NomenclatureCodeField({ assetType, onAvailability, placementCode }: Props) {
   const [preview, setPreview] = useState('');
   const [available, setAvailable] = useState(false);
 
@@ -20,13 +21,13 @@ export default function NomenclatureCodeField({ assetType, onAvailability }: Pro
       );
       const nextAvailable = Boolean(rule);
       setAvailable(nextAvailable);
-      setPreview(rule?.next_code_preview ?? '');
+      setPreview((rule?.next_code_preview ?? '').replace('PLACEMENT',placementCode||'UBICACIÓN'));
       onAvailability?.(nextAvailable);
     }).catch(() => {
       setAvailable(false);
       onAvailability?.(false);
     });
-  }, [assetType, onAvailability]);
+  }, [assetType, onAvailability, placementCode]);
 
   useEffect(() => {
     loadRule();
@@ -45,7 +46,7 @@ export default function NomenclatureCodeField({ assetType, onAvailability }: Pro
   }
   return (
     <div style={{ padding: '10px 14px', borderRadius: 8, background: '#EEF2FF', color: '#3730A3', fontWeight: 700 }}>
-      Código técnico: Se generará automáticamente{preview ? ` (${preview})` : ''}
+      Código técnico: {placementCode?'Se generará automáticamente':'Seleccione ubicación para generar preview'}{placementCode&&preview ? ` (${preview})` : ''}
     </div>
   );
 }

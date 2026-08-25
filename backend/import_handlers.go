@@ -177,7 +177,7 @@ func ExtractSessionContextSecure(r *http.Request, db *sql.DB) *SessionContextSec
 			`SELECT EXISTS(
 				SELECT 1 FROM branches b
 				JOIN user_branches ub ON ub.branch_id = b.id
-				WHERE b.id = $1 AND b.tenant_id = $2 AND ub.user_id = $3
+				WHERE b.id = $1 AND b.tenant_id = $2 AND b.status = 'active' AND ub.user_id = $3
 			)`,
 			*branchID, tenantID, userID,
 		).Scan(&authorized)
@@ -202,7 +202,7 @@ func ExtractSessionContextSecure(r *http.Request, db *sql.DB) *SessionContextSec
 	rows, err := db.Query(
 		`SELECT b.id, b.name FROM branches b
 		 JOIN user_branches ub ON ub.branch_id = b.id
-		 WHERE ub.user_id = $1 AND b.tenant_id = $2
+		 WHERE ub.user_id = $1 AND b.tenant_id = $2 AND b.status = 'active'
 		 ORDER BY b.name`,
 		userID, tenantID,
 	)

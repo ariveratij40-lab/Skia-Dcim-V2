@@ -2196,6 +2196,17 @@ function MdfIdfContent() {
   }, []);
   const [activeTab, setActiveTab] = useState<'resumen' | 'inventario' | 'normativa'>(highlightCode ? 'inventario' : 'resumen');
   const [showMdfWizard, setShowMdfWizard] = useState(false);
+  const requestedPlacementType = router.query.create === 'MDF' || router.query.create === 'IDF'
+    ? router.query.create
+    : undefined;
+  useEffect(() => {
+    if (!router.isReady || !requestedPlacementType) return;
+    const requestedBranch = typeof router.query.branch_id === 'string' ? router.query.branch_id : '';
+    if (!requestedBranch) { setShowMdfWizard(true); return; }
+    axios.post('/api/auth/select-branch', { branchId: requestedBranch })
+      .then(() => setShowMdfWizard(true))
+      .catch(() => setShowMdfWizard(false));
+  }, [router.isReady, requestedPlacementType, router.query.branch_id]);
   // ─── Rack Builder elevado al padre para que Resumen e Inventario lo compartan ───
   const [showRackBuilderGlobal, setShowRackBuilderGlobal] = useState(false);
   const [rackBuilderRecordGlobal, setRackBuilderRecordGlobal] = useState<MdfIdfRecord | null>(null);
@@ -2322,6 +2333,7 @@ function MdfIdfContent() {
       )}
       {showMdfWizard && (
         <MdfIdfWizard
+          initial={requestedPlacementType ? { type: requestedPlacementType } : undefined}
           onClose={() => setShowMdfWizard(false)}
           onSave={(d: MdfIdfWizardData) => {
             const newRecord: MdfIdfRecord = {
@@ -2358,6 +2370,7 @@ function MdfIdfContent() {
                 notes: d.notes ?? '',
               }).then(resp => {
                 setData(prev => [{ ...newRecord, id: resp.data.id ?? newRecord.id, code: resp.data.internal_code ?? newRecord.code }, ...prev]);
+                if (typeof router.query.return_to === 'string' && window.opener) window.close();
               }).catch(() => undefined);
             });
             setShowMdfWizard(false);

@@ -162,6 +162,11 @@ type NomenclatureAssignment struct {
 	Sequence int
 }
 
+type NomenclatureContext struct {
+	TenantID, BranchID, AssetTypeCode string
+	Placement                         *ResolvedPlacement
+}
+
 var ErrNomenclatureRequired = fmt.Errorf("active nomenclature is required")
 
 // ==========================================
@@ -553,20 +558,24 @@ func (h *DCIMHandler) HandleHierarchy(w http.ResponseWriter, r *http.Request) {
 // Ejemplo: SW-TIJ-0001
 // ==========================================
 func (h *DCIMHandler) generateInternalCode(tx TenantDB, tenantID, branchID, assetTypeCode string) (NomenclatureAssignment, error) {
+	return h.generateInternalCodeWithContext(tx, NomenclatureContext{TenantID: tenantID, BranchID: branchID, AssetTypeCode: assetTypeCode})
+}
+
+func (h *DCIMHandler) generateInternalCodeWithContext(tx TenantDB, ctx NomenclatureContext) (NomenclatureAssignment, error) {
 	// Obtener la regla de nomenclatura con bloqueo exclusivo (FOR UPDATE)
 	var ruleID string
 	var prefix, separator string
 	var seqDigits, lastSeq int
-	var includeBranch bool
+	var includeBranch, includePlacement bool
 	var customSeg1, customSeg2 sql.NullString
 	err := tx.QueryRow(
-		`SELECT id, prefix, separator, seq_digits, last_seq, include_branch,
+		`SELECT id, prefix, separator, seq_digits, last_seq, include_branch, include_placement,
 		        COALESCE(custom_segment_1,''), COALESCE(custom_segment_2,'')
 		 FROM naming_rules
 		 WHERE tenant_id = $1 AND asset_type_code = $2 AND active = TRUE
 		 FOR UPDATE`,
-		tenantID, assetTypeCode,
-	).Scan(&ruleID, &prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &customSeg1, &customSeg2)
+		ctx.TenantID, ctx.AssetTypeCode,
+	).Scan(&ruleID, &prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &includePlacement, &customSeg1, &customSeg2)
 
 	if err == sql.ErrNoRows {
 		return NomenclatureAssignment{}, ErrNomenclatureRequired
@@ -574,15 +583,22 @@ func (h *DCIMHandler) generateInternalCode(tx TenantDB, tenantID, branchID, asse
 		return NomenclatureAssignment{}, fmt.Errorf("error leyendo naming_rule: %w", err)
 	}
 
-	// Incrementar secuencia
 	newSeq := lastSeq + 1
-
-	// Actualizar la secuencia en la BD (dentro de la misma transacción)
-	if _, err = tx.Exec(
-		`UPDATE naming_rules SET last_seq = $1, updated_at = NOW()
-			 WHERE id = $2 AND tenant_id = $3`,
-		newSeq, ruleID, tenantID,
-	); err != nil {
+	if includePlacement {
+		if ctx.Placement == nil || !ctx.Placement.Active {
+			return NomenclatureAssignment{}, ErrInvalidAssetPlacement
+		}
+		if _, err = tx.Exec(`INSERT INTO nomenclature_counters(nomenclature_id,tenant_id,branch_id,placement_id,last_seq) VALUES($1,$2,$3,$4,0) ON CONFLICT DO NOTHING`, ruleID, ctx.TenantID, ctx.BranchID, ctx.Placement.ID); err != nil {
+			return NomenclatureAssignment{}, fmt.Errorf("create placement counter: %w", err)
+		}
+		if err = tx.QueryRow(`SELECT last_seq FROM nomenclature_counters WHERE nomenclature_id=$1 AND branch_id=$2 AND placement_id=$3 FOR UPDATE`, ruleID, ctx.BranchID, ctx.Placement.ID).Scan(&lastSeq); err != nil {
+			return NomenclatureAssignment{}, fmt.Errorf("lock placement counter: %w", err)
+		}
+		newSeq = lastSeq + 1
+		if _, err = tx.Exec(`UPDATE nomenclature_counters SET last_seq=$1,updated_at=now() WHERE nomenclature_id=$2 AND branch_id=$3 AND placement_id=$4`, newSeq, ruleID, ctx.BranchID, ctx.Placement.ID); err != nil {
+			return NomenclatureAssignment{}, fmt.Errorf("update placement counter: %w", err)
+		}
+	} else if _, err = tx.Exec(`UPDATE naming_rules SET last_seq=$1,updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, newSeq, ruleID, ctx.TenantID); err != nil {
 		return NomenclatureAssignment{}, fmt.Errorf("error actualizando naming_rule seq: %w", err)
 	}
 
@@ -590,7 +606,7 @@ func (h *DCIMHandler) generateInternalCode(tx TenantDB, tenantID, branchID, asse
 	branchCode := ""
 	if includeBranch {
 		var city, name sql.NullString
-		if err := tx.QueryRow(`SELECT city, name FROM branches WHERE id = $1 AND tenant_id = $2`, branchID, tenantID).Scan(&city, &name); err != nil {
+		if err := tx.QueryRow(`SELECT city, name FROM branches WHERE id = $1 AND tenant_id = $2`, ctx.BranchID, ctx.TenantID).Scan(&city, &name); err != nil {
 			return NomenclatureAssignment{}, fmt.Errorf("error resolving branch component: %w", err)
 		}
 		if city.Valid && city.String != "" {
@@ -612,6 +628,9 @@ func (h *DCIMHandler) generateInternalCode(tx TenantDB, tenantID, branchID, asse
 	parts := []string{prefix}
 	if branchCode != "" {
 		parts = append(parts, branchCode)
+	}
+	if includePlacement {
+		parts = append(parts, ctx.Placement.CanonicalCode)
 	}
 	// Agregar segmentos genéricos si están configurados
 	if customSeg1.Valid && customSeg1.String != "" {
@@ -932,8 +951,31 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Generar internal_code transaccional (INV-DCM-0015)
-	assignment, err := h.generateInternalCode(tx, tenantID, branchID, assetTypeCode)
+	// Los tipos instalables resuelven placement dentro de esta misma TenantTx.
+	// location_id es únicamente la referencia; el cliente nunca aporta código o tipo.
+	var placement *ResolvedPlacement
+	if installableAssetTypes[assetTypeCode] {
+		if req.LocationID == nil || strings.TrimSpace(*req.LocationID) == "" {
+			writeManagedAssetError(w, ErrInvalidAssetPlacement, "")
+			return
+		}
+		resolved, resolveErr := ResolveAssetPlacement(r.Context(), tx, AssetPlacementContext{
+			TenantID: tenantID, BranchID: branchID, PlacementID: *req.LocationID,
+		})
+		if resolveErr != nil {
+			writeManagedAssetError(w, ErrInvalidAssetPlacement, "")
+			return
+		}
+		placement = &resolved
+		if resolved.Type == "WAREHOUSE" {
+			req.Status = "inactive"
+		}
+	}
+
+	// Generar internal_code transaccional después de validar placement (INV-ASSET-NOM-009).
+	assignment, err := h.generateInternalCodeWithContext(tx, NomenclatureContext{
+		TenantID: tenantID, BranchID: branchID, AssetTypeCode: assetTypeCode, Placement: placement,
+	})
 	if err != nil {
 		if err == ErrNomenclatureRequired {
 			writeNomenclatureRequired(w, assetTypeCode)
@@ -1805,6 +1847,7 @@ type namingRuleResponse struct {
 	Prefix              string `json:"prefix"`
 	Separator           string `json:"separator"`
 	IncludeBranch       bool   `json:"include_branch"`
+	IncludePlacement    bool   `json:"include_placement"`
 	IncludeLocation     bool   `json:"include_location"`
 	SeqDigits           int    `json:"seq_digits"`
 	ResetPerLocation    bool   `json:"reset_per_location"`
@@ -1849,6 +1892,9 @@ func namingRulePreview(rule namingRuleResponse) string {
 	parts := []string{rule.Prefix}
 	if rule.IncludeBranch {
 		parts = append(parts, "BRANCH")
+	}
+	if rule.IncludePlacement {
+		parts = append(parts, "PLACEMENT")
 	}
 	if rule.CustomSegment1 != "" {
 		parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment1, " ", "")))
@@ -1981,7 +2027,7 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 		rows, err := tdb.QueryContext(r.Context(),
 			`SELECT at.code, at.name, COALESCE(at.description,''), at.requires_nomenclature,
 			        nr.id, nr.asset_type_code,
-			        nr.prefix, nr.separator, nr.include_branch, nr.include_location,
+			        nr.prefix, nr.separator, nr.include_branch, nr.include_placement, nr.include_location,
 			        nr.seq_digits, nr.reset_per_location, nr.last_seq, nr.updated_at,
 			        COALESCE(nr.custom_segment_1,''), COALESCE(nr.custom_segment_2,''),
 			        COALESCE(nr.custom_segment_1_label,'Segmento 1'), COALESCE(nr.custom_segment_2_label,'Segmento 2'),
@@ -1999,11 +2045,11 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 		for rows.Next() {
 			var item nomenclatureAssetTypeResponse
 			var ruleID, ruleType, prefix, separator, custom1, custom2, label1, label2, description sql.NullString
-			var includeBranch, includeLocation, resetPerLocation, active sql.NullBool
+			var includeBranch, includePlacement, includeLocation, resetPerLocation, active sql.NullBool
 			var seqDigits, lastSeq sql.NullInt64
 			var ua interface{}
 			if err := rows.Scan(&item.Code, &item.Name, &item.Description, &item.RequiresNomenclature,
-				&ruleID, &ruleType, &prefix, &separator, &includeBranch, &includeLocation,
+				&ruleID, &ruleType, &prefix, &separator, &includeBranch, &includePlacement, &includeLocation,
 				&seqDigits, &resetPerLocation, &lastSeq, &ua, &custom1, &custom2,
 				&label1, &label2, &active, &description); err != nil {
 				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
@@ -2011,7 +2057,7 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			}
 			if ruleID.Valid {
 				rule := namingRuleResponse{ID: ruleID.String, AssetTypeCode: ruleType.String, AssetTypeName: item.Name,
-					Prefix: prefix.String, Separator: separator.String, IncludeBranch: includeBranch.Bool,
+					Prefix: prefix.String, Separator: separator.String, IncludeBranch: includeBranch.Bool, IncludePlacement: includePlacement.Bool,
 					IncludeLocation: includeLocation.Bool, SeqDigits: int(seqDigits.Int64), ResetPerLocation: resetPerLocation.Bool,
 					LastSeq: int(lastSeq.Int64), UpdatedAt: fmt.Sprintf("%v", ua), CustomSegment1: custom1.String,
 					CustomSegment2: custom2.String, CustomSegment1Label: label1.String,
@@ -2056,6 +2102,7 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		id := uuid.NewString()
+		includePlacement := map[string]bool{"SWITCH": true, "RACK": true, "PATCH_PANEL": true, "UPS": true, "PDU": true, "NODE": true}[body.AssetTypeCode]
 		includeBranch, includeLocation, resetPerLocation, active := true, false, false, true
 		seqDigits := 4
 		if body.IncludeBranch != nil {
@@ -2076,11 +2123,11 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 		_, err := tdb.ExecContext(r.Context(), `INSERT INTO naming_rules
 			(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_location,seq_digits,
 			 reset_per_location,last_seq,active,description,custom_segment_1,custom_segment_2,
-			 custom_segment_1_label,custom_segment_2_label)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,NULLIF($12,''),NULLIF($13,''),$14,$15)`,
+			 custom_segment_1_label,custom_segment_2_label,include_placement)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,NULLIF($12,''),NULLIF($13,''),$14,$15,$16)`,
 			id, tenantID, body.AssetTypeCode, strings.ToUpper(strings.TrimSpace(body.Prefix)), body.Separator,
 			includeBranch, includeLocation, seqDigits, resetPerLocation, active, body.Description,
-			body.CustomSegment1, body.CustomSegment2, body.CustomSegment1Label, body.CustomSegment2Label)
+			body.CustomSegment1, body.CustomSegment2, body.CustomSegment1Label, body.CustomSegment2Label, includePlacement)
 		if err != nil {
 			var pqErr *pq.Error
 			if errors.As(err, &pqErr) && pqErr.Code == "23505" {

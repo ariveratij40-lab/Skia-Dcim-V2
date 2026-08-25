@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Grid3x3, Tag, MapPin, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
 import NomenclatureCodeField from './NomenclatureCodeField';
+import AssetPlacementSelector,{AssetPlacement} from './AssetPlacementSelector';
 
 export type PPType = 'Angulado' | 'Plano' | 'Keystone' | 'Fibra Óptica' | 'Blindado' | 'Modular';
 export type PPStatus = 'Activo' | 'Inactivo' | 'Baja';
@@ -15,6 +16,7 @@ export interface PatchPanelWizardData {
   purchase_date: string; install_year: number;
   invoice_no: string; cost_usd: number; supplier: string;
   sla_contract: string; cost_center: string;
+  placement_id:string;
 }
 
 interface Props {
@@ -45,7 +47,7 @@ const EMPTY: PatchPanelWizardData = {
   location: '', floor_plan_ref: '', ports_total: 24, ports_free: 0,
   rfid_tag: '', photo_url: '', observations: '',
   purchase_date: '', install_year: new Date().getFullYear(),
-  invoice_no: '', cost_usd: 0, supplier: '', sla_contract: '', cost_center: '',
+  invoice_no: '', cost_usd: 0, supplier: '', sla_contract: '', cost_center: '', placement_id:'',
 };
 
 export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
@@ -53,6 +55,7 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
   const [form, setForm] = useState<PatchPanelWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
+  const [placement,setPlacement]=useState<AssetPlacement>();
 
   const set = (field: keyof PatchPanelWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
@@ -61,13 +64,13 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
     const c: number[] = [];
     if (form.name && form.type && form.status && nomenclatureAvailable) c.push(1);
     if (form.ports_total) c.push(2);
-    if (form.location) c.push(3);
+    if (form.placement_id) c.push(3);
     if (form.supplier) c.push(4);
     return c;
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.type || !nomenclatureAvailable) return;
+    if (!form.name || !form.type || !nomenclatureAvailable || !form.placement_id) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -116,7 +119,7 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
       case 1: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>{fld('Código técnico', <NomenclatureCodeField assetType="PATCH_PANEL" onAvailability={setNomenclatureAvailable} />)}</div>
+            <div>{fld('Código técnico', <NomenclatureCodeField assetType="PATCH_PANEL" placementCode={placement?.canonical_code} onAvailability={setNomenclatureAvailable} />)}</div>
             <div>{fld('Nombre descriptivo', inp('name', 'Panel de parcheo principal'), true)}</div>
             <div>{fld('No. Serie', inp('serial', 'PAN-001'))}</div>
             <div>{fld('Marca', (
@@ -142,7 +145,7 @@ export default function PatchPanelWizard({ onClose, onSave, initial }: Props) {
       );
       case 3: return (
         <div>
-          {fld('Ubicación / Cuarto técnico', inp('location', 'IDF2 Área de Producción'), true)}
+          <AssetPlacementSelector assetType="PATCH_PANEL" value={form.placement_id} onChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('location',p?.name||'')}} />
           {fld('Referencia en plano', inp('floor_plan_ref', 'Plano IDF2 Prod'))}
           {fld('Etiqueta RFID', inp('rfid_tag', 'RFID-PP-001'))}
           {fld('Observaciones', (

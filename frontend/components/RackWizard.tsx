@@ -3,8 +3,9 @@ import { X, ChevronRight, ChevronLeft, Check, Server, MapPin, Tag, DollarSign, S
 import { CATALOGOS } from '../data/catalogos';
 import type { RackRecord, RackType, RackStatus, RackPostes } from '../pages/infraestructura/racks';
 import NomenclatureCodeField from './NomenclatureCodeField';
+import AssetPlacementSelector,{AssetPlacement} from './AssetPlacementSelector';
 
-export interface RackWizardData extends Omit<RackRecord, 'id'> { name: string }
+export interface RackWizardData extends Omit<RackRecord, 'id'> { name: string; placement_id:string }
 
 interface Props {
   onClose: () => void;
@@ -34,7 +35,7 @@ const EMPTY: RackWizardData = {
   photo_url:'', ref_image_url:'', observations:'', org_horizontal:false,
   org_vertical:false, pdu:false, integrator:'', invoice_no:'', cost_usd:0,
   po:'', cost_center:'', rfid_tag:'', install_year:new Date().getFullYear(),
-  capacity_u:42, used_u:0,
+  capacity_u:42, used_u:0, placement_id:'',
 };
 
 export default function RackWizard({ onClose, onSave, initial }: Props) {
@@ -42,6 +43,7 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
   const [form, setForm] = useState<RackWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
+  const [placement,setPlacement]=useState<AssetPlacement>();
 
   const set = (field: keyof RackWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
@@ -50,13 +52,13 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
     const c: number[] = [];
     if (form.name && form.status && form.rack_type && nomenclatureAvailable) c.push(1);
     if (form.brand && form.height_u) c.push(2);
-    if (form.location) c.push(3);
+    if (form.placement_id) c.push(3);
     if (form.integrator) c.push(4);
     return c;
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.rack_type || !form.status || !nomenclatureAvailable) return;
+    if (!form.name || !form.rack_type || !form.status || !nomenclatureAvailable || !form.placement_id) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -134,7 +136,7 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div style={{ gridColumn: '1/-1' }}>
-              {field('Código técnico', <NomenclatureCodeField assetType="RACK" onAvailability={setNomenclatureAvailable} />)}
+              {field('Código técnico', <NomenclatureCodeField assetType="RACK" placementCode={placement?.canonical_code} onAvailability={setNomenclatureAvailable} />)}
               {field('Nombre descriptivo', inp('name', 'Rack principal IDF', 'text', true), true)}
             </div>
             <div style={{ gridColumn: '1/-1' }}>
@@ -184,7 +186,7 @@ export default function RackWizard({ onClose, onSave, initial }: Props) {
       );
       case 3: return (
         <div>
-          {field('Ubicación / Cuarto técnico', inp('location', 'MDF Principal Torre A', 'text', true), true)}
+          <AssetPlacementSelector assetType="RACK" value={form.placement_id} onChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('location',p?.name||'')}} />
           {field('Referencia en plano', inp('floor_plan_ref', 'Plano MDF-A S1'))}
           {field('Etiqueta RFID', inp('rfid_tag', 'RFID-0001'))}
           {field('Observaciones', (
