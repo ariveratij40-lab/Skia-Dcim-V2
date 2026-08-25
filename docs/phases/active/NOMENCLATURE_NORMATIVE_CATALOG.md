@@ -54,7 +54,32 @@ only existing rules, while the API lacked a first-rule mutation entirely.
 
 Payload validation limits sequence digits to 2–6, requires a non-empty prefix,
 accepts only an existing asset type, and never accepts client `tenant_id` or
-`last_seq`.
+`last_seq`. `include_location=true` and `reset_per_location=true` return 422
+`unsupported_nomenclature_feature`; unsupported structure is never accepted
+silently.
+
+## Implemented now versus future capability
+
+Implemented now, consistently in the form, preview and authoritative backend
+generator:
+
+- prefix;
+- optional branch segment;
+- up to two fixed custom segments;
+- configured separator;
+- tenant-rule sequence with 2–6 digits.
+
+Reserved for a later phase:
+
+- location-derived segments (`include_location`);
+- independent sequence scopes per location (`reset_per_location`).
+
+Their database columns are retained for forward compatibility, but the catalog
+does not display or submit these controls. POST and PUT reject either flag when
+true. Supporting them requires an explicit location identity format and a
+concurrency-safe per-location counter model; it must not be approximated with
+`MAX()+1`. The preview deliberately contains only components emitted by
+`generateInternalCode`.
 
 ## Database authority and RLS decision
 
@@ -70,8 +95,8 @@ read; only the verified existing `admin` and `super_admin` role names mutate.
 
 Formal multiple versions per tenant/type are deferred because the current
 unique constraint and generator assume one current row. Silent structural
-mutation is prevented now: after `last_seq>0`, prefix, separator, branch/location
-flags, reset scope, custom segment values/labels and sequence digits are locked.
+mutation is prevented now: after `last_seq>0`, prefix, separator, branch flag,
+custom segment values/labels and sequence digits are locked.
 Active/description changes do not alter historical identity. A later versioning
 phase must introduce immutable norm versions, activation rules and generator
 selection before relaxing this lock.
@@ -95,9 +120,8 @@ unique key, RLS policy and historical asset references remain valid throughout.
 
 - Formal normative versions remain debt; structural changes after issuance
   require a future version rather than editing in place.
-- `include_location` and `reset_per_location` remain represented in the model,
-  but the current generator does not derive location components; enabling them
-  is displayed honestly and does not fabricate a preview value.
+- `include_location` and `reset_per_location` remain future database capability;
+  neither can be enabled through the normative API or UI in this phase.
 - Future asset types may be configured before their specialized wizard exists,
   but this alone does not make them managed or bypass `requires_nomenclature`.
 - Browser restrictions may prevent programmatic tab close; the return action

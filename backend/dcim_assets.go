@@ -1879,6 +1879,29 @@ func validateNamingRuleMutation(body namingRuleMutation, creating bool) error {
 	return nil
 }
 
+func unsupportedNomenclatureFeature(body namingRuleMutation) string {
+	if body.IncludeLocation != nil && *body.IncludeLocation {
+		return "include_location"
+	}
+	if body.ResetPerLocation != nil && *body.ResetPerLocation {
+		return "reset_per_location"
+	}
+	return ""
+}
+
+func writeUnsupportedNomenclatureFeature(w http.ResponseWriter, field string) {
+	message := "El segmento de ubicación aún no está disponible en el generador normativo."
+	if field == "reset_per_location" {
+		message = "Las secuencias independientes por ubicación aún no están disponibles en el generador normativo."
+	}
+	w.WriteHeader(http.StatusUnprocessableEntity)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":   "unsupported_nomenclature_feature",
+		"field":   field,
+		"message": message,
+	})
+}
+
 func requireNamingRuleAdmin(ctx context.Context, tdb TenantDB, userID, tenantID string) error {
 	var allowed bool
 	err := tdb.QueryRowContext(ctx, `SELECT EXISTS(
@@ -2018,6 +2041,10 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, `{"error":"invalid_nomenclature"}`, http.StatusUnprocessableEntity)
 			return
 		}
+		if field := unsupportedNomenclatureFeature(body); field != "" {
+			writeUnsupportedNomenclatureFeature(w, field)
+			return
+		}
 		body.AssetTypeCode = strings.ToUpper(strings.TrimSpace(body.AssetTypeCode))
 		var exists bool
 		if err := tdb.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM asset_types WHERE code=$1)`, body.AssetTypeCode).Scan(&exists); err != nil {
@@ -2081,6 +2108,10 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 		b, raw, err := decodeNamingRuleMutation(r)
 		if err != nil || validateNamingRuleMutation(b, false) != nil {
 			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
+			return
+		}
+		if field := unsupportedNomenclatureFeature(b); field != "" {
+			writeUnsupportedNomenclatureFeature(w, field)
 			return
 		}
 		custom1, hasCustom1 := rawField(raw, "custom_segment_1")

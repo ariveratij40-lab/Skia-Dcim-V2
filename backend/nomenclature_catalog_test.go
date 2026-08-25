@@ -89,6 +89,42 @@ func TestNamingRulesPostRejectsUnknownAssetType(t *testing.T) {
 	}
 }
 
+func TestNamingRulesRejectsUnsupportedLocationFeatures(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		field  string
+	}{
+		{name: "post include location", method: http.MethodPost, path: "/api/dcim/catalogs/naming-rules", field: "include_location"},
+		{name: "post reset per location", method: http.MethodPost, path: "/api/dcim/catalogs/naming-rules", field: "reset_per_location"},
+		{name: "put include location", method: http.MethodPut, path: "/api/dcim/catalogs/naming-rules/rule-1", field: "include_location"},
+		{name: "put reset per location", method: http.MethodPut, path: "/api/dcim/catalogs/naming-rules/rule-1", field: "reset_per_location"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			database, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			expectNomenclatureAdmin(mock, true)
+			body := `{"asset_type_code":"SWITCH","prefix":"SW","` + tt.field + `":true}`
+			req := nomenclatureRequest(httptest.NewRequest(tt.method, tt.path, strings.NewReader(body)), database, "user-1", "tenant-1")
+			rec := httptest.NewRecorder()
+			NewDCIMHandler(nil).HandleNamingRules(rec, req)
+			if rec.Code != http.StatusUnprocessableEntity ||
+				!strings.Contains(rec.Body.String(), `"error":"unsupported_nomenclature_feature"`) ||
+				!strings.Contains(rec.Body.String(), `"field":"`+tt.field+`"`) {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestNamingRulesPostCreatesFirstRule(t *testing.T) {
 	database, mock, err := sqlmock.New()
 	if err != nil {
