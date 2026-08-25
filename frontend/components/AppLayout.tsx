@@ -6,112 +6,68 @@ import axios from 'axios';
 import {
   Menu, X, LogOut, LayoutDashboard, Building2, Settings, Package,
   Grid3x3, ChevronDown, Zap, Network, Layers, Database, Radio, Map, FileText,
-  DollarSign, AlertCircle, BarChart3, Cpu, Users, Lock, Gauge, Lightbulb,
-  CheckSquare, TrendingUp, Shield, Wrench, Tag, Bell, Moon, Sun, Search,
-  HelpCircle, Plus, BookOpen, Upload, Award, Key, Puzzle, Sparkles
+  DollarSign, Cpu, Users, Wrench, Tag, Bell, Moon, Sun, Search,
+  HelpCircle, Plus, BookOpen, Upload, Puzzle, Sparkles
 } from 'lucide-react';
 
 interface SubItem { id: string; label: string; icon: any; path: string; }
-interface NavItem  { id: string; label: string; icon: any; path?: string; children?: SubItem[]; }
+interface NavItem  { id: string; label: string; icon: any; path?: string; children?: SubItem[]; reserved?: boolean; }
 interface AppLayoutProps { children: ReactNode; title?: string; breadcrumb?: { label: string; path?: string }[]; }
 
+// Only routes backed by real Next.js pages are clickable. Domains without an
+// operational page remain visible as reserved headings instead of dead links.
 const NAVIGATION: NavItem[] = [
-  { id:'dashboard', label:'Dashboard', icon:LayoutDashboard, path:'/dashboard' },
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   {
-    id:'infraestructura', label:'Infraestructura', icon:Building2,
-    children:[
-      { id:'activos',        label:'Activos',        icon:Package,   path:'/infraestructura/activos' },
-      { id:'mdf-idf',        label:'MDF / IDF',      icon:Database,  path:'/infraestructura/mdf-idf' },
-      { id:'racks',          label:'Racks',          icon:Grid3x3,   path:'/infraestructura/racks' },
-      { id:'patch-panels',   label:'Patch Panels',   icon:Network,   path:'/infraestructura/patch-panels' },
-      { id:'switches',       label:'Switches',       icon:Zap,       path:'/infraestructura/switches' },
-      { id:'backbone',       label:'Backbone',       icon:Layers,    path:'/infraestructura/backbone' },
-      { id:'nodos',          label:'Nodos',          icon:Radio,     path:'/infraestructura/nodos' },
-      { id:'ups-pdus',       label:'UPS / PDUs',     icon:Zap,       path:'/infraestructura/ups-pdus' },
-      { id:'topologia',      label:'Topología',      icon:Map,       path:'/infraestructura/topologia' },
-      { id:'planos',         label:'Planos',         icon:FileText,  path:'/infraestructura/planos' },
-      { id:'etiquetas-rfid', label:'Etiquetas RFID', icon:Tag,       path:'/infraestructura/etiquetas-rfid' },
-      { id:'import-inventory', label:'Importar Inventario', icon:Upload, path:'/infraestructura/import-inventory' },
-      { id:'import-dashboard', label:'Dashboard Importación', icon:BarChart3, path:'/infraestructura/import-dashboard' },
-      { id:'fabricantes',   label:'Fabricantes',   icon:BookOpen, path:'/infraestructura/catalogs/fabricantes' },
-      { id:'proveedores',   label:'Proveedores',   icon:Puzzle,   path:'/infraestructura/catalogs/proveedores' },
-      { id:'ubicaciones',   label:'Ubicaciones',   icon:Map,      path:'/infraestructura/catalogs/ubicaciones' },
-      { id:'nomenclaturas', label:'Nomenclaturas', icon:Tag,      path:'/infraestructura/catalogs/nomenclaturas' },
+    id: 'infraestructura', label: 'Infraestructura', icon: Building2,
+    children: [
+      { id: 'mdf-idf', label: 'MDF / IDF', icon: Database, path: '/infraestructura/mdf-idf' },
+      { id: 'racks', label: 'Racks', icon: Grid3x3, path: '/infraestructura/racks' },
+      { id: 'patch-panels', label: 'Patch Panels', icon: Network, path: '/infraestructura/patch-panels' },
+      { id: 'backbone', label: 'Backbone', icon: Layers, path: '/infraestructura/backbone' },
+      { id: 'nodos', label: 'Nodos', icon: Radio, path: '/infraestructura/nodos' },
+      { id: 'topologia', label: 'Topología', icon: Map, path: '/infraestructura/topologia' },
+      { id: 'planos', label: 'Planos', icon: FileText, path: '/infraestructura/planos' },
+      { id: 'ubicaciones', label: 'Ubicaciones', icon: Map, path: '/infraestructura/catalogs/ubicaciones' },
     ],
   },
   {
-    id:'operaciones', label:'Operaciones', icon:Wrench,
-    children:[
-      { id:'tickets',        label:'Tickets',        icon:CheckSquare, path:'/operaciones/tickets' },
-      { id:'requisiciones',  label:'Requisiciones',  icon:FileText,    path:'/operaciones/requisiciones' },
-      { id:'cambios',        label:'Cambios',        icon:TrendingUp,  path:'/operaciones/cambios' },
-      { id:'mantenimientos', label:'Mantenimientos', icon:Wrench,      path:'/operaciones/mantenimientos' },
-      { id:'sla',            label:'SLA',            icon:Gauge,       path:'/operaciones/sla' },
-      { id:'incidentes',     label:'Incidentes',     icon:AlertCircle, path:'/operaciones/incidentes' },
+    id: 'equipos', label: 'Equipos', icon: Zap,
+    children: [
+      { id: 'switches', label: 'Switches', icon: Network, path: '/infraestructura/switches' },
+      { id: 'ups-pdus', label: 'UPS / PDU', icon: Zap, path: '/infraestructura/ups-pdus' },
     ],
   },
   {
-    id:'monitoreo', label:'Monitoreo', icon:Cpu,
-    children:[
-      { id:'alertas',        label:'Alertas',        icon:AlertCircle, path:'/monitoreo/alertas' },
-      { id:'disponibilidad', label:'Disponibilidad', icon:Shield,      path:'/monitoreo/disponibilidad' },
-      { id:'eventos',        label:'Eventos',        icon:BarChart3,   path:'/monitoreo/eventos' },
-      { id:'performance',    label:'Performance',    icon:Gauge,       path:'/monitoreo/performance' },
+    id: 'inventario', label: 'Inventario', icon: Package,
+    children: [
+      { id: 'activos', label: 'Resumen de Activos', icon: Package, path: '/infraestructura/activos' },
+      { id: 'import-inventory', label: 'Importar Inventario', icon: Upload, path: '/infraestructura/import-inventory' },
+      { id: 'etiquetas-rfid', label: 'RFID', icon: Tag, path: '/infraestructura/etiquetas-rfid' },
+    ],
+  },
+  { id: 'operaciones', label: 'Operaciones', icon: Wrench, reserved: true },
+  { id: 'monitoreo', label: 'Monitoreo', icon: Cpu, reserved: true },
+  {
+    id: 'gestion', label: 'Gestión', icon: BookOpen,
+    children: [
+      { id: 'fabricantes', label: 'Fabricantes', icon: BookOpen, path: '/infraestructura/catalogs/fabricantes' },
+      { id: 'proveedores', label: 'Proveedores', icon: Puzzle, path: '/infraestructura/catalogs/proveedores' },
+      { id: 'nomenclaturas', label: 'Nomenclaturas', icon: Tag, path: '/infraestructura/catalogs/nomenclaturas' },
+    ],
+  },
+  { id: 'documentacion', label: 'Documentación', icon: FileText, reserved: true },
+  {
+    id: 'capex', label: 'CAPEX', icon: DollarSign,
+    children: [
+      { id: 'presupuestos', label: 'Presupuestos', icon: DollarSign, path: '/capex/presupuestos' },
     ],
   },
   {
-    id:'documentacion', label:'Documentación', icon:FileText,
-    children:[
-      { id:'diagramas',       label:'Diagramas',       icon:Map,      path:'/documentacion/diagramas' },
-      { id:'normativaes', label:'Normativaes', icon:Shield,   path:'/documentacion/normativaes' },
-      { id:'evidencias',      label:'Evidencias',      icon:FileText, path:'/documentacion/evidencias' },
-      { id:'manuales',        label:'Manuales',        icon:FileText, path:'/documentacion/manuales' },
-      { id:'contratos',       label:'Contratos',       icon:FileText, path:'/documentacion/contratos' },
-    ],
-  },
-  {
-    id:'capex', label:'CAPEX', icon:DollarSign,
-    children:[
-      { id:'presupuestos',  label:'Presupuestos',  icon:DollarSign,  path:'/capex/presupuestos' },
-      { id:'proyecciones',  label:'Proyecciones',  icon:TrendingUp,  path:'/capex/proyecciones' },
-      { id:'renovaciones',  label:'Renovaciones',  icon:Wrench,      path:'/capex/renovaciones' },
-      { id:'obsolescencia', label:'Obsolescencia', icon:AlertCircle, path:'/capex/obsolescencia' },
-    ],
-  },
-  {
-    id:'asistente-ia', label:'Asistente IA', icon:Lightbulb,
-    children:[
-      { id:'consultas',       label:'Consultas',           icon:Lightbulb,  path:'/asistente-ia/consultas' },
-      { id:'diagnostico',     label:'Diagnóstico',         icon:Cpu,        path:'/asistente-ia/diagnostico' },
-      { id:'recomendaciones', label:'Recomendaciones',     icon:TrendingUp, path:'/asistente-ia/recomendaciones' },
-      { id:'ocr',             label:'OCR',                 icon:FileText,   path:'/asistente-ia/ocr' },
-      { id:'analisis',        label:'Análisis Predictivo', icon:BarChart3,  path:'/asistente-ia/analisis' },
-    ],
-  },
-  {
-    id:'administracion', label:'Administración', icon:Users,
-    children:[
-      { id:'admin-org',     label:'Organización',        icon:Building2, path:'/administracion' },
-      { id:'admin-users',   label:'Usuarios y Roles',    icon:Users,     path:'/administracion' },
-      { id:'admin-proj',    label:'Proyectos / Sitios',  icon:Map,       path:'/administracion' },
-      { id:'admin-integ',   label:'Integradores',        icon:Network,   path:'/administracion' },
-      { id:'admin-cats',    label:'Catálogos',           icon:BookOpen,  path:'/administracion' },
-      { id:'admin-audit',   label:'Auditoría',           icon:BarChart3, path:'/administracion' },
-      { id:'admin-notif',   label:'Notificaciones',      icon:Bell,      path:'/administracion' },
-      { id:'admin-import',  label:'Importar / Exportar', icon:Upload,    path:'/administracion' },
-      { id:'admin-lic',     label:'Licencias',           icon:Award,     path:'/administracion' },
-    ],
-  },
-  {
-    id:'configuracion', label:'Configuración', icon:Settings,
-    children:[
-      { id:'cfg-pref',   label:'Preferencias',       icon:Settings,   path:'/configuracion' },
-      { id:'cfg-integ',  label:'Integraciones',       icon:Network,    path:'/configuracion' },
-      { id:'cfg-rfid',   label:'RFID',                icon:Radio,      path:'/configuracion' },
-      { id:'cfg-brand',  label:'Branding',            icon:Lightbulb,  path:'/configuracion' },
-      { id:'cfg-sec',    label:'Seguridad',           icon:Shield,     path:'/configuracion' },
-      { id:'cfg-api',    label:'API Keys',            icon:Key,        path:'/configuracion' },
-      { id:'cfg-mod',    label:'Módulos',             icon:Puzzle,     path:'/configuracion' },
+    id: 'administracion', label: 'Administración', icon: Users,
+    children: [
+      { id: 'admin', label: 'Administración general', icon: Users, path: '/administracion' },
+      { id: 'configuracion', label: 'Configuración', icon: Settings, path: '/configuracion' },
     ],
   },
 ];
@@ -123,7 +79,7 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
   const [tenantName, setTenantName] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(['infraestructura']));
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [showAI, setShowAI] = useState(false);
   const currentPath = router.pathname;
 
@@ -173,8 +129,8 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
   // Expandir grupo activo del sidebar al cambiar de ruta (sin verificar auth)
   useEffect(() => {
     try {
-      const activeGroup = NAVIGATION.find(n => n.children?.some(c => currentPath.startsWith(c.path ?? '')));
-      if (activeGroup) setExpanded(prev => new Set(Array.from(prev).concat(activeGroup.id)));
+      const activeGroup = NAVIGATION.find(n => n.children?.some(c => currentPath === c.path || currentPath.startsWith(c.path + '/')));
+      setExpanded(activeGroup?.id ?? null);
     } catch {}
   }, [currentPath]);
 
@@ -193,7 +149,7 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
   };
 
   const toggleExpand = (id: string) => {
-    setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setExpanded(prev => prev === id ? null : id);
   };
 
   // ── Mangos-inspired tokens ────────────────────────────────────────────────
@@ -347,15 +303,17 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
           {NAVIGATION.map(item => {
             const Icon = item.icon;
             const hasChildren = !!(item.children?.length);
-            const isExpanded = expanded.has(item.id);
+            const isExpanded = expanded === item.id;
             const isActive = currentPath === item.path;
-            const hasActiveChild = item.children?.some(c => currentPath.startsWith(c.path ?? ''));
+            const hasActiveChild = item.children?.some(c => currentPath === c.path || currentPath.startsWith(c.path + '/'));
             const isHighlighted = isActive || hasActiveChild;
 
             return (
               <div key={item.id} style={{ marginBottom: 2 }}>
                 <button
                   onClick={() => hasChildren ? toggleExpand(item.id) : item.path && router.push(item.path)}
+                  disabled={item.reserved}
+                  title={item.reserved ? 'Dominio reservado: no hay rutas operativas disponibles' : item.label}
                   style={{
                     width: '100%',
                     display: 'flex',
@@ -365,18 +323,20 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
                     justifyContent: sidebarOpen ? 'flex-start' : 'center',
                     borderRadius: 10,
                     border: 'none',
-                    cursor: 'pointer',
+                    cursor: item.reserved ? 'default' : 'pointer',
                     transition: 'all 140ms ease',
                     background: isHighlighted ? C.activeItem : 'transparent',
-                    color: isHighlighted ? C.activeText : C.text2,
+                    color: item.reserved ? C.text3 : isHighlighted ? C.activeText : C.text2,
+                    opacity: item.reserved ? 0.68 : 1,
                   }}
-                  onMouseEnter={e => { if (!isHighlighted) { (e.currentTarget as HTMLElement).style.background = C.hoverItem; (e.currentTarget as HTMLElement).style.color = C.text1; } }}
-                  onMouseLeave={e => { if (!isHighlighted) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = C.text2; } }}
+                  onMouseEnter={e => { if (!item.reserved && !isHighlighted) { (e.currentTarget as HTMLElement).style.background = C.hoverItem; (e.currentTarget as HTMLElement).style.color = C.text1; } }}
+                  onMouseLeave={e => { if (!item.reserved && !isHighlighted) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = C.text2; } }}
                 >
                   <Icon size={15} style={{ flexShrink: 0 }} />
                   {sidebarOpen && (
                     <>
                       <span style={{ flex: 1, textAlign: 'left', fontSize: '0.83rem', fontWeight: isHighlighted ? 600 : 400 }}>{item.label}</span>
+                      {item.reserved && <span style={{ color: C.text3, fontSize: '0.62rem' }}>Próximamente</span>}
                       {hasChildren && (
                         <ChevronDown size={11} style={{ transition: 'transform 200ms', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', color: C.text3 }} />
                       )}
