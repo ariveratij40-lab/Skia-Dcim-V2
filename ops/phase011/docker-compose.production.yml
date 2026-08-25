@@ -34,7 +34,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?required}
 
   backend:
-    image: skia-api-prod:${SOURCE_SHA:?required}
+    image: skia-api-prod:${API_SOURCE_SHA:?API_SOURCE_SHA is required}
     build:
       context: /opt/apps/skia/prod/source/backend
       dockerfile: Dockerfile
@@ -69,7 +69,7 @@ services:
       retries: 12
 
   frontend:
-    image: skia-web-prod:${SOURCE_SHA:?required}
+    image: skia-web-prod:${WEB_SOURCE_SHA:?WEB_SOURCE_SHA is required}
     build:
       context: /opt/apps/skia/prod/source/frontend
       dockerfile: /opt/apps/skia/prod/runtime/Dockerfile.frontend
