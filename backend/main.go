@@ -215,8 +215,8 @@ func main() {
 	http.HandleFunc("/api/dcim/catalogs/models/", dcim.HandleModels)
 	http.HandleFunc("/api/dcim/catalogs/providers", dcim.HandleProviders)
 	http.HandleFunc("/api/dcim/catalogs/providers/", dcim.HandleProviders)
-	http.HandleFunc("/api/dcim/catalogs/naming-rules", dcim.HandleNamingRules)
-	http.HandleFunc("/api/dcim/catalogs/naming-rules/", dcim.HandleNamingRules)
+	http.HandleFunc("/api/dcim/catalogs/naming-rules", RequireTenantTx(db, dcim.HandleNamingRules))
+	http.HandleFunc("/api/dcim/catalogs/naming-rules/", RequireTenantTx(db, dcim.HandleNamingRules))
 	http.HandleFunc("/api/dcim/catalogs/locations", dcim.HandleLocationsManage)
 	http.HandleFunc("/api/dcim/catalogs/locations/", dcim.HandleLocationsManage)
 
