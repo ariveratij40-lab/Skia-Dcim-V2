@@ -68,12 +68,12 @@ func TestGenerateInternalCodeUsesLockedSequence(t *testing.T) {
 }
 
 func TestManagedAssetRejectsManualCodeAndRequiresIndependentName(t *testing.T) {
-	if _, err := beginManagedAsset(nil, "tenant-1", "branch-1", "user-1", managedAssetInput{
+	if _, err := reserveManagedAsset(nil, "tenant-1", "branch-1", "user-1", managedAssetInput{
 		AssetTypeCode: "SWITCH", Name: "Switch Patio", ManualCode: "SW-ARBITRARY-1",
 	}); !errors.Is(err, ErrManualAssetCode) {
 		t.Fatalf("expected manual code rejection, got %v", err)
 	}
-	if _, err := beginManagedAsset(nil, "tenant-1", "branch-1", "user-1", managedAssetInput{
+	if _, err := reserveManagedAsset(nil, "tenant-1", "branch-1", "user-1", managedAssetInput{
 		AssetTypeCode: "SWITCH",
 	}); !errors.Is(err, ErrAssetNameNeeded) {
 		t.Fatalf("expected descriptive name requirement, got %v", err)

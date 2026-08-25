@@ -50,6 +50,6 @@ fixture_counts="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" skia_po
 
 printf 'SCHEMA_HASH=%s\nLEDGER_COUNT=%s\nROLES=%s\nEMPTY_COUNTS_TENANTS_USERS_ASSETS=%s\n' \
   "$schema_hash" "$ledger" "$roles" "$fixture_counts"
-[[ "$schema_hash" == 4f37b4a9f29d53dfac7ef0e18cd93be3b5f1e25ba99e0aceb3844024847271d1 ]]
+[[ "$schema_hash" == d493a0c43f22038424f7d0e525a0cd67c013ac859a4b1810cef240839e9ecfd4 ]]
 [[ "$ledger" == 11 ]]
 [[ "$fixture_counts" == '0|0|0' ]]

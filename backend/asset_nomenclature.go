@@ -27,13 +27,16 @@ type managedAssetInput struct {
 	InstallYear   int
 }
 
-type managedAssetTx struct {
-	DB         TenantDB
+// managedAssetReservation is state produced inside the request TenantTx.
+// It deliberately does not retain or expose a database handle: the caller
+// must keep using the TenantDB injected by RequireTenantTx for the satellite
+// insert, and the middleware owns the only Commit/Rollback boundary.
+type managedAssetReservation struct {
 	AssetID    string
 	Assignment NomenclatureAssignment
 }
 
-func beginManagedAsset(database TenantDB, tenantID, branchID, userID string, input managedAssetInput) (*managedAssetTx, error) {
+func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, input managedAssetInput) (*managedAssetReservation, error) {
 	if strings.TrimSpace(input.ManualCode) != "" {
 		return nil, ErrManualAssetCode
 	}
@@ -44,15 +47,18 @@ func beginManagedAsset(database TenantDB, tenantID, branchID, userID string, inp
 		input.Status = "active"
 	}
 	var assetTypeID string
-	if err := database.QueryRow(`SELECT id FROM asset_types WHERE code=$1`, input.AssetTypeCode).Scan(&assetTypeID); err != nil {
+	if tenantTx == nil {
+		return nil, errors.New("request TenantDB is required")
+	}
+	if err := tenantTx.QueryRow(`SELECT id FROM asset_types WHERE code=$1`, input.AssetTypeCode).Scan(&assetTypeID); err != nil {
 		return nil, fmt.Errorf("resolve asset type: %w", err)
 	}
-	assignment, err := (&DCIMHandler{}).generateInternalCode(database, tenantID, branchID, input.AssetTypeCode)
+	assignment, err := (&DCIMHandler{}).generateInternalCode(tenantTx, tenantID, branchID, input.AssetTypeCode)
 	if err != nil {
 		return nil, err
 	}
 	assetID := uuid.NewString()
-	_, err = database.Exec(`
+	_, err = tenantTx.Exec(`
 		INSERT INTO assets (
 			id, tenant_id, branch_id, asset_type_id,
 			internal_code, nomenclature_id, nomenclature_sequence, name,
@@ -65,7 +71,7 @@ func beginManagedAsset(database TenantDB, tenantID, branchID, userID string, inp
 	if err != nil {
 		return nil, fmt.Errorf("insert managed asset: %w", err)
 	}
-	return &managedAssetTx{DB: database, AssetID: assetID, Assignment: assignment}, nil
+	return &managedAssetReservation{AssetID: assetID, Assignment: assignment}, nil
 }
 
 func writeManagedAssetError(w http.ResponseWriter, err error, assetTypeCode string) {
@@ -90,7 +96,7 @@ func writeManagedAssetError(w http.ResponseWriter, err error, assetTypeCode stri
 	}
 }
 
-func commitManagedAsset(w http.ResponseWriter, managed *managedAssetTx, payload map[string]interface{}) bool {
+func writeManagedAssetCreated(w http.ResponseWriter, managed *managedAssetReservation, payload map[string]interface{}) bool {
 	if payload == nil {
 		payload = map[string]interface{}{}
 	}

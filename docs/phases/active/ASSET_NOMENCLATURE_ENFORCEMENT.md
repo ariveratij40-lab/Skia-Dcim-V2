@@ -83,6 +83,13 @@ cannot use the newly required grants to bypass the asset policy. The naming
 catalog endpoint therefore runs inside the same `RequireTenantTx` boundary as
 the managed create endpoints.
 
+Every specialized handler obtains the request `TenantDB` from its context and
+uses that same value for reads, rule locking, counter reservation, asset insert
+and satellite insert. The helper returns only reservation metadata—not a DB
+handle—and cannot open or commit a transaction. `RequireTenantTx` therefore
+owns the sole transaction and rolls back all three writes when a handler emits
+an error response.
+
 ## Invariants
 
 - **INV-ASSET-NOM-001:** every new definitive managed asset uses an active,
@@ -93,6 +100,14 @@ the managed create endpoints.
   and sequence pairs are unique.
 - **INV-ASSET-NOM-005:** rule lookup is constrained to the request tenant and
   branch-derived components are resolved inside that tenant.
+
+The database trigger covers both INSERT and updates to `tenant_id`,
+`asset_type_id`, `nomenclature_id`, `nomenclature_sequence` or `internal_code`.
+For a managed asset, rule id, sequence and technical code are immutable, while
+tenant/type changes must remain compatible with the recorded rule. A rule may
+be deactivated prospectively: new assignment is rejected, but historical
+managed rows remain editable without rewriting identity. Pre-migration rows
+whose rule and sequence are both null remain explicitly legacy-compatible.
 
 ## Legacy compatibility
 

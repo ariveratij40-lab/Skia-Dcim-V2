@@ -198,9 +198,9 @@ type MdfIdfRecord struct {
 // handleMdfIdfCheck — GET /api/infra/mdf-idf/check?code=X&name=Y
 // Valida en tiempo real si un código o nombre ya existe para el tenant
 func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	_, tenantID, _, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
@@ -217,23 +217,23 @@ func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
 
 	if code != "" {
 		var count int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
+		_ = tenantTx.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
 			tenantID, code).Scan(&count)
 		if count > 0 {
 			result["code_available"] = false
 			result["code_error"] = fmt.Sprintf("El código '%s' ya existe. Elige uno diferente.", code)
-			result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
+			result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, code)
 		}
 	}
 	if name != "" {
 		var count int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(name)=LOWER($2)`,
+		_ = tenantTx.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(name)=LOWER($2)`,
 			tenantID, name).Scan(&count)
 		if count > 0 {
 			result["name_available"] = false
 			result["name_error"] = fmt.Sprintf("El nombre '%s' ya existe. Elige uno diferente.", name)
 			if result["suggestion"] == "" {
-				result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
+				result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, code)
 			}
 		}
 	}
@@ -241,15 +241,15 @@ func handleMdfIdfCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 				SELECT a.id, a.internal_code, COALESCE(a.name, a.internal_code),
 					COALESCE(m.type,'MDF'),
 					COALESCE(a.status,'active'),
@@ -316,7 +316,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 		if mdfType != "MDF" && mdfType != "IDF" {
 			mdfType = "MDF"
 		}
-		managed, err := beginManagedAsset(db, tenantID, branchID, userID, managedAssetInput{
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: mdfType, Name: req.Name, ManualCode: req.Code + req.InternalCode,
 			Status: req.Status, Observations: req.Observations,
 		})
@@ -325,7 +325,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mdfID := generateID()
-		_, err = managed.DB.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO mdf_idf (id, asset_id, tenant_id, branch_id, type)
 			VALUES ($1,$2,$3,$4,$5)`,
 			mdfID, managed.AssetID, tenantID, branchID, mdfType)
@@ -333,7 +333,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			writeManagedAssetError(w, err, mdfType)
 			return
 		}
-		commitManagedAsset(w, managed, map[string]interface{}{"id": managed.AssetID, "mdf_id": mdfID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "mdf_id": mdfID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -375,15 +375,15 @@ type RackRecord struct {
 }
 
 func handleRacks(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code,
 				COALESCE(a.manufacturer,''), COALESCE(a.model,''),
 				COALESCE(rk.total_u,42),
@@ -448,7 +448,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 			req.TotalU = 42
 		}
 
-		managed, err := beginManagedAsset(db, tenantID, branchID, userID, managedAssetInput{
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "RACK", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
 		})
@@ -457,7 +457,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rackID := generateID()
-		_, err = managed.DB.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u)
 			VALUES ($1,$2,$3,$4,$5)`,
 			rackID, managed.AssetID, tenantID, branchID, req.TotalU)
@@ -465,7 +465,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 			writeManagedAssetError(w, err, "RACK")
 			return
 		}
-		commitManagedAsset(w, managed, map[string]interface{}{"id": managed.AssetID, "rack_id": rackID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "rack_id": rackID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -487,9 +487,9 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, `{"error":"missing tenant context"}`, http.StatusInternalServerError)
 		return
 	}
@@ -537,7 +537,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 			dbStatus = mapped
 		}
 		// Actualizar asset
-		_, err = db.Exec(`
+		_, err = tenantTx.Exec(`
 			UPDATE assets SET
 				name = $1, status = $2, observations = $3,
 				photo_url = $4, ref_image_url = $5,
@@ -552,7 +552,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 		}
 		// Actualizar tipo en mdf_idf si es válido
 		if req.Type == "MDF" || req.Type == "IDF" {
-			_, _ = db.Exec(`UPDATE mdf_idf SET type = $1, updated_at = NOW() WHERE asset_id = $2 AND tenant_id = $3`,
+			_, _ = tenantTx.Exec(`UPDATE mdf_idf SET type = $1, updated_at = NOW() WHERE asset_id = $2 AND tenant_id = $3`,
 				req.Type, mdfAssetID, tenantID)
 		}
 		jsonResp(w, 200, map[string]string{"status": "ok"})
@@ -575,7 +575,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	// Obtener el mdf_idf.id y datos del asset
 	var mdfIdfID, mdfCode, mdfName string
 	var totalU int
-	err = db.QueryRow(`
+	err = tenantTx.QueryRow(`
 		SELECT m.id, a.internal_code, COALESCE(a.name, a.internal_code)
 		FROM mdf_idf m JOIN assets a ON a.id = m.asset_id
 		WHERE m.asset_id = $1 AND m.tenant_id = $2`,
@@ -598,7 +598,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	// Verificar si ya existe un rack para este mdf_idf_id
 	var existingRackID, existingRackAssetID, existingRackCode string
 	var existingTotalU int
-	err = db.QueryRow(`
+	err = tenantTx.QueryRow(`
 		SELECT rk.id, rk.asset_id, a.internal_code, rk.total_u
 		FROM racks rk JOIN assets a ON a.id = rk.asset_id
 		WHERE rk.mdf_idf_id = $1 AND rk.tenant_id = $2
@@ -618,7 +618,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// No existe — crear el rack automáticamente bajo la misma nomenclatura autoritativa.
-	managed, err := beginManagedAsset(db, tenantID, branchID, userID, managedAssetInput{
+	managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 		AssetTypeCode: "RACK", Name: fmt.Sprintf("Rack %s", mdfName), Status: "active",
 	})
 	if err != nil {
@@ -627,7 +627,7 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rackID := generateID()
-	_, err = db.Exec(`
+	_, err = tenantTx.Exec(`
 		INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u, mdf_idf_id)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
 		rackID, managed.AssetID, tenantID, branchID, totalU, mdfIdfID)
@@ -673,15 +673,15 @@ type SWRecord struct {
 }
 
 func handleSwitches(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code,
 				COALESCE(a.manufacturer,''), COALESCE(a.model,''),
 				COALESCE(a.serial_number,''),
@@ -743,7 +743,7 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 			req.PortCount = 24
 		}
 
-		managed, err := beginManagedAsset(db, tenantID, branchID, userID, managedAssetInput{
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "SWITCH", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
 		})
@@ -752,7 +752,7 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		swID := generateID()
-		_, err = managed.DB.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO switches (id, asset_id, tenant_id, branch_id,
 				port_count, uplink_count, management_ip)
 			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
@@ -762,7 +762,7 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 			writeManagedAssetError(w, err, "SWITCH")
 			return
 		}
-		commitManagedAsset(w, managed, map[string]interface{}{"id": managed.AssetID, "switch_id": swID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "switch_id": swID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -790,9 +790,9 @@ type PowerDeviceRecord struct {
 }
 
 func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
@@ -800,7 +800,7 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		// Query UPS
 		var list []PowerDeviceRecord
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code, a.name,
 				'ups' as device_type,
 				COALESCE(u.capacity_kva,0), COALESCE(u.battery_runtime_min,0),
@@ -827,7 +827,7 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Query PDUs
-		rows2, err2 := db.Query(`
+		rows2, err2 := tenantTx.Query(`
 			SELECT a.id, a.internal_code, a.name,
 				'pdu' as device_type,
 				0, 0, COALESCE(p.management_ip,''),
@@ -887,7 +887,7 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 		if strings.EqualFold(req.DeviceType, "pdu") {
 			category = "PDU"
 		}
-		managed, err := beginManagedAsset(db, tenantID, branchID, userID, managedAssetInput{
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: category, Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
 		})
@@ -897,12 +897,12 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 		}
 		devID := generateID()
 		if strings.EqualFold(req.DeviceType, "pdu") {
-			_, err = managed.DB.Exec(`
+			_, err = tenantTx.Exec(`
 				INSERT INTO pdus (id, asset_id, tenant_id, branch_id, outlet_count, amperage, management_ip)
 				VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 				devID, managed.AssetID, tenantID, branchID, req.OutletCount, req.Amperage, req.ManagementIP)
 		} else {
-			_, err = managed.DB.Exec(`
+			_, err = tenantTx.Exec(`
 				INSERT INTO ups (id, asset_id, tenant_id, branch_id, capacity_kva, battery_runtime_min, management_ip)
 				VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 				devID, managed.AssetID, tenantID, branchID, req.CapacityKva, req.BatteryRuntime, req.ManagementIP)
@@ -911,7 +911,7 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 			writeManagedAssetError(w, err, category)
 			return
 		}
-		commitManagedAsset(w, managed, map[string]interface{}{"id": managed.AssetID, "device_id": devID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "device_id": devID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -943,15 +943,15 @@ type PatchPanelRecord struct {
 }
 
 func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code,
 				COALESCE(a.manufacturer,''), COALESCE(a.model,''),
 				COALESCE(a.serial_number,''),
@@ -1013,7 +1013,7 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 			req.PortCount = 24
 		}
 
-		managed, err := beginManagedAsset(db, tenantID, branchID, userID, managedAssetInput{
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "PATCH_PANEL", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
 		})
@@ -1022,7 +1022,7 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		ppID := generateID()
-		_, err = managed.DB.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO patch_panels (id, asset_id, tenant_id, branch_id, port_count, port_type)
 			VALUES ($1,$2,$3,$4,$5,$6)`,
 			ppID, managed.AssetID, tenantID, branchID, req.PortCount, req.PanelType)
@@ -1030,7 +1030,7 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 			writeManagedAssetError(w, err, "PATCH_PANEL")
 			return
 		}
-		commitManagedAsset(w, managed, map[string]interface{}{"id": managed.AssetID, "pp_id": ppID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "pp_id": ppID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1056,15 +1056,15 @@ type BBRecord struct {
 }
 
 func handleBackbone(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT a.id, a.internal_code,
 				COALESCE(a.manufacturer,''),
 				COALESCE(bl.link_type,'fiber'),
@@ -1125,7 +1125,7 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 			req.LinkType = "fiber"
 		}
 
-		managed, err := beginManagedAsset(db, tenantID, branchID, userID, managedAssetInput{
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "BACKBONE", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Observations: req.Observations, InstallYear: req.InstallYear,
 		})
@@ -1141,7 +1141,7 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 		if req.DestinationID != "" {
 			destID = req.DestinationID
 		}
-		_, err = managed.DB.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO backbone_links (id, asset_id, tenant_id, branch_id,
 				link_type, origin_id, destination_id, fiber_count, cable_length_m, bandwidth_gbps)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
@@ -1151,7 +1151,7 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 			writeManagedAssetError(w, err, "BACKBONE")
 			return
 		}
-		commitManagedAsset(w, managed, map[string]interface{}{"id": managed.AssetID, "bb_id": bbID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "bb_id": bbID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1161,9 +1161,9 @@ func handleBackbone(w http.ResponseWriter, r *http.Request) {
 // handleBackboneCheck — GET /api/infra/backbone/check?code=X
 // Valida unicidad de código y sugiere el siguiente disponible
 func handleBackboneCheck(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	_, tenantID, _, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
@@ -1177,28 +1177,28 @@ func handleBackboneCheck(w http.ResponseWriter, r *http.Request) {
 
 	if code != "" {
 		var count int
-		_ = db.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
+		_ = tenantTx.QueryRow(`SELECT COUNT(*) FROM assets WHERE tenant_id=$1 AND LOWER(internal_code)=LOWER($2)`,
 			tenantID, code).Scan(&count)
 		if count > 0 {
 			result["code_available"] = false
 			result["code_error"] = fmt.Sprintf("El código '%s' ya existe. Elige uno diferente.", code)
-			result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
+			result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, code)
 		} else {
 			// Sugerir el siguiente aunque esté disponible (para referencia)
-			result["suggestion"] = suggestNextMdfCode(db, tenantID, code)
+			result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, code)
 		}
 	} else {
 		// Sin código: sugerir el primero disponible basado en naming_rules
 		var prefix string
 		var seqDigits int
-		err2 := db.QueryRow(`SELECT prefix, seq_digits FROM naming_rules WHERE tenant_id=$1 AND asset_type_code='BACKBONE' LIMIT 1`,
+		err2 := tenantTx.QueryRow(`SELECT prefix, seq_digits FROM naming_rules WHERE tenant_id=$1 AND asset_type_code='BACKBONE' LIMIT 1`,
 			tenantID).Scan(&prefix, &seqDigits)
 		if err2 != nil || prefix == "" {
 			prefix = "BB"
 			seqDigits = 4
 		}
 		baseCode := fmt.Sprintf("%s-%0*d", prefix, seqDigits, 1)
-		result["suggestion"] = suggestNextMdfCode(db, tenantID, baseCode)
+		result["suggestion"] = suggestNextMdfCode(tenantTx, tenantID, baseCode)
 	}
 	jsonResp(w, 200, result)
 }
@@ -1221,15 +1221,15 @@ type NodeRecord struct {
 }
 
 func handleNodos(w http.ResponseWriter, r *http.Request) {
-	db, dbOK := TenantDBFromContext(r.Context())
+	tenantTx, tenantTxOK := TenantDBFromContext(r.Context())
 	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
+	if !tenantTxOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, "Missing tenant context", http.StatusInternalServerError)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		rows, err := db.Query(`
+		rows, err := tenantTx.Query(`
 			SELECT n.id, n.asset_id, a.internal_code,
 				COALESCE(a.manufacturer,''),
 				COALESCE(n.node_type,'endpoint'),
@@ -1285,7 +1285,7 @@ func handleNodos(w http.ResponseWriter, r *http.Request) {
 		if req.NodeType == "" {
 			req.NodeType = "endpoint"
 		}
-		managed, err := beginManagedAsset(db, tenantID, branchID, userID, managedAssetInput{
+		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "NODE", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
 		})
@@ -1294,7 +1294,7 @@ func handleNodos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		nodeID := generateID()
-		_, err = managed.DB.Exec(`
+		_, err = tenantTx.Exec(`
 			INSERT INTO nodes (id, asset_id, tenant_id, branch_id, node_type, ip_address, mac_address, switch_port)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
 			nodeID, managed.AssetID, tenantID, branchID, req.NodeType, req.IPAddress, req.MACAddress, req.SwitchPort)
@@ -1302,7 +1302,7 @@ func handleNodos(w http.ResponseWriter, r *http.Request) {
 			writeManagedAssetError(w, err, "NODE")
 			return
 		}
-		commitManagedAsset(w, managed, map[string]interface{}{"id": nodeID, "asset_id": managed.AssetID})
+		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": nodeID, "asset_id": managed.AssetID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

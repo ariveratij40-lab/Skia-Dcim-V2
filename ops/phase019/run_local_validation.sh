@@ -39,15 +39,16 @@ docker exec -e PGPASSWORD="$password" "$container" psql -X -U postgres -d skia_p
 port="$(docker port "$container" 5432/tcp | awk -F: '{print $NF}')"
 pushd "$repo_root/backend" >/dev/null
 ASSET_NOMENCLATURE_TEST_DATABASE_URL="postgresql://postgres:${password}@127.0.0.1:${port}/skia_prod?sslmode=disable" \
+ASSET_NOMENCLATURE_RUNTIME_TEST_DATABASE_URL="postgresql://skia_runtime:${runtime_password}@127.0.0.1:${port}/skia_prod?sslmode=disable" \
 GOCACHE="${TMPDIR:-/tmp}/skia-phase019-go-cache" \
-  go test -run '^TestAssetNomenclatureConcurrentSequence$' -count=1 ./...
+  go test -run '^(TestAssetNomenclatureConcurrentSequence|TestSpecializedHandlerRollbackIsAtomic)$' -count=1 ./...
 popd >/dev/null
 
-docker exec -e PGPASSWORD="$password" "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+docker exec -i -e PGPASSWORD="$password" "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
 INSERT INTO tenants(id,name) VALUES ('81000000-0000-0000-0000-000000000001','Negative validation');
 INSERT INTO branches(id,tenant_id,name) VALUES ('82000000-0000-0000-0000-000000000001','81000000-0000-0000-0000-000000000001','A');
-INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,last_seq,active)
-VALUES ('84000000-0000-0000-0000-000000000001','81000000-0000-0000-0000-000000000001','SWITCH','SW',0,true);
+INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,last_seq,active,include_branch)
+VALUES ('84000000-0000-0000-0000-000000000001','81000000-0000-0000-0000-000000000001','SWITCH','SW',0,true,false);
 DO $$
 BEGIN
   BEGIN
@@ -62,7 +63,7 @@ END $$;
 SQL
 
 # Positive runtime create and direct RLS visibility, using only the allow-list.
-docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+docker exec -i -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
 BEGIN;
 SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true);
 SELECT set_config('app.branch_id','82000000-0000-0000-0000-000000000001',true);
@@ -71,6 +72,11 @@ INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,internal_code,name,nomen
 SELECT '85000000-0000-0000-0000-000000000001','81000000-0000-0000-0000-000000000001',
        '82000000-0000-0000-0000-000000000001',id,'SW-0001','Runtime switch',
        '84000000-0000-0000-0000-000000000001',1 FROM asset_types WHERE code='SWITCH';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM assets WHERE id='85000000-0000-0000-0000-000000000001') THEN
+    RAISE EXCEPTION 'managed asset insert produced no row';
+  END IF;
+END $$;
 INSERT INTO switches(id,asset_id,tenant_id,branch_id)
 VALUES ('86000000-0000-0000-0000-000000000001','85000000-0000-0000-0000-000000000001',
         '81000000-0000-0000-0000-000000000001','82000000-0000-0000-0000-000000000001');
@@ -78,10 +84,57 @@ SELECT id FROM switches WHERE id='86000000-0000-0000-0000-000000000001';
 COMMIT;
 SQL
 
+# Without the request transaction GUCs, FORCE RLS exposes neither rules nor
+# satellite rows even though the role has the exact table privileges.
+global_visibility="$(docker exec -e PGPASSWORD="$runtime_password" "$container" \
+  psql -X -U skia_runtime -d skia_prod -Atqc \
+  "SELECT (SELECT count(*)::text FROM naming_rules)||(SELECT count(*)::text FROM switches)")"
+[[ "$global_visibility" == '00' ]] || die "global connection bypassed FORCE RLS: $global_visibility"
+
+managed_visibility="$(docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -Atqc \
+  "BEGIN; SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true); SELECT set_config('app.branch_id','82000000-0000-0000-0000-000000000001',true); SELECT count(*) FROM assets WHERE id='85000000-0000-0000-0000-000000000001'; ROLLBACK;")"
+if [[ "$managed_visibility" != *$'\n1' ]]; then
+  managed_admin="$(docker exec -e PGPASSWORD="$password" "$container" psql -X -U postgres -d skia_prod -Atqc \
+    "SELECT id||'|'||tenant_id||'|'||branch_id FROM assets WHERE id='85000000-0000-0000-0000-000000000001'")"
+  die "managed asset not visible in its tenant transaction: $managed_visibility admin=$managed_admin"
+fi
+
 # A different context cannot see the rule or satellite record.
 visibility="$(docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -Atqc \
   "BEGIN; SELECT set_config('app.tenant_id','00000000-0000-0000-0000-000000000001',true); SELECT set_config('app.branch_id','00000000-0000-0000-0000-000000000002',true); SELECT (SELECT count(*)::text FROM naming_rules)||(SELECT count(*)::text FROM switches); ROLLBACK;")"
 [[ "$visibility" == *$'\n00' || "$visibility" == '00' ]] || die "cross-tenant visibility detected: $visibility"
+
+expect_managed_update_denied() {
+  local assignment="$1"
+  if docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -v ON_ERROR_STOP=1 \
+    -c "BEGIN; SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true); SELECT set_config('app.branch_id','82000000-0000-0000-0000-000000000001',true); UPDATE assets SET ${assignment} WHERE id='85000000-0000-0000-0000-000000000001'; COMMIT;" >/dev/null 2>&1; then
+    die "managed identity update unexpectedly accepted: $assignment"
+  fi
+}
+expect_managed_update_denied 'nomenclature_id=NULL'
+expect_managed_update_denied 'nomenclature_sequence=NULL'
+expect_managed_update_denied "asset_type_id=(SELECT id FROM asset_types WHERE code='RACK')"
+expect_managed_update_denied "tenant_id='00000000-0000-0000-0000-000000000001'"
+expect_managed_update_denied "internal_code='MANUAL-DETACHED'"
+
+if docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -v ON_ERROR_STOP=1 \
+  -c "BEGIN; SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true); SELECT set_config('app.branch_id','82000000-0000-0000-0000-000000000001',true); INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,internal_code,name,nomenclature_id,nomenclature_sequence) SELECT '88000000-0000-0000-0000-000000000001','81000000-0000-0000-0000-000000000001','82000000-0000-0000-0000-000000000001',id,'ARBITRARY-CODE','Detached code','84000000-0000-0000-0000-000000000001',2 FROM asset_types WHERE code='SWITCH'; COMMIT;" >/dev/null 2>&1; then
+  die 'runtime unexpectedly inserted code disconnected from nomenclature identity'
+fi
+
+# Simulate a pre-migration row and prove ordinary legacy updates remain valid.
+docker exec -i -e PGPASSWORD="$password" "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+ALTER TABLE assets DISABLE TRIGGER trg_enforce_asset_nomenclature;
+ALTER TABLE assets DISABLE TRIGGER trg_enforce_asset_nomenclature_update;
+INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,internal_code,name)
+SELECT '87000000-0000-0000-0000-000000000001','81000000-0000-0000-0000-000000000001',
+       '82000000-0000-0000-0000-000000000001',id,'LEGACY-SW-1','Legacy switch'
+FROM asset_types WHERE code='SWITCH';
+ALTER TABLE assets ENABLE TRIGGER trg_enforce_asset_nomenclature;
+ALTER TABLE assets ENABLE TRIGGER trg_enforce_asset_nomenclature_update;
+SQL
+docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -v ON_ERROR_STOP=1 \
+  -c "BEGIN; SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true); SELECT set_config('app.branch_id','82000000-0000-0000-0000-000000000001',true); UPDATE assets SET name='Legacy switch updated' WHERE id='87000000-0000-0000-0000-000000000001'; COMMIT;" >/dev/null
 
 if docker exec -e PGPASSWORD="$runtime_password" "$container" psql -X -U skia_runtime -d skia_prod -v ON_ERROR_STOP=1 \
   -c "BEGIN; SELECT set_config('app.tenant_id','81000000-0000-0000-0000-000000000001',true); SELECT set_config('app.branch_id','82000000-0000-0000-0000-000000000001',true); UPDATE switches SET port_count=48;" >/dev/null 2>&1; then
