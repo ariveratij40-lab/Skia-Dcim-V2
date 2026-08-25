@@ -254,7 +254,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
   // Cargar ejemplo de nomenclatura cuando cambia el tipo de activo
   useEffect(() => {
     if (!form.asset_type_code) { setNamingExample(null); setHasActiveNomenclature(false); return; }
-    axios.get('/api/dcim/catalogs/naming-rules')
+    const loadNomenclature = () => axios.get('/api/dcim/catalogs/naming-rules')
       .then(r => {
         const rules: {
           asset_type_code: string;
@@ -278,6 +278,9 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
         setNamingExample(parts.join(sep));
       })
       .catch(() => { setNamingExample(null); setHasActiveNomenclature(false); });
+    loadNomenclature();
+    window.addEventListener('focus', loadNomenclature);
+    return () => window.removeEventListener('focus', loadNomenclature);
   }, [form.asset_type_code]);
 
   // Alta inline de modelo
@@ -554,7 +557,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
                   {!hasActiveNomenclature && form.asset_type_code && (
                     <div style={{ padding: 12, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 8, marginBottom: 12 }}>
                       No existe una nomenclatura configurada para este tipo de activo. Antes de registrar el activo debe definir su nomenclatura.{' '}
-                      <a href={`/infraestructura/catalogs/nomenclaturas?type=${form.asset_type_code}`}>Configurar nomenclatura</a>
+                      <a href={`/infraestructura/catalogs/nomenclaturas?type=${form.asset_type_code}&from=wizard`} target="_blank" rel="noreferrer">Configurar nomenclatura</a>
                     </div>
                   )}
                   {lbl('Nombre descriptivo', true)}
@@ -581,7 +584,7 @@ export default function ActivoWizard({ onClose, onSave, initial }: Props) {
                         {namingExample}
                       </code>
                       <a
-                        href="/infraestructura/catalogs/nomenclaturas"
+                        href={`/infraestructura/catalogs/nomenclaturas?type=${form.asset_type_code}&from=wizard`}
                         target="_blank"
                         rel="noreferrer"
                         style={{ color: '#4361EE', textDecoration: 'underline', marginLeft: 2 }}

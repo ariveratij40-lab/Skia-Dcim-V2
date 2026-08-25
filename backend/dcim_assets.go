@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // ==========================================
@@ -1795,10 +1798,140 @@ func (h *DCIMHandler) HandleProviders(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleNamingRules — /api/dcim/catalogs/naming-rules y /api/dcim/catalogs/naming-rules/{id}
+type namingRuleResponse struct {
+	ID                  string `json:"id"`
+	AssetTypeCode       string `json:"asset_type_code"`
+	AssetTypeName       string `json:"asset_type_name"`
+	Prefix              string `json:"prefix"`
+	Separator           string `json:"separator"`
+	IncludeBranch       bool   `json:"include_branch"`
+	IncludeLocation     bool   `json:"include_location"`
+	SeqDigits           int    `json:"seq_digits"`
+	ResetPerLocation    bool   `json:"reset_per_location"`
+	LastSeq             int    `json:"last_seq"`
+	UpdatedAt           string `json:"updated_at"`
+	NextCode            string `json:"next_code_preview"`
+	CustomSegment1      string `json:"custom_segment_1"`
+	CustomSegment2      string `json:"custom_segment_2"`
+	CustomSegment1Label string `json:"custom_segment_1_label"`
+	CustomSegment2Label string `json:"custom_segment_2_label"`
+	Active              bool   `json:"active"`
+	Description         string `json:"description"`
+}
+
+type nomenclatureAssetTypeResponse struct {
+	Code                 string              `json:"code"`
+	Name                 string              `json:"name"`
+	Description          string              `json:"description"`
+	RequiresNomenclature bool                `json:"requires_nomenclature"`
+	Rule                 *namingRuleResponse `json:"rule"`
+}
+
+type namingRuleMutation struct {
+	AssetTypeCode       string          `json:"asset_type_code"`
+	Prefix              string          `json:"prefix"`
+	Separator           string          `json:"separator"`
+	IncludeBranch       *bool           `json:"include_branch"`
+	IncludeLocation     *bool           `json:"include_location"`
+	SeqDigits           *int            `json:"seq_digits"`
+	ResetPerLocation    *bool           `json:"reset_per_location"`
+	Active              *bool           `json:"active"`
+	Description         *string         `json:"description"`
+	CustomSegment1      *string         `json:"custom_segment_1"`
+	CustomSegment2      *string         `json:"custom_segment_2"`
+	CustomSegment1Label *string         `json:"custom_segment_1_label"`
+	CustomSegment2Label *string         `json:"custom_segment_2_label"`
+	TenantID            json.RawMessage `json:"tenant_id"`
+	LastSeq             *int            `json:"last_seq"`
+}
+
+func namingRulePreview(rule namingRuleResponse) string {
+	parts := []string{rule.Prefix}
+	if rule.IncludeBranch {
+		parts = append(parts, "BRANCH")
+	}
+	if rule.CustomSegment1 != "" {
+		parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment1, " ", "")))
+	}
+	if rule.CustomSegment2 != "" {
+		parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment2, " ", "")))
+	}
+	parts = append(parts, fmt.Sprintf("%0*d", rule.SeqDigits, rule.LastSeq+1))
+	return strings.Join(parts, rule.Separator)
+}
+
+func validateNamingRuleMutation(body namingRuleMutation, creating bool) error {
+	if body.TenantID != nil || body.LastSeq != nil {
+		return fmt.Errorf("tenant_id and last_seq are server-controlled")
+	}
+	if creating && strings.TrimSpace(body.AssetTypeCode) == "" {
+		return fmt.Errorf("asset_type_code is required")
+	}
+	if creating && strings.TrimSpace(body.Prefix) == "" {
+		return fmt.Errorf("prefix is required")
+	}
+	if body.SeqDigits != nil && (*body.SeqDigits < 2 || *body.SeqDigits > 6) {
+		return fmt.Errorf("seq_digits must be between 2 and 6")
+	}
+	if len(body.Separator) > 5 || len(body.Prefix) > 20 {
+		return fmt.Errorf("prefix or separator is too long")
+	}
+	return nil
+}
+
+func requireNamingRuleAdmin(ctx context.Context, tdb TenantDB, userID, tenantID string) error {
+	var allowed bool
+	err := tdb.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM user_roles ur
+		JOIN roles r ON r.id=ur.role_id
+		WHERE ur.user_id=$1 AND ur.tenant_id=$2 AND r.name IN ('admin','super_admin')
+	)`, userID, tenantID).Scan(&allowed)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return errForbiddenNamingRuleMutation
+	}
+	return nil
+}
+
+func decodeNamingRuleMutation(r *http.Request) (namingRuleMutation, map[string]json.RawMessage, error) {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return namingRuleMutation{}, nil, err
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return namingRuleMutation{}, nil, err
+	}
+	var mutation namingRuleMutation
+	if err := json.Unmarshal(b, &mutation); err != nil {
+		return namingRuleMutation{}, nil, err
+	}
+	return mutation, raw, nil
+}
+
+func rawField(raw map[string]json.RawMessage, key string) (string, bool) {
+	v, ok := raw[key]
+	if !ok {
+		return "", false
+	}
+	if string(v) == "null" {
+		return "", true
+	}
+	var value string
+	if json.Unmarshal(v, &value) != nil {
+		return "", true
+	}
+	return value, true
+}
+
+var errForbiddenNamingRuleMutation = errors.New("nomenclature mutation requires admin role")
+
+// HandleNamingRules — tenant normative catalog and first-rule creation.
 func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_, tenantID, _, ok := TenantIdentityFromContext(r.Context())
+	userID, tenantID, _, ok := TenantIdentityFromContext(r.Context())
 	if !ok {
 		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
 		return
@@ -1816,90 +1949,165 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 	}
 	switch r.Method {
 	case http.MethodGet:
+		authErr := requireNamingRuleAdmin(r.Context(), tdb, userID, tenantID)
+		if authErr != nil && !errors.Is(authErr, errForbiddenNamingRuleMutation) {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+		canManage := authErr == nil
 		rows, err := tdb.QueryContext(r.Context(),
-			`SELECT nr.id, nr.asset_type_code, at.name,
+			`SELECT at.code, at.name, COALESCE(at.description,''), at.requires_nomenclature,
+			        nr.id, nr.asset_type_code,
 			        nr.prefix, nr.separator, nr.include_branch, nr.include_location,
 			        nr.seq_digits, nr.reset_per_location, nr.last_seq, nr.updated_at,
 			        COALESCE(nr.custom_segment_1,''), COALESCE(nr.custom_segment_2,''),
 			        COALESCE(nr.custom_segment_1_label,'Segmento 1'), COALESCE(nr.custom_segment_2_label,'Segmento 2'),
 			        nr.active, COALESCE(nr.description,'')
-			 FROM naming_rules nr
-			 JOIN asset_types at ON at.code = nr.asset_type_code
-			 WHERE nr.tenant_id=$1 ORDER BY at.name`, tenantID)
+			 FROM asset_types at
+			 LEFT JOIN naming_rules nr ON nr.asset_type_code=at.code AND nr.tenant_id=$1
+			 ORDER BY at.requires_nomenclature DESC, at.name`, tenantID)
 		if err != nil {
 			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
-		type Rule struct {
-			ID                  string `json:"id"`
-			AssetTypeCode       string `json:"asset_type_code"`
-			AssetTypeName       string `json:"asset_type_name"`
-			Prefix              string `json:"prefix"`
-			Separator           string `json:"separator"`
-			IncludeBranch       bool   `json:"include_branch"`
-			IncludeLocation     bool   `json:"include_location"`
-			SeqDigits           int    `json:"seq_digits"`
-			ResetPerLocation    bool   `json:"reset_per_location"`
-			LastSeq             int    `json:"last_seq"`
-			UpdatedAt           string `json:"updated_at"`
-			NextCode            string `json:"next_code_preview"`
-			CustomSegment1      string `json:"custom_segment_1"`
-			CustomSegment2      string `json:"custom_segment_2"`
-			CustomSegment1Label string `json:"custom_segment_1_label"`
-			CustomSegment2Label string `json:"custom_segment_2_label"`
-			Active              bool   `json:"active"`
-			Description         string `json:"description"`
-		}
-		list := []Rule{}
+		list := []namingRuleResponse{}
+		catalog := []nomenclatureAssetTypeResponse{}
 		for rows.Next() {
-			var rule Rule
+			var item nomenclatureAssetTypeResponse
+			var ruleID, ruleType, prefix, separator, custom1, custom2, label1, label2, description sql.NullString
+			var includeBranch, includeLocation, resetPerLocation, active sql.NullBool
+			var seqDigits, lastSeq sql.NullInt64
 			var ua interface{}
-			if err := rows.Scan(&rule.ID, &rule.AssetTypeCode, &rule.AssetTypeName,
-				&rule.Prefix, &rule.Separator, &rule.IncludeBranch, &rule.IncludeLocation,
-				&rule.SeqDigits, &rule.ResetPerLocation, &rule.LastSeq, &ua,
-				&rule.CustomSegment1, &rule.CustomSegment2,
-				&rule.CustomSegment1Label, &rule.CustomSegment2Label,
-				&rule.Active, &rule.Description); err == nil {
-				rule.UpdatedAt = fmt.Sprintf("%v", ua)
-				// Preview del siguiente código con los segmentos genéricos
-				previewParts := []string{rule.Prefix}
-				if rule.CustomSegment1 != "" {
-					previewParts = append(previewParts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment1, " ", "")))
-				}
-				if rule.CustomSegment2 != "" {
-					previewParts = append(previewParts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment2, " ", "")))
-				}
-				previewParts = append(previewParts, fmt.Sprintf("%0*d", rule.SeqDigits, rule.LastSeq+1))
-				rule.NextCode = strings.Join(previewParts, rule.Separator)
+			if err := rows.Scan(&item.Code, &item.Name, &item.Description, &item.RequiresNomenclature,
+				&ruleID, &ruleType, &prefix, &separator, &includeBranch, &includeLocation,
+				&seqDigits, &resetPerLocation, &lastSeq, &ua, &custom1, &custom2,
+				&label1, &label2, &active, &description); err != nil {
+				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+				return
+			}
+			if ruleID.Valid {
+				rule := namingRuleResponse{ID: ruleID.String, AssetTypeCode: ruleType.String, AssetTypeName: item.Name,
+					Prefix: prefix.String, Separator: separator.String, IncludeBranch: includeBranch.Bool,
+					IncludeLocation: includeLocation.Bool, SeqDigits: int(seqDigits.Int64), ResetPerLocation: resetPerLocation.Bool,
+					LastSeq: int(lastSeq.Int64), UpdatedAt: fmt.Sprintf("%v", ua), CustomSegment1: custom1.String,
+					CustomSegment2: custom2.String, CustomSegment1Label: label1.String,
+					CustomSegment2Label: label2.String, Active: active.Bool, Description: description.String}
+				rule.NextCode = namingRulePreview(rule)
+				item.Rule = &rule
 				list = append(list, rule)
 			}
+			catalog = append(catalog, item)
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"naming_rules": list})
+		json.NewEncoder(w).Encode(map[string]interface{}{"asset_types": catalog, "naming_rules": list, "can_manage": canManage})
+	case http.MethodPost:
+		if ruleID != "" {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		if err := requireNamingRuleAdmin(r.Context(), tdb, userID, tenantID); err != nil {
+			if errors.Is(err, errForbiddenNamingRuleMutation) {
+				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			} else {
+				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			}
+			return
+		}
+		var body namingRuleMutation
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || validateNamingRuleMutation(body, true) != nil {
+			http.Error(w, `{"error":"invalid_nomenclature"}`, http.StatusUnprocessableEntity)
+			return
+		}
+		body.AssetTypeCode = strings.ToUpper(strings.TrimSpace(body.AssetTypeCode))
+		var exists bool
+		if err := tdb.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM asset_types WHERE code=$1)`, body.AssetTypeCode).Scan(&exists); err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+		if !exists {
+			http.Error(w, `{"error":"invalid_asset_type"}`, http.StatusUnprocessableEntity)
+			return
+		}
+		id := uuid.NewString()
+		includeBranch, includeLocation, resetPerLocation, active := true, false, false, true
+		seqDigits := 4
+		if body.IncludeBranch != nil {
+			includeBranch = *body.IncludeBranch
+		}
+		if body.IncludeLocation != nil {
+			includeLocation = *body.IncludeLocation
+		}
+		if body.ResetPerLocation != nil {
+			resetPerLocation = *body.ResetPerLocation
+		}
+		if body.Active != nil {
+			active = *body.Active
+		}
+		if body.SeqDigits != nil {
+			seqDigits = *body.SeqDigits
+		}
+		_, err := tdb.ExecContext(r.Context(), `INSERT INTO naming_rules
+			(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_location,seq_digits,
+			 reset_per_location,last_seq,active,description,custom_segment_1,custom_segment_2,
+			 custom_segment_1_label,custom_segment_2_label)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,NULLIF($12,''),NULLIF($13,''),$14,$15)`,
+			id, tenantID, body.AssetTypeCode, strings.ToUpper(strings.TrimSpace(body.Prefix)), body.Separator,
+			includeBranch, includeLocation, seqDigits, resetPerLocation, active, body.Description,
+			body.CustomSegment1, body.CustomSegment2, body.CustomSegment1Label, body.CustomSegment2Label)
+		if err != nil {
+			var pqErr *pq.Error
+			if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+				http.Error(w, `{"error":"nomenclature_already_exists"}`, http.StatusConflict)
+			} else {
+				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			}
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "asset_type_code": body.AssetTypeCode, "last_seq": 0, "status": "created"})
 	case http.MethodPut:
 		if ruleID == "" {
 			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
 			return
 		}
-		var b struct {
-			Prefix              string  `json:"prefix"`
-			Separator           string  `json:"separator"`
-			IncludeBranch       *bool   `json:"include_branch"`
-			IncludeLocation     *bool   `json:"include_location"`
-			SeqDigits           *int    `json:"seq_digits"`
-			ResetPerLocation    *bool   `json:"reset_per_location"`
-			CustomSegment1      *string `json:"custom_segment_1"`
-			CustomSegment2      *string `json:"custom_segment_2"`
-			CustomSegment1Label *string `json:"custom_segment_1_label"`
-			CustomSegment2Label *string `json:"custom_segment_2_label"`
-			Active              *bool   `json:"active"`
-			Description         *string `json:"description"`
+		if err := requireNamingRuleAdmin(r.Context(), tdb, userID, tenantID); err != nil {
+			if errors.Is(err, errForbiddenNamingRuleMutation) {
+				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			} else {
+				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			}
+			return
 		}
-		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+		b, raw, err := decodeNamingRuleMutation(r)
+		if err != nil || validateNamingRuleMutation(b, false) != nil {
 			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
 			return
 		}
-		_, err := tdb.ExecContext(r.Context(),
+		custom1, hasCustom1 := rawField(raw, "custom_segment_1")
+		custom2, hasCustom2 := rawField(raw, "custom_segment_2")
+		label1, hasLabel1 := rawField(raw, "custom_segment_1_label")
+		label2, hasLabel2 := rawField(raw, "custom_segment_2_label")
+		var current namingRuleResponse
+		if err := tdb.QueryRowContext(r.Context(), `SELECT prefix,separator,include_branch,include_location,seq_digits,reset_per_location,last_seq,
+			COALESCE(custom_segment_1,''),COALESCE(custom_segment_2,''),COALESCE(custom_segment_1_label,'Segmento 1'),COALESCE(custom_segment_2_label,'Segmento 2')
+			FROM naming_rules WHERE id=$1 AND tenant_id=$2`, ruleID, tenantID).Scan(&current.Prefix, &current.Separator, &current.IncludeBranch, &current.IncludeLocation, &current.SeqDigits, &current.ResetPerLocation, &current.LastSeq, &current.CustomSegment1, &current.CustomSegment2, &current.CustomSegment1Label, &current.CustomSegment2Label); err != nil {
+			if err == sql.ErrNoRows {
+				http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+			} else {
+				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			}
+			return
+		}
+		structuralChange := (b.Prefix != "" && b.Prefix != current.Prefix) || (b.Separator != "" && b.Separator != current.Separator) ||
+			(b.IncludeBranch != nil && *b.IncludeBranch != current.IncludeBranch) || (b.IncludeLocation != nil && *b.IncludeLocation != current.IncludeLocation) ||
+			(b.SeqDigits != nil && *b.SeqDigits != current.SeqDigits) || (b.ResetPerLocation != nil && *b.ResetPerLocation != current.ResetPerLocation) ||
+			(hasCustom1 && custom1 != current.CustomSegment1) || (hasCustom2 && custom2 != current.CustomSegment2) ||
+			(hasLabel1 && label1 != current.CustomSegment1Label) || (hasLabel2 && label2 != current.CustomSegment2Label)
+		if current.LastSeq > 0 && structuralChange {
+			http.Error(w, `{"error":"normative_version_required"}`, http.StatusConflict)
+			return
+		}
+		_, err = tdb.ExecContext(r.Context(),
 			`UPDATE naming_rules
 			 SET prefix=CASE WHEN $1!='' THEN $1 ELSE prefix END,
 			     separator=CASE WHEN $2!='' THEN $2 ELSE separator END,
@@ -1907,16 +2115,16 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			     include_location=COALESCE($4,include_location),
 			     seq_digits=COALESCE($5,seq_digits),
 			     reset_per_location=COALESCE($6,reset_per_location),
-			     custom_segment_1=$7,
-			     custom_segment_2=$8,
-			     custom_segment_1_label=COALESCE($9,custom_segment_1_label),
-			     custom_segment_2_label=COALESCE($10,custom_segment_2_label),
-			     active=COALESCE($11,active),
-			     description=COALESCE($12,description),
+			     custom_segment_1=CASE WHEN $7 THEN NULLIF($8,'') ELSE custom_segment_1 END,
+			     custom_segment_2=CASE WHEN $9 THEN NULLIF($10,'') ELSE custom_segment_2 END,
+			     custom_segment_1_label=CASE WHEN $11 THEN $12 ELSE custom_segment_1_label END,
+			     custom_segment_2_label=CASE WHEN $13 THEN $14 ELSE custom_segment_2_label END,
+			     active=COALESCE($15,active),
+			     description=COALESCE($16,description),
 			     updated_at=now()
-			 WHERE id=$13 AND tenant_id=$14`,
+			 WHERE id=$17 AND tenant_id=$18`,
 			b.Prefix, b.Separator, b.IncludeBranch, b.IncludeLocation, b.SeqDigits, b.ResetPerLocation,
-			b.CustomSegment1, b.CustomSegment2, b.CustomSegment1Label, b.CustomSegment2Label,
+			hasCustom1, custom1, hasCustom2, custom2, hasLabel1, label1, hasLabel2, label2,
 			b.Active, b.Description, ruleID, tenantID)
 		if err != nil {
 			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)

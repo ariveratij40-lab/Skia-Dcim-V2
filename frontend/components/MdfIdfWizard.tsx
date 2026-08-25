@@ -280,6 +280,9 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     loadNamingRules().then(() => {
       // Generar sugerencias iniciales para el tipo por defecto
     });
+    const reloadOnReturn = () => { void loadNamingRules(); };
+    window.addEventListener('focus', reloadOnReturn);
+    return () => window.removeEventListener('focus', reloadOnReturn);
   }, []);
 
   // Actualizar sugerencias y patrón cuando cambia el tipo o se cargan las reglas
@@ -292,7 +295,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     setCodePattern(pattern);
     // URL de nomenclaturas con el tipo del activo como parámetro
     const typeCode = TYPE_TO_CODE[form.type];
-    setCodePatternUrl(`/infraestructura/catalogs/nomenclaturas?type=${typeCode}`);
+    setCodePatternUrl(`/infraestructura/catalogs/nomenclaturas?type=${typeCode}&from=wizard`);
   }, [form.type, namingRules]);
 
   // Cargar ubicaciones cuando se llega al paso 2
