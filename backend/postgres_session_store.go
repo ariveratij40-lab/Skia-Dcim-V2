@@ -92,7 +92,7 @@ func (s *PostgresSessionStore) UserHasBranchAccess(
 				SELECT 1
 				FROM user_branches ub
 				JOIN branches b ON b.id = ub.branch_id
-				WHERE ub.user_id = $1 AND b.tenant_id = $2 AND ub.branch_id = $3
+				WHERE ub.user_id = $1 AND b.tenant_id = $2 AND b.status = 'active' AND ub.branch_id = $3
 		)
 	`
 

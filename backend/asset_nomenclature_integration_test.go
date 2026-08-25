@@ -353,3 +353,86 @@ func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
 		t.Fatalf("warehouse status=%s err=%v", status, err)
 	}
 }
+
+func TestSelectedBranchSessionMatchesTenantTxGUCAndAsset(t *testing.T) {
+	adminDSN := os.Getenv("ASSET_NOMENCLATURE_TEST_DATABASE_URL")
+	runtimeDSN := os.Getenv("ASSET_NOMENCLATURE_RUNTIME_TEST_DATABASE_URL")
+	if adminDSN == "" || runtimeDSN == "" {
+		t.Skip("database URLs not set")
+	}
+	adminDB, err := sql.Open("postgres", adminDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer adminDB.Close()
+	runtimeDB, err := sql.Open("postgres", runtimeDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtimeDB.Close()
+	tenant, branchA, branchB := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	user, session, placement, rule := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	token := "placement-branch-" + uuid.NewString()
+	setup := []struct {
+		query string
+		args  []interface{}
+	}{
+		{`INSERT INTO tenants(id,name) VALUES($1,'Selected branch authority')`, []interface{}{tenant}},
+		{`INSERT INTO branches(id,tenant_id,name) VALUES($1,$3,'A'),($2,$3,'B')`, []interface{}{branchA, branchB, tenant}},
+		{`INSERT INTO users(id,email,name,password_hash) VALUES($1,$2,'Branch user','x')`, []interface{}{user, user + "@example.test"}},
+		{`INSERT INTO user_tenants(user_id,tenant_id) VALUES($1,$2)`, []interface{}{user, tenant}},
+		{`INSERT INTO user_branches(user_id,branch_id) VALUES($1,$2),($1,$3)`, []interface{}{user, branchA, branchB}},
+		{`INSERT INTO sessions(id,user_id,tenant_id,branch_id,token,expires_at) VALUES($1,$2,$3,$4,$5,extract(epoch from now())::bigint+3600)`, []interface{}{session, user, tenant, branchB, token}},
+		{`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,'IDF B','IDF','IDF-B','active')`, []interface{}{placement, tenant, branchB}},
+		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,include_branch,include_placement,last_seq,active) VALUES($1,$2,'SWITCH','SW',false,true,0,true)`, []interface{}{rule, tenant}},
+	}
+	for _, statement := range setup {
+		if _, err = adminDB.Exec(statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() {
+		_, _ = adminDB.Exec(`DELETE FROM users WHERE id=$1`, user)
+		_, _ = adminDB.Exec(`DELETE FROM tenants WHERE id=$1`, tenant)
+	}()
+	var created string
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		tdb, ok := TenantDBFromContext(r.Context())
+		if !ok {
+			http.Error(w, "missing tx", 500)
+			return
+		}
+		_, gotTenant, gotBranch, ok := TenantIdentityFromContext(r.Context())
+		if !ok || gotTenant != tenant || gotBranch != branchB {
+			http.Error(w, "identity mismatch", 500)
+			return
+		}
+		var guc string
+		if err := tdb.QueryRow(`SELECT current_setting('app.branch_id')`).Scan(&guc); err != nil || guc != branchB {
+			http.Error(w, "guc mismatch", 500)
+			return
+		}
+		managed, err := reserveManagedAsset(tdb, tenant, branchB, user, managedAssetInput{AssetTypeCode: "SWITCH", Name: "Branch B switch", PlacementID: placement})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		created = managed.AssetID
+		w.WriteHeader(http.StatusCreated)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/branch-placement", nil)
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+	rec := httptest.NewRecorder()
+	RequireTenantTx(runtimeDB, handler)(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var assetBranch string
+	if err := adminDB.QueryRow(`SELECT branch_id FROM assets WHERE id=$1`, created).Scan(&assetBranch); err != nil || assetBranch != branchB {
+		t.Fatalf("asset branch=%s err=%v", assetBranch, err)
+	}
+	var counterBranch string
+	if err := adminDB.QueryRow(`SELECT branch_id FROM nomenclature_counters WHERE nomenclature_id=$1 AND placement_id=$2`, rule, placement).Scan(&counterBranch); err != nil || counterBranch != branchB {
+		t.Fatalf("counter branch=%s err=%v", counterBranch, err)
+	}
+}

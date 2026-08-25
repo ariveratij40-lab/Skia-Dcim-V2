@@ -29,6 +29,15 @@ type branchSelectionHarness struct {
 
 func (h *branchSelectionHarness) deps() branchSelectionDeps {
 	return branchSelectionDeps{
+		loadAuthorizedBranches: func(string, int64) ([]authorizedBranch, error) {
+			branches := make([]authorizedBranch, 0, len(h.allowed))
+			for id, allowed := range h.allowed {
+				if allowed {
+					branches = append(branches, authorizedBranch{ID: id, Name: id, Selected: id == h.updatedBranch})
+				}
+			}
+			return branches, h.loadErr
+		},
 		loadSession: func(string, int64) (string, string, error) {
 			return h.userID, h.tenantID, h.loadErr
 		},
@@ -48,6 +57,17 @@ func (h *branchSelectionHarness) deps() branchSelectionDeps {
 			}
 			return h.updateResult, nil
 		},
+	}
+}
+
+func TestListAuthorizedBranchesOnly(t *testing.T) {
+	h := &branchSelectionHarness{allowed: map[string]bool{testBranchA1: true, testBranchA2: true}, updatedBranch: testBranchA2}
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/select-branch", nil)
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: "redacted-test-token"})
+	rec := httptest.NewRecorder()
+	handleSelectBranchWithDeps(rec, req, h.deps())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), testBranchA1) || !strings.Contains(rec.Body.String(), `"selected":true`) {
+		t.Fatalf("authorized branches response: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

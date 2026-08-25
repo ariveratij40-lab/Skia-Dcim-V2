@@ -22,28 +22,8 @@ export default function SelectBranchPage() {
   useEffect(() => {
     const loadBranches = async () => {
       try {
-        // Simular carga de sucursales
-        const mockBranches: Branch[] = [
-          {
-            id: '550e8400-e29b-41d4-a716-446655440201',
-            name: 'Sede Principal - Miami',
-            city: 'Miami, FL',
-            status: 'active'
-          },
-          {
-            id: '550e8400-e29b-41d4-a716-446655440202',
-            name: 'Centro de Datos - Nueva York',
-            city: 'Nueva York, NY',
-            status: 'active'
-          },
-          {
-            id: '550e8400-e29b-41d4-a716-446655440203',
-            name: 'Oficina Regional - Texas',
-            city: 'Dallas, TX',
-            status: 'active'
-          }
-        ];
-        setBranches(mockBranches);
+        const response = await axios.get('/api/auth/select-branch');
+        setBranches((response.data?.branches ?? []).map((branch: Branch) => ({ ...branch, status: 'active' })));
       } catch (err) {
         setError('Error cargando sucursales');
       } finally {

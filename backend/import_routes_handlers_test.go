@@ -44,7 +44,7 @@ func TestHandleInventoryImportRoutes_DetailValid(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS(
 				SELECT 1 FROM branches b
 				JOIN user_branches ub ON ub.branch_id = b.id
-				WHERE b.id = $1 AND b.tenant_id = $2 AND ub.user_id = $3
+				WHERE b.id = $1 AND b.tenant_id = $2 AND b.status = 'active' AND ub.user_id = $3
 			)`)).WithArgs("branch-1", "tenant-1", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectQuery("FROM inventory_imports").WithArgs("1", "tenant-1", "branch-1").

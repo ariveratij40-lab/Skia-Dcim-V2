@@ -218,8 +218,8 @@ func main() {
 	http.HandleFunc("/api/dcim/catalogs/naming-rules", RequireTenantTx(db, dcim.HandleNamingRules))
 	http.HandleFunc("/api/dcim/catalogs/naming-rules/", RequireTenantTx(db, dcim.HandleNamingRules))
 	http.HandleFunc("/api/dcim/placements", RequireTenantTx(db, HandlePlacements))
-	http.HandleFunc("/api/dcim/catalogs/locations", dcim.HandleLocationsManage)
-	http.HandleFunc("/api/dcim/catalogs/locations/", dcim.HandleLocationsManage)
+	http.HandleFunc("/api/dcim/catalogs/locations", RequireTenantTx(db, dcim.HandleLocationsManage))
+	http.HandleFunc("/api/dcim/catalogs/locations/", RequireTenantTx(db, dcim.HandleLocationsManage))
 
 	// Infraestructura DCIM — endpoints por módulo
 	http.HandleFunc("/api/infra/mdf-idf", RequireTenantTx(db, handleMdfIdf))
@@ -631,6 +631,27 @@ func handleSelectTenant(w http.ResponseWriter, r *http.Request) {
 
 func handleSelectBranch(w http.ResponseWriter, r *http.Request) {
 	handleSelectBranchWithDeps(w, r, branchSelectionDeps{
+		loadAuthorizedBranches: func(token string, now int64) ([]authorizedBranch, error) {
+			rows, err := db.Query(`SELECT b.id,b.name,COALESCE(b.city,''),b.id=s.branch_id
+				FROM sessions s
+				JOIN user_branches ub ON ub.user_id=s.user_id
+				JOIN branches b ON b.id=ub.branch_id AND b.tenant_id=s.tenant_id
+				WHERE s.token=$1 AND s.expires_at>$2 AND b.status='active'
+				ORDER BY b.name`, token, now)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			var branches []authorizedBranch
+			for rows.Next() {
+				var branch authorizedBranch
+				if err := rows.Scan(&branch.ID, &branch.Name, &branch.City, &branch.Selected); err != nil {
+					return nil, err
+				}
+				branches = append(branches, branch)
+			}
+			return branches, rows.Err()
+		},
 		loadSession: func(token string, now int64) (string, string, error) {
 			var userID, tenantID string
 			err := db.QueryRow(
@@ -646,7 +667,7 @@ func handleSelectBranch(w http.ResponseWriter, r *http.Request) {
 					SELECT 1
 					FROM branches b
 					JOIN user_branches ub ON ub.branch_id = b.id
-					WHERE b.id = $1 AND b.tenant_id = $2 AND ub.user_id = $3
+					WHERE b.id = $1 AND b.tenant_id = $2 AND b.status='active' AND ub.user_id = $3
 				)`,
 				branchID, tenantID, userID,
 			).Scan(&allowed)
@@ -664,7 +685,7 @@ func handleSelectBranch(w http.ResponseWriter, r *http.Request) {
 					 SELECT 1
 					 FROM branches b
 					 JOIN user_branches ub ON ub.branch_id = b.id
-					 WHERE b.id = $1 AND b.tenant_id = s.tenant_id AND ub.user_id = s.user_id
+					 WHERE b.id = $1 AND b.tenant_id = s.tenant_id AND b.status='active' AND ub.user_id = s.user_id
 				   )`,
 				branchID, token, userID, tenantID, now,
 			)
@@ -678,19 +699,46 @@ func handleSelectBranch(w http.ResponseWriter, r *http.Request) {
 }
 
 type branchSelectionDeps struct {
-	loadSession         func(token string, now int64) (userID, tenantID string, err error)
-	userHasBranchAccess func(userID, tenantID, branchID string) (bool, error)
-	updateBranch        func(token, userID, tenantID, branchID string, now int64) (bool, error)
+	loadAuthorizedBranches func(token string, now int64) ([]authorizedBranch, error)
+	loadSession            func(token string, now int64) (userID, tenantID string, err error)
+	userHasBranchAccess    func(userID, tenantID, branchID string) (bool, error)
+	updateBranch           func(token, userID, tenantID, branchID string, now int64) (bool, error)
+}
+
+type authorizedBranch struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	City     string `json:"city"`
+	Selected bool   `json:"selected"`
 }
 
 func handleSelectBranchWithDeps(w http.ResponseWriter, r *http.Request, deps branchSelectionDeps) {
-	if r.Method != "POST" {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	sessionToken := extractSessionToken(r)
 	if sessionToken == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if r.Method == http.MethodGet {
+		if deps.loadAuthorizedBranches == nil {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		branches, err := deps.loadAuthorizedBranches(sessionToken, time.Now().Unix())
+		if err != nil {
+			log.Printf("ERROR authorized branch list failed: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if len(branches) == 0 {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"branches": branches})
 		return
 	}
 	var req SelectBranchRequest

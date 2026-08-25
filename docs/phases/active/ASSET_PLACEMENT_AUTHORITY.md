@@ -9,7 +9,7 @@
 
 ## Audit and selected model
 
-`branches` already represents the authenticated branch context. `locations` is
+`branches` already represents the selectable authenticated branch context. `locations` is
 the existing generic entity referenced by `assets.location_id`, but previously
 had no type, canonical code or status. MDF/IDF are managed assets in `mdf_idf`;
 there is no Warehouse entity. Racks alone have a partial MDF/IDF FK; Switch,
@@ -45,6 +45,18 @@ historical identities.
 
 ## Transaction, warehouse and security
 
+Branch authority has one canonical chain:
+
+`user → active user_branches in active tenant → POST /api/auth/select-branch → sessions.branch_id → RequireTenantTx → SET LOCAL app.branch_id → placements → counter(branch, placement) → asset`.
+
+`GET /api/auth/select-branch` lists only active branches mapped to the current
+user and tenant. The selector never supplies `branch_id` as authority to a DCIM
+handler. It first changes the canonical session context, then protected requests
+open a new `TenantTx` from that session. Therefore `TenantIdentityFromContext`,
+the RLS GUC, placement resolution, counter scope and `assets.branch_id` use the
+same value. A sole authorized branch is preselected; with multiple branches the
+selection is explicit. Changing it clears placement and preview before reload.
+
 `RequireTenantTx → resolve branch/placement → lock scoped counter → insert
 assets → insert satellite → middleware commit`. Any error rolls back all work.
 Warehouse placement forces the initial operational status to `inactive`; a
@@ -54,6 +66,11 @@ future work.
 Locations and counters use RLS/FORCE RLS. Runtime grants are the exact operations
 needed by resolution, container creation and counter reservation. Cross-tenant
 and cross-branch identifiers are invisible and rejected.
+
+The final runtime allow-list is `locations: SELECT, INSERT, UPDATE` and
+`nomenclature_counters: SELECT, INSERT, UPDATE`. `locations.UPDATE` is retained
+only for the existing location-catalog PUT operation, now explicitly protected
+by `RequireTenantTx`; no placement flow receives DELETE or DDL authority.
 
 ## Roundtrip and legacy
 

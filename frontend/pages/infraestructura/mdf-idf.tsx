@@ -2200,8 +2200,13 @@ function MdfIdfContent() {
     ? router.query.create
     : undefined;
   useEffect(() => {
-    if (router.isReady && requestedPlacementType) setShowMdfWizard(true);
-  }, [router.isReady, requestedPlacementType]);
+    if (!router.isReady || !requestedPlacementType) return;
+    const requestedBranch = typeof router.query.branch_id === 'string' ? router.query.branch_id : '';
+    if (!requestedBranch) { setShowMdfWizard(true); return; }
+    axios.post('/api/auth/select-branch', { branchId: requestedBranch })
+      .then(() => setShowMdfWizard(true))
+      .catch(() => setShowMdfWizard(false));
+  }, [router.isReady, requestedPlacementType, router.query.branch_id]);
   // ─── Rack Builder elevado al padre para que Resumen e Inventario lo compartan ───
   const [showRackBuilderGlobal, setShowRackBuilderGlobal] = useState(false);
   const [rackBuilderRecordGlobal, setRackBuilderRecordGlobal] = useState<MdfIdfRecord | null>(null);
