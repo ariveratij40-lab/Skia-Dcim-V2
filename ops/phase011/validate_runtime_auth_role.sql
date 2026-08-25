@@ -32,6 +32,8 @@ BEGIN
              ('sessions','SELECT'),('sessions','INSERT'),('sessions','UPDATE'),('sessions','DELETE'),
              ('user_roles','SELECT'),('roles','SELECT'),('role_permissions','SELECT'),('permissions','SELECT'),
              ('asset_types','SELECT'),('naming_rules','SELECT'),('naming_rules','INSERT'),('naming_rules','UPDATE'),
+             ('locations','SELECT'),('locations','INSERT'),('locations','UPDATE'),
+             ('nomenclature_counters','SELECT'),('nomenclature_counters','INSERT'),('nomenclature_counters','UPDATE'),
              ('mdf_idf','SELECT'),('mdf_idf','INSERT'),('racks','SELECT'),('racks','INSERT'),
              ('switches','SELECT'),('switches','INSERT'),('ups','SELECT'),('ups','INSERT'),
              ('pdus','SELECT'),('pdus','INSERT'),('patch_panels','SELECT'),('patch_panels','INSERT'),

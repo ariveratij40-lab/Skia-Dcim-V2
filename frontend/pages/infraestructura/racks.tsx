@@ -24,6 +24,7 @@ export type RackStatus = 'Operativo' | 'Atención' | 'Crítico' | 'Planeado' | '
 export type RackPostes = '2 Postes' | '4 Postes' | 'Abierto' | 'Cerrado' | 'Wall-mount' | 'Gabinete' | 'Panzone';
 
 export interface RackRecord {
+	placement_id?: string;
   id: string;
   code: string;
   brand: string;
@@ -778,6 +779,7 @@ export default function RacksPage() {
               photo_url: data.photo_url ?? '',
               ref_image_url: '',
               observations: data.observations ?? '',
+              placement_id: data.placement_id,
               org_horizontal: data.org_horizontal ?? false,
               org_vertical: data.org_vertical ?? false,
               pdu: data.pdu ?? false,

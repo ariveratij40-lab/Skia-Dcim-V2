@@ -18,6 +18,7 @@ export type PPStatus = 'Activo' | 'Inactivo' | 'Baja';
 export type PPType   = 'Angulado' | 'Plano' | 'Blindado' | 'Modular' | 'Keystone' | 'Fibra Óptica';
 
 export interface PatchPanel {
+	placement_id?: string;
   id: string;
   code: string;
   brand: string;
@@ -758,6 +759,7 @@ export default function PatchPanelsPage() {
               floor_plan_ref: data.floor_plan_ref ?? '',
               photo_url: '',
               observations: data.observations ?? '',
+              placement_id: data.placement_id,
               ports_total: data.ports_total ?? 24,
               ports_free: data.ports_free ?? 0,
               rfid_tag: data.rfid_tag ?? '',

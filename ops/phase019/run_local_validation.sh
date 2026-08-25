@@ -41,7 +41,7 @@ pushd "$repo_root/backend" >/dev/null
 ASSET_NOMENCLATURE_TEST_DATABASE_URL="postgresql://postgres:${password}@127.0.0.1:${port}/skia_prod?sslmode=disable" \
 ASSET_NOMENCLATURE_RUNTIME_TEST_DATABASE_URL="postgresql://skia_runtime:${runtime_password}@127.0.0.1:${port}/skia_prod?sslmode=disable" \
 GOCACHE="${TMPDIR:-/tmp}/skia-phase019-go-cache" \
-  go test -run '^(TestAssetNomenclatureConcurrentSequence|TestSpecializedHandlerRollbackIsAtomic)$' -count=1 ./...
+  go test -run '^(TestAssetNomenclatureConcurrentSequence|TestSpecializedHandlerRollbackIsAtomic|TestPlacementScopedCountersAndWarehouseStatus)$' -count=1 ./...
 popd >/dev/null
 
 docker exec -i -e PGPASSWORD="$password" "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null

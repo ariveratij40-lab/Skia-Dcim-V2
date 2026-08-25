@@ -1193,6 +1193,7 @@ export default function UpsPdusPage() {
                 kva: data.kva ?? 0,
                 battery_runtime_min: data.battery_runtime_min ?? 0,
                 observations: data.notes ?? '',
+                placement_id: data.placement_id,
               }).then(resp => {
                 setDevices(prev => [{ ...newDev, id: resp.data.id ?? newDev.id, code: resp.data.internal_code ?? newDev.code }, ...prev]);
               }).catch(() => undefined);

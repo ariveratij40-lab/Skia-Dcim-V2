@@ -12,6 +12,7 @@ import {
   INTEGRADORES, ANIOS_INSTALACION,
 } from '@/data/catalogos';
 import NomenclatureCodeField from './NomenclatureCodeField';
+import AssetPlacementSelector,{AssetPlacement} from './AssetPlacementSelector';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface NodeWizardData {
@@ -54,6 +55,7 @@ export interface NodeWizardData {
   // Etapa 5 — Normativa
   normativa: boolean;
   observaciones: string;
+  placement_id:string;
 }
 
 interface Props {
@@ -78,7 +80,7 @@ const blank: NodeWizardData = {
   mice: 'Bajo', gama: '', longitud: '', patchcordInterno: '3 Pies', anioInstalacion: 2025,
   foto: '', docFluke: '', docFlukeUrl: '', docPanduit: '', docPanduitUrl: '', certificadoFluke: false,
   patchpanel: '', switchDestino: '', verEnPlano: '', etiquetaRFID: '', integrador: '', po: '',
-  costo: 0, centroCostos: '', normativa: false, observaciones: '',
+  costo: 0, centroCostos: '', normativa: false, observaciones: '', placement_id:'',
 };
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
@@ -148,6 +150,7 @@ function ChipSelector({ value, onChange, options }: {
 
 // ─── Step 1: Alta rápida ──────────────────────────────────────────────────────
 function Step1({ form, set, onNomenclature }: { form: NodeWizardData; set: (k: keyof NodeWizardData, v: any) => void; onNomenclature: (available: boolean) => void }) {
+  const [placement,setPlacement]=useState<AssetPlacement>();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '10px', padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
@@ -159,14 +162,12 @@ function Step1({ form, set, onNomenclature }: { form: NodeWizardData; set: (k: k
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
         <Field label="Código técnico" required>
-          <NomenclatureCodeField assetType="NODE" onAvailability={onNomenclature} />
+          <NomenclatureCodeField assetType="NODE" placementCode={placement?.canonical_code} onAvailability={onNomenclature} />
         </Field>
         <Field label="Nombre descriptivo" required>
           <input value={form.name} onChange={e => set('name', e.target.value)} style={inp} placeholder="Nodo oficina recepción" />
         </Field>
-        <Field label="IDF / MDF de origen" required hint="Cuarto técnico donde termina el cable">
-          <input value={form.idf} onChange={e => set('idf', e.target.value)} style={inp} placeholder="IDF1-P1-E2" />
-        </Field>
+        <div style={{gridColumn:'1/-1'}}><AssetPlacementSelector assetType="NODE" value={form.placement_id} onChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('idf',p?.name||'')}} /></div>
       </div>
 
       <Field label="Área / Zona de trabajo" required hint="Dónde está físicamente el nodo">
@@ -599,12 +600,12 @@ export default function NodeWizard({ item, onClose, onSave }: Props) {
   const set = (k: keyof NodeWizardData, v: any) => setForm(f => ({ ...f, [k]: v }));
 
   const canNext = () => {
-    if (step === 1) return nomenclatureAvailable && !!form.name && !!form.idf && !!form.area;
+    if (step === 1) return nomenclatureAvailable && !!form.name && !!form.placement_id && !!form.area;
     return true;
   };
 
   const handleSave = () => {
-    if (!nomenclatureAvailable || !form.name || !form.idf || !form.area) { setStep(1); return; }
+    if (!nomenclatureAvailable || !form.name || !form.placement_id || !form.area) { setStep(1); return; }
     onSave({ ...form, id: form.id || `n${Date.now()}` });
   };
 

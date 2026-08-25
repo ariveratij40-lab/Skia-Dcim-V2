@@ -35,20 +35,23 @@ func TestSpecializedPostUsesInjectedTenantDB(t *testing.T) {
 
 	tenantMock.ExpectQuery("SELECT id FROM asset_types").WithArgs("SWITCH").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("asset-type-1"))
+	tenantMock.ExpectQuery("SELECT id,placement_type").WithArgs("placement-1", "tenant-1", "branch-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "placement_type", "branch_id", "placement_code", "name", "status"}).AddRow("placement-1", "IDF", "branch-1", "IDF01", "IDF 01", "active"))
 	tenantMock.ExpectQuery("SELECT id, prefix, separator").WithArgs("tenant-1", "SWITCH").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "custom_segment_1", "custom_segment_2"}).
-			AddRow("rule-1", "SW", "-", 4, 0, false, "", ""))
-	tenantMock.ExpectExec("UPDATE naming_rules SET last_seq").WithArgs(1, "rule-1", "tenant-1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "include_placement", "custom_segment_1", "custom_segment_2"}).
+			AddRow("rule-1", "SW", "-", 4, 0, false, true, "", ""))
+	tenantMock.ExpectExec("INSERT INTO nomenclature_counters").WillReturnResult(sqlmock.NewResult(0, 1))
+	tenantMock.ExpectQuery("SELECT last_seq FROM nomenclature_counters").WillReturnRows(sqlmock.NewRows([]string{"last_seq"}).AddRow(0))
+	tenantMock.ExpectExec("UPDATE nomenclature_counters").WillReturnResult(sqlmock.NewResult(0, 1))
 	tenantMock.ExpectExec("INSERT INTO assets").WillReturnResult(sqlmock.NewResult(0, 1))
 	tenantMock.ExpectExec("INSERT INTO switches").WillReturnResult(sqlmock.NewResult(0, 1))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/infra/switches", strings.NewReader(`{"name":"Switch principal"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/infra/switches", strings.NewReader(`{"name":"Switch principal","placement_id":"placement-1"}`))
 	req = infrastructureRequestWithTenantDB(req, tenantDatabase)
 	rec := httptest.NewRecorder()
 	handleSwitches(rec, req)
 
-	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"internal_code":"SW-0001"`) {
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"internal_code":"SW-IDF01-0001"`) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if err := tenantMock.ExpectationsWereMet(); err != nil {

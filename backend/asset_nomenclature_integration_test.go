@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -32,7 +33,7 @@ func TestSpecializedHandlerRollbackIsAtomic(t *testing.T) {
 	}
 	defer runtimeDB.Close()
 
-	tenantID, branchID, userID, ruleID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	tenantID, branchID, userID, ruleID, placementID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	setupTx, err := adminDB.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -43,11 +44,12 @@ func TestSpecializedHandlerRollbackIsAtomic(t *testing.T) {
 	}{
 		{`INSERT INTO tenants(id,name) VALUES($1,'Atomic handler test')`, []interface{}{tenantID}},
 		{`INSERT INTO branches(id,tenant_id,name,city) VALUES($1,$2,'Atomic branch','TIJ')`, []interface{}{branchID, tenantID}},
+		{`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,'IDF Atomic','IDF','IDF01','active')`, []interface{}{placementID, tenantID, branchID}},
 		{`INSERT INTO users(id,email,name,password_hash,status) VALUES($1,$2,'Atomic user','x','active')`, []interface{}{userID, "atomic-" + userID + "@example.invalid"}},
 		{`INSERT INTO user_tenants(user_id,tenant_id) VALUES($1,$2)`, []interface{}{userID, tenantID}},
 		{`INSERT INTO user_branches(user_id,branch_id) VALUES($1,$2)`, []interface{}{userID, branchID}},
 		{`INSERT INTO sessions(id,user_id,tenant_id,branch_id,token,expires_at) VALUES($1,$2,$3,$4,$5,4102444800)`, []interface{}{uuid.NewString(), userID, tenantID, branchID, "token-" + userID}},
-		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,seq_digits,last_seq,active) VALUES($1,$2,'SWITCH','SW','-',4,0,true)`, []interface{}{ruleID, tenantID}},
+		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,seq_digits,last_seq,active,include_placement) VALUES($1,$2,'SWITCH','SW','-',4,0,true,true)`, []interface{}{ruleID, tenantID}},
 	}
 	for _, statement := range setupStatements {
 		if _, err = setupTx.Exec(statement.query, statement.args...); err != nil {
@@ -61,7 +63,7 @@ func TestSpecializedHandlerRollbackIsAtomic(t *testing.T) {
 	defer adminDB.Exec(`DELETE FROM tenants WHERE id=$1`, tenantID)
 
 	invoke := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/infra/switches", bytes.NewBufferString(`{"name":"Atomic switch"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/infra/switches", bytes.NewBufferString(fmt.Sprintf(`{"name":"Atomic switch","placement_id":%q}`, placementID)))
 		req.AddCookie(&http.Cookie{Name: "session_token", Value: "token-" + userID})
 		rec := httptest.NewRecorder()
 		RequireTenantTx(runtimeDB, handleSwitches)(rec, req)
@@ -69,7 +71,7 @@ func TestSpecializedHandlerRollbackIsAtomic(t *testing.T) {
 	}
 	assertRolledBack := func(label string) {
 		var sequence, assets int
-		if err := adminDB.QueryRow(`SELECT last_seq FROM naming_rules WHERE id=$1`, ruleID).Scan(&sequence); err != nil {
+		if err := adminDB.QueryRow(`SELECT COALESCE(MAX(last_seq),0) FROM nomenclature_counters WHERE nomenclature_id=$1`, ruleID).Scan(&sequence); err != nil {
 			t.Fatal(err)
 		}
 		if err := adminDB.QueryRow(`SELECT count(*) FROM assets WHERE tenant_id=$1`, tenantID).Scan(&assets); err != nil {
@@ -236,5 +238,118 @@ func TestAssetNomenclatureConcurrentSequence(t *testing.T) {
 	_ = inactiveTx.Rollback()
 	if !errors.Is(err, ErrNomenclatureRequired) {
 		t.Fatalf("inactive rule accepted: %v", err)
+	}
+}
+
+func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
+	dsn := os.Getenv("ASSET_NOMENCLATURE_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("database URL not set")
+	}
+	database, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	tenant, branch, p1, p2, warehouse, rule := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	_, err = database.Exec(`INSERT INTO tenants(id,name) VALUES($1,'Placement counters')`, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Exec(`DELETE FROM tenants WHERE id=$1`, tenant)
+	if _, err = database.Exec(`INSERT INTO branches(id,tenant_id,name,city) VALUES($1,$2,'B','TIJ')`, branch, tenant); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct{ id, typ, code string }{{p1, "IDF", "IDF01"}, {p2, "IDF", "IDF02"}, {warehouse, "WAREHOUSE", "ALM01"}} {
+		if _, err = database.Exec(`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,$4,$5,$4,'active')`, p.id, tenant, branch, p.code, p.typ); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = database.Exec(`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,include_branch,include_placement,last_seq,active) VALUES($1,$2,'SWITCH','SW',false,true,0,true)`, rule, tenant); err != nil {
+		t.Fatal(err)
+	}
+	makePlacement := func(id, code, typ string) *ResolvedPlacement {
+		return &ResolvedPlacement{ID: id, Type: typ, BranchID: branch, CanonicalCode: code, Name: code, Active: true}
+	}
+	reserve := func(p *ResolvedPlacement, commit bool) (NomenclatureAssignment, error) {
+		tx, e := BeginTenantTx(context.Background(), database, tenant, branch)
+		if e != nil {
+			return NomenclatureAssignment{}, e
+		}
+		a, e := (&DCIMHandler{}).generateInternalCodeWithContext(tx, NomenclatureContext{TenantID: tenant, BranchID: branch, AssetTypeCode: "SWITCH", Placement: p})
+		if e != nil {
+			_ = tx.Rollback()
+			return a, e
+		}
+		if commit {
+			e = tx.Commit()
+		} else {
+			e = tx.Rollback()
+		}
+		return a, e
+	}
+	a1, err := reserve(makePlacement(p1, "IDF01", "IDF"), true)
+	if err != nil || a1.Sequence != 1 || a1.Code != "SW-IDF01-0001" {
+		t.Fatalf("p1 first: %#v %v", a1, err)
+	}
+	a2, err := reserve(makePlacement(p2, "IDF02", "IDF"), true)
+	if err != nil || a2.Sequence != 1 || a2.Code != "SW-IDF02-0001" {
+		t.Fatalf("p2 first: %#v %v", a2, err)
+	}
+	results := make(chan string, 12)
+	failures := make(chan error, 12)
+	var workers sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			a, e := reserve(makePlacement(p1, "IDF01", "IDF"), true)
+			if e != nil {
+				failures <- e
+				return
+			}
+			results <- a.Code
+		}()
+	}
+	workers.Wait()
+	close(results)
+	close(failures)
+	for e := range failures {
+		t.Fatal(e)
+	}
+	seen := map[string]bool{}
+	for code := range results {
+		if seen[code] {
+			t.Fatalf("duplicate placement code %s", code)
+		}
+		seen[code] = true
+	}
+	if len(seen) != 12 {
+		t.Fatalf("got %d concurrent codes", len(seen))
+	}
+	rolled, err := reserve(makePlacement(p1, "IDF01", "IDF"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := reserve(makePlacement(p1, "IDF01", "IDF"), false)
+	if err != nil || rolled.Sequence != next.Sequence {
+		t.Fatalf("rollback consumed sequence: %d %d %v", rolled.Sequence, next.Sequence, err)
+	}
+	// DB trigger is the final authority for warehouse operational state.
+	var switchType string
+	if err = database.QueryRow(`SELECT id FROM asset_types WHERE code='SWITCH'`).Scan(&switchType); err != nil {
+		t.Fatal(err)
+	}
+	wa, err := reserve(makePlacement(warehouse, "ALM01", "WAREHOUSE"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetID := uuid.NewString()
+	if _, err = database.Exec(`INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,location_id,internal_code,nomenclature_id,nomenclature_sequence,name,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'Stored switch','active')`, assetID, tenant, branch, switchType, warehouse, wa.Code, rule, wa.Sequence); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err = database.QueryRow(`SELECT status FROM assets WHERE id=$1`, assetID).Scan(&status); err != nil || status != "inactive" {
+		t.Fatalf("warehouse status=%s err=%v", status, err)
 	}
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Zap, Battery, MapPin, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
 import NomenclatureCodeField from './NomenclatureCodeField';
+import AssetPlacementSelector,{AssetPlacement} from './AssetPlacementSelector';
 
 export type DeviceType = 'UPS' | 'PDU';
 export type UPSTopology = 'Online' | 'Interactiva' | 'Offline' | 'Modular';
@@ -22,6 +23,7 @@ export interface UpsPduWizardData {
   serial: string; mgmt_ip: string; responsible: string;
   install_date: string; last_maintenance: string; notes: string;
   tags?: string[];
+  placement_id:string;
 }
 
 interface Props {
@@ -61,7 +63,7 @@ const EMPTY: UpsPduWizardData = {
   status: 'Operativo', manufacturer: '', model: '',
   serial: '', mgmt_ip: '', responsible: '',
   install_date: '', last_maintenance: '', notes: '',
-  tags: [],
+  tags: [], placement_id:'',
 };
 
 export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
@@ -69,6 +71,7 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
   const [form, setForm] = useState<UpsPduWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
+  const [placement,setPlacement]=useState<AssetPlacement>();
 
   const set = (field: keyof UpsPduWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
@@ -77,13 +80,13 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
     const c: number[] = [];
     if (form.name && form.device_type && form.status && nomenclatureAvailable) c.push(1);
     if (form.device_type === 'UPS' ? form.kva : form.total_outlets) c.push(2);
-    if (form.building && form.room) c.push(3);
+    if (form.placement_id) c.push(3);
     if (form.manufacturer) c.push(4);
     return c;
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.device_type || !nomenclatureAvailable) return;
+    if (!form.name || !form.device_type || !nomenclatureAvailable || !form.placement_id) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
     onSave(form);
@@ -133,7 +136,7 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div style={{ gridColumn: '1/-1' }}>{fld('Tipo de dispositivo', chips(DEVICE_TYPES, form.device_type, v => set('device_type', v as DeviceType), TYPE_COLORS))}</div>
-            <div>{fld('Código técnico', <NomenclatureCodeField assetType={form.device_type} onAvailability={setNomenclatureAvailable} />)}</div>
+            <div>{fld('Código técnico', <NomenclatureCodeField assetType={form.device_type} placementCode={placement?.canonical_code} onAvailability={setNomenclatureAvailable} />)}</div>
             <div>{fld('Nombre descriptivo', inp('name', 'UPS Principal MDF'))}</div>
             <div>{fld('Fabricante', (
               <select value={form.manufacturer} onChange={e => set('manufacturer', e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}>
@@ -185,7 +188,7 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
             <div style={{ gridColumn: '1/-1' }}>{fld('Cuarto / Sala', inp('room', 'MDF Principal'), true)}</div>
             <div>{fld('Rack', inp('rack_name', 'Rack Principal MDF'))}</div>
             <div>{fld('Unidades de rack (U)', inp('rack_u', '7-10U'))}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('MDF/IDF asociado', inp('mdf_idf_name', 'MDF Principal — Torre A'))}</div>
+            <div style={{gridColumn:'1/-1'}}><AssetPlacementSelector assetType={form.device_type} value={form.placement_id} onChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('mdf_idf_name',p?.name||'')}} /></div>
             <div>{fld('Fecha de instalación', inp('install_date', '', 'date'))}</div>
             <div>{fld('Último mantenimiento', inp('last_maintenance', '', 'date'))}</div>
             <div style={{ gridColumn: '1/-1' }}>{fld('Notas', (

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,11 @@ var (
 	ErrAssetNameNeeded = errors.New("descriptive asset name is required")
 )
 
+var installableAssetTypes = map[string]bool{
+	"SWITCH": true, "RACK": true, "PATCH_PANEL": true,
+	"UPS": true, "PDU": true, "NODE": true,
+}
+
 type managedAssetInput struct {
 	AssetTypeCode string
 	Name          string
@@ -25,6 +31,7 @@ type managedAssetInput struct {
 	SerialNumber  string
 	Observations  string
 	InstallYear   int
+	PlacementID   string
 }
 
 // managedAssetReservation is state produced inside the request TenantTx.
@@ -53,7 +60,21 @@ func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, i
 	if err := tenantTx.QueryRow(`SELECT id FROM asset_types WHERE code=$1`, input.AssetTypeCode).Scan(&assetTypeID); err != nil {
 		return nil, fmt.Errorf("resolve asset type: %w", err)
 	}
-	assignment, err := (&DCIMHandler{}).generateInternalCode(tenantTx, tenantID, branchID, input.AssetTypeCode)
+	var placement *ResolvedPlacement
+	if installableAssetTypes[input.AssetTypeCode] {
+		if strings.TrimSpace(input.PlacementID) == "" {
+			return nil, ErrInvalidAssetPlacement
+		}
+		resolved, resolveErr := ResolveAssetPlacement(context.Background(), tenantTx, AssetPlacementContext{TenantID: tenantID, BranchID: branchID, PlacementID: input.PlacementID})
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		placement = &resolved
+		if resolved.Type == "WAREHOUSE" {
+			input.Status = "inactive"
+		}
+	}
+	assignment, err := (&DCIMHandler{}).generateInternalCodeWithContext(tenantTx, NomenclatureContext{TenantID: tenantID, BranchID: branchID, AssetTypeCode: input.AssetTypeCode, Placement: placement})
 	if err != nil {
 		return nil, err
 	}
@@ -62,11 +83,11 @@ func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, i
 		INSERT INTO assets (
 			id, tenant_id, branch_id, asset_type_id,
 			internal_code, nomenclature_id, nomenclature_sequence, name,
-			status, manufacturer, model, serial_number, observations, install_year, created_by
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),NULLIF($13,''),NULLIF($14,0),$15)`,
+			status, manufacturer, model, serial_number, observations, install_year, created_by, location_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),NULLIF($13,''),NULLIF($14,0),$15,NULLIF($16,'')::uuid)`,
 		assetID, tenantID, branchID, assetTypeID,
 		assignment.Code, assignment.ID, assignment.Sequence, strings.TrimSpace(input.Name),
-		input.Status, input.Manufacturer, input.Model, input.SerialNumber, input.Observations, input.InstallYear, userID,
+		input.Status, input.Manufacturer, input.Model, input.SerialNumber, input.Observations, input.InstallYear, userID, input.PlacementID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert managed asset: %w", err)
@@ -88,6 +109,9 @@ func writeManagedAssetError(w http.ResponseWriter, err error, assetTypeCode stri
 	case errors.Is(err, ErrAssetNameNeeded):
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "name_required", "message": "El nombre descriptivo es obligatorio."})
+	case errors.Is(err, ErrInvalidAssetPlacement):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_asset_placement", "field": "placement_id", "message": "Seleccione una ubicación activa de la sucursal actual."})
 	case strings.Contains(err.Error(), "unique"):
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "asset_code_conflict", "message": "No fue posible reservar un código técnico único."})
