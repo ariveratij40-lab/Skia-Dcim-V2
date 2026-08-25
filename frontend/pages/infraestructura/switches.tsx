@@ -168,7 +168,7 @@ function SwRow({ sw, onEdit, onDelete, onAdmin, isHighlighted, rowRef }: { sw:SW
             <div className="flex justify-end gap-2">
               <button onClick={()=>onAdmin(sw)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100 transition-colors"><Settings size={12}/>Administración</button>
               <button onClick={()=>onEdit(sw)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-cyan-700 bg-cyan-50 border border-cyan-200 rounded-lg hover:bg-cyan-100 transition-colors"><Edit2 size={12}/>Editar</button>
-              <button onClick={()=>onDelete(sw.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={12}/>Eliminar</button>
+              <button onClick={()=>onDelete(sw.id)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-red-700 bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition-colors"><Trash2 size={12}/>Dar de baja</button>
             </div>
           </td>
         </tr>
@@ -243,7 +243,7 @@ export default function SwitchesPage() {
   const usoPct=totalPuertos>0?Math.round((usadosPuertos/totalPuertos)*100):0;
 
   const handleEdit=(s:SWItem)=>{setEditingSw(s);setModalOpen(true);};
-  const handleDelete=(id:string)=>setSwitches(ss=>ss.filter(s=>s.id!==id));
+  const handleDelete=async(id:string)=>{if(!window.confirm('El switch se conservará en el historial como dado de baja. ¿Continuar?'))return;try{const response=await axios.delete(`/api/dcim/assets/${id}`);if(response.status<200||response.status>=300||response.data?.status!=='decommissioned')throw new Error('Respuesta de baja inválida');const refreshed=await axios.get('/api/infra/switches');setSwitches(Array.isArray(refreshed.data)?refreshed.data:[])}catch(error:any){window.alert(error?.response?.data?.error||'No fue posible dar de baja el switch')}};
   const handleAdmin=(s:SWItem)=>setAdminSw(s);
   const handleSave=(s:SWItem)=>{setSwitches(ss=>ss.some(x=>x.id===s.id)?ss.map(x=>x.id===s.id?s:x):[...ss,s]);setModalOpen(false);setEditingSw(null);};
 
