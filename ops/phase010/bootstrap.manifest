@@ -8,3 +8,4 @@ migrations/013_dcim_assets_phase1_expand.sql
 migrations/015_naming_rules_custom_segments.sql
 migrations/018_clean_bootstrap_runtime_schema.sql
 migrations/014_dcim_assets_phase1_seed.sql
+migrations/019_asset_nomenclature_enforcement.sql

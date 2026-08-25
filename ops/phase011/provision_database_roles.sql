@@ -33,6 +33,12 @@ SELECT 'GRANT SELECT ON TABLE public.users, public.user_tenants, public.tenants,
 WHERE to_regclass('public.permissions') IS NOT NULL \gexec
 SELECT 'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.sessions TO skia_runtime'
 WHERE to_regclass('public.sessions') IS NOT NULL \gexec
+SELECT 'GRANT SELECT ON TABLE public.asset_types TO skia_runtime'
+WHERE to_regclass('public.asset_types') IS NOT NULL \gexec
+SELECT 'GRANT SELECT, UPDATE ON TABLE public.naming_rules TO skia_runtime'
+WHERE to_regclass('public.naming_rules') IS NOT NULL \gexec
+SELECT 'GRANT SELECT, INSERT ON TABLE public.mdf_idf, public.racks, public.switches, public.ups, public.pdus, public.patch_panels, public.backbone_links, public.nodes TO skia_runtime'
+WHERE to_regclass('public.nodes') IS NOT NULL \gexec
 
 -- The role artifact runs once before and once after clean bootstrap. Apply table
 -- grants only after every required identity table exists.

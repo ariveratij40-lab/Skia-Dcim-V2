@@ -71,9 +71,14 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 		), required(table_name, privilege_type) AS (
 			VALUES ('users','SELECT'),('user_tenants','SELECT'),('tenants','SELECT'),
 			       ('user_branches','SELECT'),('branches','SELECT'),
-			       ('sessions','SELECT'),('sessions','INSERT'),('sessions','UPDATE'),('sessions','DELETE'),
-			       ('user_roles','SELECT'),('roles','SELECT'),
-			       ('role_permissions','SELECT'),('permissions','SELECT')
+		       ('sessions','SELECT'),('sessions','INSERT'),('sessions','UPDATE'),('sessions','DELETE'),
+		       ('user_roles','SELECT'),('roles','SELECT'),
+		       ('role_permissions','SELECT'),('permissions','SELECT'),
+		       ('asset_types','SELECT'),('naming_rules','SELECT'),('naming_rules','UPDATE'),
+		       ('mdf_idf','SELECT'),('mdf_idf','INSERT'),('racks','SELECT'),('racks','INSERT'),
+		       ('switches','SELECT'),('switches','INSERT'),('ups','SELECT'),('ups','INSERT'),
+		       ('pdus','SELECT'),('pdus','INSERT'),('patch_panels','SELECT'),('patch_panels','INSERT'),
+		       ('backbone_links','SELECT'),('backbone_links','INSERT'),('nodes','SELECT'),('nodes','INSERT')
 		), protected(table_name, privilege_type) AS (
 			VALUES ('assets','SELECT'),('assets','INSERT'),('assets','UPDATE'),('assets','DELETE'),
 			       ('asset_logs','SELECT'),('asset_logs','INSERT'),('asset_logs','UPDATE'),('asset_logs','DELETE'),
