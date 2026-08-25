@@ -714,6 +714,10 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		query += ` AND a.status = $` + itoa(argIdx)
 		args = append(args, statusFilter)
 		argIdx++
+	} else {
+		// La vista operacional no mezcla activos dados de baja. El historial
+		// sigue disponible explícitamente con ?status=decommissioned.
+		query += ` AND a.status <> 'decommissioned'`
 	}
 	if typeFilter != "" {
 		query += ` AND at.code = $` + itoa(argIdx)
@@ -770,65 +774,9 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		assets = append(assets, a)
 	}
 
-	// Agregar activos importados — filtrado por tenant_id (INV-CORE-0002 / corrige F-AST-01)
-	importedQuery := `
-		SELECT
-			CAST(id AS TEXT) as id,
-			tenant_id::TEXT as tenant_id,
-			branch_id::TEXT as branch_id,
-			asset_type as asset_type_id,
-			asset_type as asset_type_code,
-			asset_type as asset_type_name,
-			metadata->>'ubicacion' as location_id,
-			metadata->>'ubicacion' as location_name,
-			'' as internal_code,
-			nombre as name,
-			metadata->>'serial_number' as serial_number,
-			metadata->>'modelo' as model,
-			'' as manufacturer,
-			NULL::UUID as manufacturer_id,
-			NULL::UUID as model_id,
-			NULL::UUID as provider_id,
-			COALESCE(metadata->>'estado','active') as status,
-			NULL::VARCHAR as inventory_status,
-			'' as rfid_tag,
-			NULL::VARCHAR as qr_code,
-			NULL::INT as install_year,
-			'Importado automáticamente' as observations,
-			created_at,
-			updated_at
-		FROM imported_assets
-		WHERE tenant_id = $1 AND branch_id = $2
-	`
-	importedRows, err := tdb.QueryContext(r.Context(), importedQuery, tenantID, branchID)
-	if err == nil {
-		defer importedRows.Close()
-		for importedRows.Next() {
-			var a Asset
-			err := importedRows.Scan(
-				&a.ID, &a.TenantID, &a.BranchID,
-				&a.AssetTypeID, &a.AssetTypeCode, &a.AssetTypeName,
-				&a.LocationID, &a.LocationName,
-				&a.InternalCode, &a.Name,
-				&a.SerialNumber, &a.Model, &a.Manufacturer,
-				&a.ManufacturerID, &a.ModelID, &a.ProviderID,
-				&a.Status, &a.InventoryStatus,
-				&a.RFIDTag, &a.QRCode,
-				&a.InstallYear, &a.Observations,
-				&a.CreatedAt, &a.UpdatedAt,
-			)
-			if err != nil {
-				log.Printf("Error scanning imported asset: %v", err)
-				continue
-			}
-			assets = append(assets, a)
-		}
-	} else {
-		// imported_assets es una tabla opcional del pipeline legacy.
-		// Si no existe, se ignora silenciosamente.
-		_ = err
-	}
-
+	// `assets` es la autoridad canónica del inventario. `imported_assets`
+	// pertenece al staging del pipeline de importación y no se mezcla con la
+	// vista operacional antes de que sus filas sean promovidas al modelo.
 	json.NewEncoder(w).Encode(AssetsListResponse{
 		Assets: assets,
 		Total:  len(assets),
@@ -1362,9 +1310,13 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 
 // ==========================================
 // deleteAsset — DELETE /api/dcim/assets/{id}
+//
+// DELETE conserva el contrato HTTP histórico, pero la operación de dominio
+// es una baja, no un hard delete. El activo base, su satélite, nomenclatura,
+// consecutivo y dependencias históricas permanecen intactos.
 // ==========================================
 func (h *DCIMHandler) deleteAsset(w http.ResponseWriter, r *http.Request, assetID string) {
-	_, tenantID, branchID, ok := TenantIdentityFromContext(r.Context())
+	userID, tenantID, branchID, ok := TenantIdentityFromContext(r.Context())
 	if !ok {
 		log.Printf("deleteAsset: falta identidad de tenant en el contexto -- ¿se registró la ruta sin RequireTenantTx?")
 		http.Error(w, `{"error":"internal error: missing tenant context"}`, http.StatusInternalServerError)
@@ -1377,22 +1329,47 @@ func (h *DCIMHandler) deleteAsset(w http.ResponseWriter, r *http.Request, assetI
 		return
 	}
 
-	result, err := tdb.ExecContext(r.Context(),
-		`DELETE FROM assets WHERE id = $1 AND tenant_id = $2 AND branch_id = $3`,
-		assetID, tenantID, branchID,
-	)
+	var previousStatus string
+	err := tdb.QueryRowContext(r.Context(),
+		`SELECT status FROM assets
+		 WHERE id = $1 AND tenant_id = $2 AND branch_id = $3
+		 FOR UPDATE`, assetID, tenantID, branchID,
+	).Scan(&previousStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, `{"error":"asset not found"}`, http.StatusNotFound)
+		return
+	}
 	if err != nil {
 		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 		return
 	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		http.Error(w, `{"error":"asset not found"}`, http.StatusNotFound)
+	if previousStatus == "decommissioned" {
+		json.NewEncoder(w).Encode(map[string]string{"id": assetID, "status": "decommissioned"})
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"id": assetID, "status": "deleted"})
+	if _, err = tdb.ExecContext(r.Context(),
+		`UPDATE assets
+		 SET status = 'decommissioned', inventory_status = 'retired',
+		     updated_by = $1, updated_at = NOW()
+		 WHERE id = $2 AND tenant_id = $3 AND branch_id = $4`,
+		userID, assetID, tenantID, branchID,
+	); err != nil {
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+		return
+	}
+	if _, err = tdb.ExecContext(r.Context(),
+		`INSERT INTO asset_logs
+		 (tenant_id, asset_id, event_type, old_value, new_value, notes, performed_by)
+		 VALUES ($1,$2,'status_change',$3,'decommissioned','Baja de activo',$4)`,
+		tenantID, assetID, previousStatus, userID,
+	); err != nil {
+		// RequireTenantTx observa el 500 y revierte también el UPDATE.
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"id": assetID, "status": "decommissioned"})
 }
 
 // ==========================================

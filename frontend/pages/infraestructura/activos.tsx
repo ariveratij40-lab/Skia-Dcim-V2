@@ -907,7 +907,7 @@ function AssetsContent() {
     try {
       await axios.delete(`/api/dcim/assets/${id}`);
       setDeletingId(null); loadAssets();
-    } catch (err: any) { alert(err.response?.data?.error ?? 'Error al eliminar'); }
+    } catch (err: any) { alert(err.response?.data?.error ?? 'Error al dar de baja'); }
   };
 
   const clearFilters = () => { setSearch(''); setStatusFilter(''); };
@@ -1320,11 +1320,11 @@ function AssetsContent() {
                 <Trash2 size={18} className="text-red-500" />
               </div>
               <div>
-                <p className="font-bold text-slate-800 text-sm">Eliminar Activo</p>
-                <p className="text-[13px] text-[#5C6194]">Esta acción no se puede deshacer</p>
+                <p className="font-bold text-slate-800 text-sm">Dar de baja activo</p>
+                <p className="text-[13px] text-[#5C6194]">El activo se conservará en el historial</p>
               </div>
             </div>
-            <p className="text-xs text-[#5C6194] mb-5">¿Confirmas que deseas eliminar este activo del inventario?</p>
+            <p className="text-xs text-[#5C6194] mb-5">¿Confirmas que deseas dar de baja este activo?</p>
             <div className="flex gap-2">
               <button onClick={() => setDeletingId(null)}
                 className="flex-1 px-4 py-2 text-xs font-bold text-slate-500 border border-[#E8EBF4] rounded-xl hover:bg-slate-50 transition-colors">
@@ -1332,7 +1332,7 @@ function AssetsContent() {
               </button>
               <button onClick={() => handleDelete(deletingId)}
                 className="flex-1 px-4 py-2 text-xs font-bold text-white bg-red-500 rounded-xl hover:bg-red-600 transition-colors">
-                Eliminar
+                Dar de baja
               </button>
             </div>
           </div>

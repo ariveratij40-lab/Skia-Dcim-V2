@@ -704,23 +704,30 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 				a.created_at
 			FROM switches sw
 			JOIN assets a ON a.id = sw.asset_id
-			WHERE sw.tenant_id = $1
+			WHERE sw.tenant_id = $1 AND a.status <> 'decommissioned'
 			ORDER BY a.created_at DESC`, tenantID)
 		if err != nil {
-			jsonResp(w, 200, []SWRecord{})
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
 		var list []SWRecord
 		for rows.Next() {
 			var rec SWRecord
-			_ = rows.Scan(&rec.ID, &rec.Code,
+			if err := rows.Scan(&rec.ID, &rec.Code,
 				&rec.Brand, &rec.Model, &rec.Serie,
 				&rec.Status,
 				&rec.Puertos, &rec.PuertosPoe,
 				&rec.IP, &rec.Observaciones,
-				&rec.AnioInstalacion, &rec.CreatedAt)
+				&rec.AnioInstalacion, &rec.CreatedAt); err != nil {
+				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+				return
+			}
 			list = append(list, rec)
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
 		}
 		if list == nil {
 			list = []SWRecord{}
