@@ -32,10 +32,10 @@ func TestNamingRulesGetReturnsTypesWithoutRules(t *testing.T) {
 	expectNomenclatureAdmin(mock, false)
 	mock.ExpectQuery("FROM asset_types at").WithArgs("tenant-1").WillReturnRows(sqlmock.NewRows([]string{
 		"code", "name", "description", "requires_nomenclature", "id", "rule_type", "prefix", "separator",
-		"include_branch", "include_placement", "include_location", "seq_digits", "reset_per_location", "last_seq", "updated_at",
+		"include_branch", "include_placement", "include_site", "include_internal_area", "include_location", "seq_digits", "reset_per_location", "last_seq", "updated_at",
 		"custom_1", "custom_2", "label_1", "label_2", "active", "rule_description",
-	}).AddRow("SERVER", "Servidor", "", false, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).
-		AddRow("SWITCH", "Switch", "", true, "rule-1", "SWITCH", "SW", "-", true, true, false, 4, false, 0, time.Now(), "", "", "Segmento 1", "Segmento 2", false, "Inactive norm"))
+	}).AddRow("SERVER", "Servidor", "", false, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).
+		AddRow("SWITCH", "Switch", "", true, "rule-1", "SWITCH", "SW", "-", true, true, false, false, false, 4, false, 0, time.Now(), "", "", "Segmento 1", "Segmento 2", false, "Inactive norm"))
 
 	req := nomenclatureRequest(httptest.NewRequest(http.MethodGet, "/api/dcim/catalogs/naming-rules", nil), database, "user-1", "tenant-1")
 	rec := httptest.NewRecorder()
@@ -135,7 +135,7 @@ func TestNamingRulesPostCreatesFirstRule(t *testing.T) {
 	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM asset_types").WithArgs("MDF").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectExec("INSERT INTO naming_rules").WithArgs(sqlmock.AnyArg(), "tenant-1", "MDF", "MDF", "-", true, false, 4, false, true,
-		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), false).
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), false, true).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	body := `{"asset_type_code":"MDF","prefix":"mdf","separator":"-"}`

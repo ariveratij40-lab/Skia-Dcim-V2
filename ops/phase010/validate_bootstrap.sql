@@ -14,6 +14,17 @@ BEGIN
 END $$;
 
 DO $$
+DECLARE missing text;
+BEGIN
+  SELECT string_agg(name, ', ') INTO missing
+  FROM (VALUES ('buildings'),('floors'),('zones'),('technical_rooms'),('internal_areas'),
+    ('locations'),('mdf_idf'),('naming_rules'),('nomenclature_counters'),
+    ('nomenclature_branch_counters')) v(name)
+  WHERE to_regclass('public.' || name) IS NULL;
+  IF missing IS NOT NULL THEN RAISE EXCEPTION 'missing physical-model tables: %', missing; END IF;
+END $$;
+
+DO $$
 DECLARE n integer;
 BEGIN
   SELECT count(*) INTO n FROM pg_constraint c
@@ -37,6 +48,20 @@ BEGIN
   INSERT INTO branches(id,tenant_id,name) VALUES
     ('11000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','A1'),
     ('11000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000002','B1');
+  PERFORM set_config('app.tenant_id','10000000-0000-4000-8000-000000000001',true);
+  PERFORM set_config('app.branch_id','11000000-0000-4000-8000-000000000001',true);
+  INSERT INTO buildings(id,tenant_id,branch_id,code,name) VALUES
+    ('13000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','11000000-0000-4000-8000-000000000001','SITE','Bootstrap Site');
+  INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,code,name) VALUES
+    ('14000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','11000000-0000-4000-8000-000000000001','13000000-0000-4000-8000-000000000001','AREA','Bootstrap Area');
+  BEGIN
+    INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,status)
+    VALUES ('15000000-0000-4000-8000-000000000001','10000000-0000-4000-8000-000000000001','11000000-0000-4000-8000-000000000001','Invalid MDF','MDF','active');
+    RAISE EXCEPTION 'MDF location without internal area unexpectedly accepted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,status,internal_area_id)
+  VALUES ('15000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','11000000-0000-4000-8000-000000000001','Valid MDF','MDF','active','14000000-0000-4000-8000-000000000001');
   INSERT INTO users(id,email,name,password_hash) VALUES
     ('12000000-0000-4000-8000-000000000001','bootstrap-validation@invalid','validator','not-a-login-secret');
   INSERT INTO import_jobs(job_uuid,tenant_id,branch_id,user_id,file_name,file_type)

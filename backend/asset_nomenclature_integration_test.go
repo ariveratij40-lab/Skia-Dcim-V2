@@ -44,7 +44,7 @@ func TestSpecializedHandlerRollbackIsAtomic(t *testing.T) {
 	}{
 		{`INSERT INTO tenants(id,name) VALUES($1,'Atomic handler test')`, []interface{}{tenantID}},
 		{`INSERT INTO branches(id,tenant_id,name,city) VALUES($1,$2,'Atomic branch','TIJ')`, []interface{}{branchID, tenantID}},
-		{`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,'IDF Atomic','IDF','IDF01','active')`, []interface{}{placementID, tenantID, branchID}},
+		{`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,'Warehouse Atomic','WAREHOUSE','ALM01','active')`, []interface{}{placementID, tenantID, branchID}},
 		{`INSERT INTO users(id,email,name,password_hash,status) VALUES($1,$2,'Atomic user','x','active')`, []interface{}{userID, "atomic-" + userID + "@example.invalid"}},
 		{`INSERT INTO user_tenants(user_id,tenant_id) VALUES($1,$2)`, []interface{}{userID, tenantID}},
 		{`INSERT INTO user_branches(user_id,branch_id) VALUES($1,$2)`, []interface{}{userID, branchID}},
@@ -134,7 +134,7 @@ func TestAssetNomenclatureConcurrentSequence(t *testing.T) {
 	if _, err = database.Exec(`INSERT INTO branches(id,tenant_id,name,city) VALUES($1,$3,'A','TIJ'),($2,$3,'B','MEX')`, branchA, branchB, tenantID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = database.Exec(`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_location,seq_digits,reset_per_location,last_seq,active) VALUES($1,$2,'SWITCH','SW','-',false,false,4,false,0,true)`, ruleID, tenantID); err != nil {
+	if _, err = database.Exec(`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_location,seq_digits,reset_per_location,last_seq,active) VALUES($1,$2,'SWITCH','SW','-',true,false,4,false,0,true)`, ruleID, tenantID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -252,6 +252,7 @@ func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
 	}
 	defer database.Close()
 	tenant, branch, p1, p2, warehouse, rule := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	site, area1, area2 := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	_, err = database.Exec(`INSERT INTO tenants(id,name) VALUES($1,'Placement counters')`, tenant)
 	if err != nil {
 		t.Fatal(err)
@@ -260,8 +261,20 @@ func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
 	if _, err = database.Exec(`INSERT INTO branches(id,tenant_id,name,city) VALUES($1,$2,'B','TIJ')`, branch, tenant); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = database.Exec(`INSERT INTO buildings(id,tenant_id,branch_id,code,name) VALUES($1,$2,$3,'SITE','Site')`, site, tenant, branch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.Exec(`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,code,name) VALUES($1,$3,$4,$5,'A1','Area 1'),($2,$3,$4,$5,'A2','Area 2')`, area1, area2, tenant, branch, site); err != nil {
+		t.Fatal(err)
+	}
 	for _, p := range []struct{ id, typ, code string }{{p1, "IDF", "IDF01"}, {p2, "IDF", "IDF02"}, {warehouse, "WAREHOUSE", "ALM01"}} {
-		if _, err = database.Exec(`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,$4,$5,$4,'active')`, p.id, tenant, branch, p.code, p.typ); err != nil {
+		areaID := interface{}(nil)
+		if p.id == p1 {
+			areaID = area1
+		} else if p.id == p2 {
+			areaID = area2
+		}
+		if _, err = database.Exec(`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status,internal_area_id) VALUES($1,$2,$3,$4,$5,$4,'active',$6)`, p.id, tenant, branch, p.code, p.typ, areaID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -383,7 +396,7 @@ func TestSelectedBranchSessionMatchesTenantTxGUCAndAsset(t *testing.T) {
 		{`INSERT INTO user_tenants(user_id,tenant_id) VALUES($1,$2)`, []interface{}{user, tenant}},
 		{`INSERT INTO user_branches(user_id,branch_id) VALUES($1,$2),($1,$3)`, []interface{}{user, branchA, branchB}},
 		{`INSERT INTO sessions(id,user_id,tenant_id,branch_id,token,expires_at) VALUES($1,$2,$3,$4,$5,extract(epoch from now())::bigint+3600)`, []interface{}{session, user, tenant, branchB, token}},
-		{`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,'IDF B','IDF','IDF-B','active')`, []interface{}{placement, tenant, branchB}},
+		{`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,'Warehouse B','WAREHOUSE','ALM-B','active')`, []interface{}{placement, tenant, branchB}},
 		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,include_branch,include_placement,last_seq,active) VALUES($1,$2,'SWITCH','SW',false,true,0,true)`, []interface{}{rule, tenant}},
 	}
 	for _, statement := range setup {

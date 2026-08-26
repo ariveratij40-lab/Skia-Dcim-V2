@@ -39,6 +39,10 @@ SELECT 'GRANT SELECT, INSERT, UPDATE ON TABLE public.naming_rules TO skia_runtim
 WHERE to_regclass('public.naming_rules') IS NOT NULL \gexec
 SELECT 'GRANT SELECT, INSERT, UPDATE ON TABLE public.locations, public.nomenclature_counters TO skia_runtime'
 WHERE to_regclass('public.nomenclature_counters') IS NOT NULL \gexec
+SELECT 'GRANT SELECT, INSERT, UPDATE ON TABLE public.buildings, public.internal_areas, public.nomenclature_branch_counters TO skia_runtime'
+WHERE to_regclass('public.nomenclature_branch_counters') IS NOT NULL \gexec
+SELECT 'GRANT SELECT ON TABLE public.floors, public.zones, public.technical_rooms TO skia_runtime'
+WHERE to_regclass('public.internal_areas') IS NOT NULL \gexec
 SELECT 'GRANT SELECT, INSERT ON TABLE public.mdf_idf, public.racks, public.switches, public.ups, public.pdus, public.patch_panels, public.backbone_links, public.nodes TO skia_runtime'
 WHERE to_regclass('public.nodes') IS NOT NULL \gexec
 

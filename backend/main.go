@@ -201,10 +201,10 @@ func main() {
 	http.HandleFunc("/api/dcim/assets", dcim.HandleAssets)
 	http.HandleFunc("/api/dcim/assets/", dcim.HandleAssetByID)
 	http.HandleFunc("/api/dcim/asset-types", dcim.HandleAssetTypes)
-	http.HandleFunc("/api/dcim/locations", dcim.HandleLocations)
+	http.HandleFunc("/api/dcim/locations", RequireTenantTx(db, dcim.HandleLocations))
 	// Fase 1: catálogos maestros (INV-DCM-0014) y jerarquía física (§15)
 	http.HandleFunc("/api/dcim/catalogs", dcim.HandleCatalogs)
-	http.HandleFunc("/api/dcim/hierarchy", dcim.HandleHierarchy)
+	http.HandleFunc("/api/dcim/hierarchy", RequireTenantTx(db, dcim.HandleHierarchy))
 	// Fase 2: módulo RFID real (INV-TRK-0001)
 	http.HandleFunc("/api/dcim/rfid/", dcim.HandleRFID)
 
@@ -218,6 +218,8 @@ func main() {
 	http.HandleFunc("/api/dcim/catalogs/naming-rules", RequireTenantTx(db, dcim.HandleNamingRules))
 	http.HandleFunc("/api/dcim/catalogs/naming-rules/", RequireTenantTx(db, dcim.HandleNamingRules))
 	http.HandleFunc("/api/dcim/placements", RequireTenantTx(db, HandlePlacements))
+	http.HandleFunc("/api/dcim/sites", RequireTenantTx(db, HandleSites))
+	http.HandleFunc("/api/dcim/internal-areas", RequireTenantTx(db, HandleInternalAreas))
 	http.HandleFunc("/api/dcim/catalogs/locations", RequireTenantTx(db, dcim.HandleLocationsManage))
 	http.HandleFunc("/api/dcim/catalogs/locations/", RequireTenantTx(db, dcim.HandleLocationsManage))
 

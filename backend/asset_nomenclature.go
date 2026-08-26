@@ -22,16 +22,17 @@ var installableAssetTypes = map[string]bool{
 }
 
 type managedAssetInput struct {
-	AssetTypeCode string
-	Name          string
-	ManualCode    string
-	Status        string
-	Manufacturer  string
-	Model         string
-	SerialNumber  string
-	Observations  string
-	InstallYear   int
-	PlacementID   string
+	AssetTypeCode    string
+	Name             string
+	ManualCode       string
+	Status           string
+	Manufacturer     string
+	Model            string
+	SerialNumber     string
+	Observations     string
+	InstallYear      int
+	PlacementID      string
+	PhysicalLocation *ResolvedPhysicalLocation
 }
 
 // managedAssetReservation is state produced inside the request TenantTx.
@@ -74,7 +75,7 @@ func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, i
 			input.Status = "inactive"
 		}
 	}
-	assignment, err := (&DCIMHandler{}).generateInternalCodeWithContext(tenantTx, NomenclatureContext{TenantID: tenantID, BranchID: branchID, AssetTypeCode: input.AssetTypeCode, Placement: placement})
+	assignment, err := (&DCIMHandler{}).generateInternalCodeWithContext(tenantTx, NomenclatureContext{TenantID: tenantID, BranchID: branchID, AssetTypeCode: input.AssetTypeCode, Placement: placement, PhysicalLocation: input.PhysicalLocation})
 	if err != nil {
 		return nil, err
 	}
@@ -112,6 +113,9 @@ func writeManagedAssetError(w http.ResponseWriter, err error, assetTypeCode stri
 	case errors.Is(err, ErrInvalidAssetPlacement):
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_asset_placement", "field": "placement_id", "message": "Seleccione una ubicación activa de la sucursal actual."})
+	case errors.Is(err, ErrInvalidPhysicalLocation):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_physical_location", "message": "Seleccione un sitio y un área interna activos de la sucursal actual."})
 	case strings.Contains(err.Error(), "unique"):
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "asset_code_conflict", "message": "No fue posible reservar un código técnico único."})
