@@ -2162,7 +2162,7 @@ function TabInventario({ data, setData, highlightCode, onRackBuilder }: { data: 
       {showMdfWizard && (
         <MdfIdfWizard
           onClose={() => setShowMdfWizard(false)}
-          onSave={(data: MdfIdfWizardData) => { void handleCreate(data); }}
+          onSave={handleCreate}
         />
       )}
     </div>
@@ -2326,7 +2326,7 @@ function MdfIdfContent() {
         <MdfIdfWizard
           initial={requestedPlacementType ? { type: requestedPlacementType } : undefined}
           onClose={() => setShowMdfWizard(false)}
-          onSave={(d: MdfIdfWizardData) => {
+          onSave={async (d: MdfIdfWizardData) => {
             const newRecord: MdfIdfRecord = {
               id: String(Date.now()),
               code: d.code, name: d.name, type: (d.type as MdfIdfType) || 'IDF',
@@ -2343,30 +2343,27 @@ function MdfIdfContent() {
               created_at: new Date().toISOString().slice(0, 10),
               tags: d.tags || [],
             };
-            import('axios').then(({ default: axios }) => {
-              axios.post('/api/infra/mdf-idf', {
-                internal_code: '',
-                name: d.name,
-                site_type: d.type ?? 'IDF',
-                site_id: d.site_id,
-                internal_area_id: d.internal_area_id,
-                status: 'active',
-                building: d.building,
-                floor: d.floor,
-                zone: d.zone ?? '',
-                address: d.address ?? '',
-                responsible: d.responsible ?? '',
-                responsible_email: d.responsible_email ?? '',
-                capacity_u: d.capacity_u ?? 0,
-                cooling: d.cooling ?? '',
-                power_kva: d.power_kva ?? 0,
-                notes: d.notes ?? '',
-              }).then(resp => {
-                setData(prev => [{ ...newRecord, id: resp.data.id ?? newRecord.id, code: resp.data.internal_code ?? newRecord.code }, ...prev]);
-                if (typeof router.query.return_to === 'string' && window.opener) window.close();
-              }).catch(() => undefined);
+            const resp = await axios.post('/api/infra/mdf-idf', {
+              internal_code: '',
+              name: d.name,
+              site_type: d.type ?? 'IDF',
+              site_id: d.site_id,
+              internal_area_id: d.internal_area_id,
+              status: 'active',
+              building: d.building,
+              floor: d.floor,
+              zone: d.zone ?? '',
+              address: d.address ?? '',
+              responsible: d.responsible ?? '',
+              responsible_email: d.responsible_email ?? '',
+              capacity_u: d.capacity_u ?? 0,
+              cooling: d.cooling ?? '',
+              power_kva: d.power_kva ?? 0,
+              notes: d.notes ?? '',
             });
+            setData(prev => [{ ...newRecord, id: resp.data.id ?? newRecord.id, code: resp.data.internal_code ?? newRecord.code }, ...prev]);
             setShowMdfWizard(false);
+            if (typeof router.query.return_to === 'string' && window.opener) window.close();
           }}
         />
       )}

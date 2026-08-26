@@ -25,7 +25,7 @@ interface AssetSummary {
 
 interface Props {
   onClose: () => void;
-  onSave: (data: MdfIdfWizardData) => void;
+  onSave: (data: MdfIdfWizardData) => void | Promise<unknown>;
   initial?: Partial<MdfIdfWizardData>;
 }
 
@@ -62,6 +62,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const [stage, setStage] = useState(1);
   const [form, setForm] = useState<MdfIdfWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   interface Site { id: string; code: string; name: string; status: string; address: string }
   interface InternalArea { id: string; site_id: string; code: string; name: string; status: string }
   const [sites, setSites] = useState<Site[]>([]);
@@ -425,9 +426,14 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const handleSave = async () => {
     if (!codePattern || !form.site_id || !form.internal_area_id || !form.name || !form.type) return;
     setSaving(true);
-    await new Promise(r => setTimeout(r, 300));
-    onSave({ ...form, code: '' });
-    setSaving(false);
+    setSaveError('');
+    try {
+      await onSave({ ...form, code: '' });
+    } catch {
+      setSaveError('No se pudo crear el MDF/IDF. El alta no fue guardada; revise los datos o intente nuevamente.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const inp = (field: keyof MdfIdfWizardData, placeholder: string, type = 'text') => (
@@ -1024,6 +1030,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>{renderStage()}</div>
 
+        {saveError && <div role="alert" style={{ padding: '10px 24px', color: '#B91C1C', background: '#FEF2F2', borderTop: '1px solid #FECACA', fontSize: '0.82rem' }}>{saveError}</div>}
         <div style={{ padding: '14px 24px', borderTop: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <button onClick={() => setStage(s => Math.max(1, s - 1))} disabled={stage === 1}
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px', borderRadius: 10, border: '1.5px solid #E8EBF4', background: '#F8FAFF', color: stage === 1 ? '#CBD5E1' : '#475569', cursor: stage === 1 ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 500 }}>

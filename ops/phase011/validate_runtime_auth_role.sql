@@ -2,7 +2,6 @@
 
 DO $$
 DECLARE
-  protected_grant_count integer;
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_roles
@@ -41,35 +40,26 @@ BEGIN
              ('mdf_idf','SELECT'),('mdf_idf','INSERT'),('racks','SELECT'),('racks','INSERT'),
              ('switches','SELECT'),('switches','INSERT'),('ups','SELECT'),('ups','INSERT'),
              ('pdus','SELECT'),('pdus','INSERT'),('patch_panels','SELECT'),('patch_panels','INSERT'),
-             ('backbone_links','SELECT'),('backbone_links','INSERT'),('nodes','SELECT'),('nodes','INSERT')
-    ), protected(table_name, privilege_type) AS (
-      VALUES ('assets','SELECT'),('assets','INSERT'),('assets','UPDATE'),('assets','DELETE'),
-             ('asset_logs','SELECT'),('asset_logs','INSERT'),('asset_logs','UPDATE'),('asset_logs','DELETE'),
-             ('asset_relationships','SELECT'),('asset_relationships','INSERT'),('asset_relationships','UPDATE'),('asset_relationships','DELETE')
+             ('backbone_links','SELECT'),('backbone_links','INSERT'),('nodes','SELECT'),('nodes','INSERT'),
+             ('assets','SELECT'),('assets','INSERT'),('assets','UPDATE'),('assets','DELETE'),
+             ('asset_logs','SELECT'),('asset_logs','INSERT')
     ), actual AS (
       SELECT table_name, privilege_type FROM information_schema.role_table_grants
       WHERE grantee='skia_runtime' AND table_schema='public'
     )
     (SELECT * FROM required EXCEPT SELECT * FROM actual)
     UNION ALL
-    (SELECT * FROM actual EXCEPT (SELECT * FROM required UNION ALL SELECT * FROM protected))
+    (SELECT * FROM actual EXCEPT SELECT * FROM required)
   ) THEN
     RAISE EXCEPTION 'skia_runtime table grants differ from exact contract';
   END IF;
 
-  SELECT count(*) INTO protected_grant_count
-  FROM information_schema.role_table_grants
-  WHERE grantee='skia_runtime' AND table_schema='public'
-    AND table_name IN ('assets','asset_logs','asset_relationships');
-  IF protected_grant_count NOT IN (0,12) THEN
-    RAISE EXCEPTION 'skia_runtime protected-table grants are partial';
-  END IF;
-  IF protected_grant_count=12 AND NOT (
+  IF NOT (
     SELECT bool_and(c.relrowsecurity AND c.relforcerowsecurity)
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND c.relname IN ('assets','asset_logs','asset_relationships')
   ) THEN
-    RAISE EXCEPTION 'skia_runtime protected grants exist without canonical RLS/FORCE';
+    RAISE EXCEPTION 'canonical protected tables must retain RLS/FORCE';
   END IF;
   IF EXISTS (
     SELECT 1 FROM information_schema.role_usage_grants

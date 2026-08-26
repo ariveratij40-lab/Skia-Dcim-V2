@@ -84,11 +84,9 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 		       ('mdf_idf','SELECT'),('mdf_idf','INSERT'),('racks','SELECT'),('racks','INSERT'),
 		       ('switches','SELECT'),('switches','INSERT'),('ups','SELECT'),('ups','INSERT'),
 		       ('pdus','SELECT'),('pdus','INSERT'),('patch_panels','SELECT'),('patch_panels','INSERT'),
-		       ('backbone_links','SELECT'),('backbone_links','INSERT'),('nodes','SELECT'),('nodes','INSERT')
-		), protected(table_name, privilege_type) AS (
-			VALUES ('assets','SELECT'),('assets','INSERT'),('assets','UPDATE'),('assets','DELETE'),
-			       ('asset_logs','SELECT'),('asset_logs','INSERT'),('asset_logs','UPDATE'),('asset_logs','DELETE'),
-			       ('asset_relationships','SELECT'),('asset_relationships','INSERT'),('asset_relationships','UPDATE'),('asset_relationships','DELETE')
+		       ('backbone_links','SELECT'),('backbone_links','INSERT'),('nodes','SELECT'),('nodes','INSERT'),
+		       ('assets','SELECT'),('assets','INSERT'),('assets','UPDATE'),('assets','DELETE'),
+		       ('asset_logs','SELECT'),('asset_logs','INSERT')
 		), actual AS (
 			SELECT table_name, privilege_type
 			FROM information_schema.role_table_grants
@@ -109,12 +107,10 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 			 WHERE inherited_role.rolsuper OR inherited_role.rolcreatedb OR inherited_role.rolcreaterole OR inherited_role.rolbypassrls
 		       ),
 		       EXISTS (SELECT * FROM required EXCEPT SELECT * FROM actual),
-		       EXISTS (SELECT * FROM actual EXCEPT (SELECT * FROM required UNION ALL SELECT * FROM protected)),
-		       (SELECT count(*) FROM actual a JOIN protected p USING (table_name, privilege_type)) NOT IN (0, 12)
-		       OR ((SELECT count(*) FROM actual a JOIN protected p USING (table_name, privilege_type)) = 12
-		           AND NOT (SELECT bool_and(c.relrowsecurity AND c.relforcerowsecurity)
-		                    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-		                    WHERE n.nspname='public' AND c.relname IN ('assets','asset_logs','asset_relationships')))
+		       EXISTS (SELECT * FROM actual EXCEPT SELECT * FROM required),
+		       NOT (SELECT bool_and(c.relrowsecurity AND c.relforcerowsecurity)
+		            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+		            WHERE n.nspname='public' AND c.relname IN ('assets','asset_logs','asset_relationships'))
 		FROM pg_roles r WHERE r.rolname=current_user`
 	var state runtimeRoleState
 	if err := database.QueryRow(query).Scan(

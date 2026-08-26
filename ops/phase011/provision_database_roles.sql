@@ -20,13 +20,12 @@ GRANT CONNECT ON DATABASE skia_prod TO skia_runtime;
 REVOKE ALL PRIVILEGES ON SCHEMA public FROM skia_runtime;
 GRANT USAGE ON SCHEMA public TO skia_runtime;
 
--- Preserve only the three tables governed by the canonical PHASE-005 RLS
--- lifecycle; revoke every other public-table grant before applying the exact
--- authentication/session contract.
+-- Revoke the complete table surface before rebuilding the exact runtime
+-- allow-list. RLS/FORCE is necessary for row isolation, but never substitutes
+-- for the table privileges required by legitimate operations.
 SELECT format('REVOKE ALL PRIVILEGES ON TABLE %I.%I FROM skia_runtime', n.nspname, c.relname)
 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-WHERE n.nspname='public' AND c.relkind IN ('r','p')
-  AND c.relname NOT IN ('assets','asset_logs','asset_relationships') \gexec
+WHERE n.nspname='public' AND c.relkind IN ('r','p') \gexec
 SELECT 'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM skia_runtime'
 WHERE to_regclass('public.users') IS NOT NULL \gexec
 SELECT 'GRANT SELECT ON TABLE public.users, public.user_tenants, public.tenants, public.user_branches, public.branches, public.user_roles, public.roles, public.role_permissions, public.permissions TO skia_runtime'
@@ -45,6 +44,10 @@ SELECT 'GRANT SELECT ON TABLE public.floors, public.zones, public.technical_room
 WHERE to_regclass('public.internal_areas') IS NOT NULL \gexec
 SELECT 'GRANT SELECT, INSERT ON TABLE public.mdf_idf, public.racks, public.switches, public.ups, public.pdus, public.patch_panels, public.backbone_links, public.nodes TO skia_runtime'
 WHERE to_regclass('public.nodes') IS NOT NULL \gexec
+SELECT 'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.assets TO skia_runtime'
+WHERE to_regclass('public.assets') IS NOT NULL \gexec
+SELECT 'GRANT SELECT, INSERT ON TABLE public.asset_logs TO skia_runtime'
+WHERE to_regclass('public.asset_logs') IS NOT NULL \gexec
 
 -- The role artifact runs once before and once after clean bootstrap. Apply table
 -- grants only after every required identity table exists.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"log"
@@ -59,14 +60,14 @@ func RequireTenantTx(database *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		sw := &statusCapturingWriter{ResponseWriter: w}
+		sw := newTransactionResponseWriter()
 		ctx := withTenantDB(r.Context(), tx)
 		ctx = withTenantIdentity(ctx, sessCtx.UserID, sessCtx.TenantID, sessCtx.BranchID)
 		req := r.WithContext(ctx)
 
-		committed := false
+		finalized := false
 		defer func() {
-			if committed {
+			if finalized {
 				return
 			}
 			// Si llegamos aquí sin haber hecho commit (panic, o el flujo
@@ -85,19 +86,21 @@ func RequireTenantTx(database *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 		next(sw, req)
 
 		if sw.status >= 400 {
-			return // el defer de arriba hace el ROLLBACK
+			if rbErr := tx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+				log.Printf("RequireTenantTx: error en ROLLBACK (tenant=%s): %v", sessCtx.TenantID, rbErr)
+			}
+			finalized = true
+			sw.FlushTo(w)
+			return
 		}
 		if cErr := tx.Commit(); cErr != nil {
 			log.Printf("RequireTenantTx: error en COMMIT (tenant=%s): %v", sessCtx.TenantID, cErr)
-			// La respuesta de éxito ya pudo haberse enviado al cliente antes
-			// de este punto (p.ej. si el handler usó json.NewEncoder(w) sin
-			// buffering). Esto es una condición real pero rara (falla del
-			// COMMIT en sí, no de la lógica de negocio) que debe
-			// monitorearse -- no hay forma de "deshacer" una respuesta ya
-			// escrita al cliente en este punto.
+			finalized = true
+			jsonErr(w, "Internal error", http.StatusInternalServerError)
 			return
 		}
-		committed = true
+		finalized = true
+		sw.FlushTo(w)
 	}
 }
 
@@ -141,29 +144,49 @@ func respondSessionInvalid(w http.ResponseWriter, sessCtx *SessionContextSecure)
 	}
 }
 
-// statusCapturingWriter registra qué status HTTP escribió el handler, para
-// que RequireTenantTx decida COMMIT (status < 400) o ROLLBACK (status >= 400)
-// sin tener que cambiar la firma de cada handler para que devuelva un error.
-type statusCapturingWriter struct {
-	http.ResponseWriter
+// transactionResponseWriter retiene headers/status/body hasta que el
+// middleware conoce el resultado de COMMIT. Así ningún handler puede anunciar
+// un 2xx que luego resulte falso por un error al confirmar la transacción.
+type transactionResponseWriter struct {
+	header      http.Header
+	body        bytes.Buffer
 	status      int
 	wroteHeader bool
 }
 
-func (w *statusCapturingWriter) WriteHeader(code int) {
+func newTransactionResponseWriter() *transactionResponseWriter {
+	return &transactionResponseWriter{header: make(http.Header)}
+}
+
+func (w *transactionResponseWriter) Header() http.Header { return w.header }
+
+func (w *transactionResponseWriter) WriteHeader(code int) {
 	if !w.wroteHeader {
 		w.status = code
 		w.wroteHeader = true
 	}
-	w.ResponseWriter.WriteHeader(code)
 }
 
-func (w *statusCapturingWriter) Write(b []byte) (int, error) {
+func (w *transactionResponseWriter) Write(b []byte) (int, error) {
 	if !w.wroteHeader {
 		// Igual que net/http: si el handler escribe cuerpo sin llamar antes
 		// a WriteHeader, el status implícito es 200.
 		w.status = http.StatusOK
 		w.wroteHeader = true
 	}
-	return w.ResponseWriter.Write(b)
+	return w.body.Write(b)
+}
+
+func (w *transactionResponseWriter) FlushTo(destination http.ResponseWriter) {
+	for key, values := range w.header {
+		for _, value := range values {
+			destination.Header().Add(key, value)
+		}
+	}
+	status := w.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	destination.WriteHeader(status)
+	_, _ = destination.Write(w.body.Bytes())
 }

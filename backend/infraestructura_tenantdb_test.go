@@ -97,6 +97,26 @@ func TestSpecializedGetUsesInjectedTenantDB(t *testing.T) {
 	}
 }
 
+func TestMdfIdfGetDatabaseErrorFailsClosed(t *testing.T) {
+	tenantDatabase, tenantMock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tenantDatabase.Close()
+	tenantMock.ExpectQuery("FROM mdf_idf m").WillReturnError(context.DeadlineExceeded)
+
+	req := infrastructureRequestWithTenantDB(httptest.NewRequest(http.MethodGet, "/api/infra/mdf-idf", nil), tenantDatabase)
+	rec := httptest.NewRecorder()
+	handleMdfIdf(rec, req)
+
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "deadline") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := tenantMock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSpecializedHandlerFailsClosedWithoutTenantDB(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/infra/switches", nil)
 	rec := httptest.NewRecorder()

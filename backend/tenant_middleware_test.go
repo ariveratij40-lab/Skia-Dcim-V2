@@ -1,6 +1,6 @@
 package main
 
-// Prueba unitaria pura (sin build tag, sin DB) de statusCapturingWriter: la
+// Prueba unitaria pura (sin build tag, sin DB) de transactionResponseWriter: la
 // pieza de la que depende RequireTenantTx para decidir COMMIT vs ROLLBACK.
 // La lógica de apertura/cierre real de la transacción (BeginTenantTx,
 // COMMIT/ROLLBACK contra Postgres) está cubierta por
@@ -15,21 +15,24 @@ import (
 
 func TestStatusCapturingWriter_ExplicitWriteHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
-	sw := &statusCapturingWriter{ResponseWriter: rec}
+	sw := newTransactionResponseWriter()
 
 	sw.WriteHeader(403)
 
 	if sw.status != 403 {
 		t.Errorf("esperaba status capturado 403, obtuve %d", sw.status)
 	}
+	if rec.Code != 200 {
+		t.Errorf("la respuesta no debe publicarse antes de FlushTo, obtuvo %d", rec.Code)
+	}
+	sw.FlushTo(rec)
 	if rec.Code != 403 {
-		t.Errorf("esperaba que el ResponseRecorder subyacente también viera 403, obtuvo %d", rec.Code)
+		t.Errorf("esperaba status publicado 403, obtuvo %d", rec.Code)
 	}
 }
 
 func TestStatusCapturingWriter_ImplicitOKOnWrite(t *testing.T) {
-	rec := httptest.NewRecorder()
-	sw := &statusCapturingWriter{ResponseWriter: rec}
+	sw := newTransactionResponseWriter()
 
 	// Igual que net/http: escribir sin llamar antes a WriteHeader implica 200.
 	if _, err := sw.Write([]byte(`{"ok":true}`)); err != nil {
@@ -42,8 +45,7 @@ func TestStatusCapturingWriter_ImplicitOKOnWrite(t *testing.T) {
 }
 
 func TestStatusCapturingWriter_FirstWriteHeaderWins(t *testing.T) {
-	rec := httptest.NewRecorder()
-	sw := &statusCapturingWriter{ResponseWriter: rec}
+	sw := newTransactionResponseWriter()
 
 	sw.WriteHeader(500)
 	sw.WriteHeader(200) // una segunda llamada no debe "revertir" el status capturado
@@ -68,8 +70,7 @@ func TestStatusCapturingWriter_SuccessThreshold(t *testing.T) {
 		{500, true},
 	}
 	for _, tc := range cases {
-		rec := httptest.NewRecorder()
-		sw := &statusCapturingWriter{ResponseWriter: rec}
+		sw := newTransactionResponseWriter()
 		sw.WriteHeader(tc.status)
 		gotRollback := sw.status >= 400 // misma condición que usa RequireTenantTx
 		if gotRollback != tc.shouldRollback {
