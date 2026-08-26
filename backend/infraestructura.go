@@ -267,21 +267,31 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 				WHERE m.tenant_id = $1 AND m.branch_id = $2
 				ORDER BY a.created_at DESC`, tenantID, branchID)
 		if err != nil {
-			jsonResp(w, 200, []MdfIdfRecord{})
+			log.Printf("handleMdfIdf GET: error consultando infraestructura tenant=%s branch=%s: %v", tenantID, branchID, err)
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 			return
 		}
 		defer rows.Close()
 		var list []MdfIdfRecord
 		for rows.Next() {
 			var rec MdfIdfRecord
-			_ = rows.Scan(&rec.ID, &rec.Code, &rec.Name, &rec.Type,
+			if err = rows.Scan(&rec.ID, &rec.Code, &rec.Name, &rec.Type,
 				&rec.Building, &rec.Floor, &rec.Zone, &rec.Address,
 				&rec.Status,
 				&rec.RacksCount, &rec.SwitchesCount, &rec.UpsCount,
 				&rec.Observations, &rec.CreatedAt,
-				&rec.PhotoURL, &rec.RefImageURL)
+				&rec.PhotoURL, &rec.RefImageURL); err != nil {
+				log.Printf("handleMdfIdf GET: error leyendo infraestructura tenant=%s branch=%s: %v", tenantID, branchID, err)
+				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+				return
+			}
 			rec.Tags = []string{}
 			list = append(list, rec)
+		}
+		if err = rows.Err(); err != nil {
+			log.Printf("handleMdfIdf GET: error iterando infraestructura tenant=%s branch=%s: %v", tenantID, branchID, err)
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
 		}
 		if list == nil {
 			list = []MdfIdfRecord{}

@@ -111,15 +111,15 @@ func RequireTenantTxScoped(database *sql.DB, next http.HandlerFunc) http.Handler
 			return
 		}
 
-		sw := &statusCapturingWriter{ResponseWriter: w}
+		sw := newTransactionResponseWriter()
 		ctx := withTenantDB(r.Context(), tx)
 		ctx = withTenantIdentity(ctx, sessCtx.UserID, sessCtx.TenantID, sessCtx.BranchID)
 		ctx = withTenantScope(ctx, scopeAll)
 		req := r.WithContext(ctx)
 
-		committed := false
+		finalized := false
 		defer func() {
-			if committed {
+			if finalized {
 				return
 			}
 			if rbErr := tx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
@@ -134,12 +134,20 @@ func RequireTenantTxScoped(database *sql.DB, next http.HandlerFunc) http.Handler
 		next(sw, req)
 
 		if sw.status >= 400 {
+			if rbErr := tx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+				log.Printf("RequireTenantTxScoped: error en ROLLBACK (tenant=%s): %v", sessCtx.TenantID, rbErr)
+			}
+			finalized = true
+			sw.FlushTo(w)
 			return
 		}
 		if cErr := tx.Commit(); cErr != nil {
 			log.Printf("RequireTenantTxScoped: error en COMMIT (tenant=%s): %v", sessCtx.TenantID, cErr)
+			finalized = true
+			jsonErr(w, "Internal error", http.StatusInternalServerError)
 			return
 		}
-		committed = true
+		finalized = true
+		sw.FlushTo(w)
 	}
 }
