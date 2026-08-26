@@ -2,11 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Building2, Server, MapPin, Users, Shield, RefreshCw, AlertCircle, Package } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
 
-export type MdfIdfType = 'MDF' | 'IDF' | 'Site' | 'Sala Técnica';
+export type MdfIdfType = 'MDF' | 'IDF';
 export type MdfIdfStatus = 'Operativo' | 'Atención' | 'Crítico' | 'Planeado' | 'Fuera de servicio';
 
 export interface MdfIdfWizardData {
   code: string; name: string; type: MdfIdfType; status: MdfIdfStatus;
+  site_id: string; internal_area_id: string; site_code: string; internal_area_code: string;
   building: string; floor: string; zone: string; address: string;
   responsible: string; responsible_email: string;
   racks_count: number; switches_count: number; ups_count: number;
@@ -29,25 +30,27 @@ interface Props {
 }
 
 const STAGES = [
-  { id: 1, label: 'Alta rápida', icon: Building2, desc: 'Identificación básica' },
-  { id: 2, label: 'Ubicación',   icon: MapPin,    desc: 'Localización física' },
-  { id: 3, label: 'Capacidad',   icon: Server,    desc: 'Equipamiento y U' },
-  { id: 4, label: 'Responsable', icon: Users,     desc: 'Contacto y gestión' },
-  { id: 5, label: 'Resumen',     icon: Shield,    desc: 'Confirmar y guardar' },
+  { id: 1, label: 'Sitio', icon: Building2, desc: 'Sitio físico canónico' },
+  { id: 2, label: 'Área', icon: MapPin, desc: 'Área interna canónica' },
+  { id: 3, label: 'Identificación', icon: Building2, desc: 'Preview y datos básicos' },
+  { id: 4, label: 'Capacidad', icon: Server, desc: 'Equipamiento y U' },
+  { id: 5, label: 'Responsable', icon: Users, desc: 'Contacto y gestión' },
+  { id: 6, label: 'Resumen', icon: Shield, desc: 'Confirmar y guardar' },
 ];
 
-const TYPES: MdfIdfType[] = ['MDF', 'IDF', 'Site', 'Sala Técnica'];
+const TYPES: MdfIdfType[] = ['MDF', 'IDF'];
 const STATUSES: MdfIdfStatus[] = ['Operativo', 'Atención', 'Crítico', 'Planeado', 'Fuera de servicio'];
 const STATUS_COLORS: Record<MdfIdfStatus, string> = {
   'Operativo': '#22C55E', 'Atención': '#F59E0B', 'Crítico': '#EF4444',
   'Planeado': '#3B82F6', 'Fuera de servicio': '#6B7280',
 };
 const TYPE_COLORS: Record<MdfIdfType, string> = {
-  'MDF': '#4361EE', 'IDF': '#7C3AED', 'Site': '#0891B2', 'Sala Técnica': '#059669',
+  'MDF': '#4361EE', 'IDF': '#7C3AED',
 };
 
 const EMPTY: MdfIdfWizardData = {
   code: '', name: '', type: 'IDF', status: 'Operativo',
+  site_id: '', internal_area_id: '', site_code: '', internal_area_code: '',
   building: '', floor: '', zone: '', address: '',
   responsible: '', responsible_email: '',
   racks_count: 0, switches_count: 0, ups_count: 0, nodes_count: 0, servers_count: 0,
@@ -59,6 +62,84 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const [stage, setStage] = useState(1);
   const [form, setForm] = useState<MdfIdfWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
+  interface Site { id: string; code: string; name: string; status: string; address: string }
+  interface InternalArea { id: string; site_id: string; code: string; name: string; status: string }
+  const [sites, setSites] = useState<Site[]>([]);
+  const [areas, setAreas] = useState<InternalArea[]>([]);
+  const [branchCode, setBranchCode] = useState('[SUCURSAL]');
+  const [loadingSites, setLoadingSites] = useState(false);
+  const [loadingAreas, setLoadingAreas] = useState(false);
+  const [showSiteForm, setShowSiteForm] = useState(false);
+  const [showAreaForm, setShowAreaForm] = useState(false);
+  const [newSite, setNewSite] = useState({ code: '', name: '', address: '' });
+  const [newArea, setNewArea] = useState({ code: '', name: '' });
+
+  const loadSites = async () => {
+    setLoadingSites(true);
+    try {
+      const response = await fetch('/api/dcim/sites');
+      if (!response.ok) throw new Error();
+      const body = await response.json();
+      setSites((body.sites ?? []).filter((site: Site) => site.status === 'active'));
+      setBranchCode(body.branch_code || '[SUCURSAL]');
+    } catch {
+      setSites([]);
+    } finally {
+      setLoadingSites(false);
+    }
+  };
+
+  const loadAreas = async (siteID: string) => {
+    setLoadingAreas(true);
+    setAreas([]);
+    try {
+      if (!siteID) return;
+      const response = await fetch(`/api/dcim/internal-areas?site_id=${encodeURIComponent(siteID)}`);
+      if (!response.ok) throw new Error();
+      const body = await response.json();
+      setAreas((body.internal_areas ?? []).filter((area: InternalArea) => area.status === 'active'));
+    } catch {
+      setAreas([]);
+    } finally {
+      setLoadingAreas(false);
+    }
+  };
+
+  const selectSite = (siteID: string) => {
+    const site = sites.find(item => item.id === siteID);
+    setForm(previous => ({ ...previous, site_id: siteID, site_code: site?.code ?? '', building: site?.name ?? '', address: site?.address ?? '', internal_area_id: '', internal_area_code: '', zone: '' }));
+    void loadAreas(siteID);
+  };
+
+  const selectArea = (areaID: string) => {
+    const area = areas.find(item => item.id === areaID);
+    setForm(previous => ({ ...previous, internal_area_id: areaID, internal_area_code: area?.code ?? '', zone: area?.name ?? '' }));
+  };
+
+  const saveSite = async () => {
+    if (!newSite.code.trim() || !newSite.name.trim()) return;
+    const response = await fetch('/api/dcim/sites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newSite) });
+    if (!response.ok) { alert('No se pudo crear el sitio. Verifica permisos y código.'); return; }
+    const created = await response.json();
+    await loadSites();
+    setSites(previous => previous.some(item => item.id === created.id) ? previous : [...previous, created]);
+    setForm(previous => ({ ...previous, site_id: created.id, site_code: created.code, building: created.name, address: newSite.address, internal_area_id: '', internal_area_code: '', zone: '' }));
+    setAreas([]);
+    setNewSite({ code: '', name: '', address: '' });
+    setShowSiteForm(false);
+  };
+
+  const saveArea = async () => {
+    if (!form.site_id || !newArea.code.trim() || !newArea.name.trim()) return;
+    const response = await fetch('/api/dcim/internal-areas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ site_id: form.site_id, ...newArea }) });
+    if (!response.ok) { alert('No se pudo crear el área interna. Verifica permisos y código.'); return; }
+    const created = await response.json();
+    await loadAreas(form.site_id);
+    setAreas(previous => previous.some(item => item.id === created.id) ? previous : [...previous, created]);
+    setForm(previous => ({ ...previous, internal_area_id: created.id, internal_area_code: created.code, zone: created.name }));
+    setNewArea({ code: '', name: '' });
+    setShowAreaForm(false);
+  };
 
   // ── Estado del paso 1: nomenclaturas para sugerencias de código ──────────────
   interface NamingRule {
@@ -66,6 +147,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     separator: string; seq_digits: number; last_seq: number;
     next_code_preview: string;
     custom_segment_1?: string; custom_segment_2?: string;
+    include_branch?: boolean; include_site?: boolean; include_internal_area?: boolean;
     active: boolean;
   }
   const [namingRules, setNamingRules] = useState<NamingRule[]>([]);
@@ -77,7 +159,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
   // Mapa de tipo MDF/IDF → asset_type_code para buscar la regla
   const TYPE_TO_CODE: Record<MdfIdfType, string> = {
-    'MDF': 'MDF', 'IDF': 'IDF', 'Site': 'MDF', 'Sala Técnica': 'IDF',
+    'MDF': 'MDF', 'IDF': 'IDF',
   };
 
   const loadNamingRules = async () => {
@@ -97,24 +179,16 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     const sep = rule.separator || '-';
     const digits = rule.seq_digits || 3;
     const parts: string[] = [rule.prefix];
+    if (rule.include_branch) parts.push(branchCode || '[SUCURSAL]');
+    if (rule.include_site) parts.push(form.site_code || '[SITIO]');
+    if (rule.include_internal_area) parts.push(form.internal_area_code || '[AREA]');
     if (rule.custom_segment_1) parts.push(rule.custom_segment_1.toUpperCase());
     if (rule.custom_segment_2) parts.push(rule.custom_segment_2.toUpperCase());
-    parts.push('0'.repeat(digits)); // placeholder de secuencia
+    parts.push(`[${'0'.repeat(digits)}]`); // la reserva autoritativa ocurre al guardar
     return parts.join(sep);
   };
 
-  const buildCodeSuggestions = (type: MdfIdfType, rules: NamingRule[]): string[] => {
-    const code = TYPE_TO_CODE[type];
-    const rule = rules.find(r => r.asset_type_code === code && r.active);
-    if (!rule) {
-      return [];
-    }
-    const sep = rule.separator || '-';
-    const digits = rule.seq_digits || 3;
-    // Generar los próximos 5 códigos desde last_seq+1
-    return Array.from({ length: 5 }, (_, i) =>
-      `${rule.prefix}${sep}${String(rule.last_seq + 1 + i).padStart(digits, '0')}`);
-  };
+  const buildCodeSuggestions = (_type: MdfIdfType, _rules: NamingRule[]): string[] => [];
 
   // ── Estado del paso 3: activos del inventario ──────────────────────────────
   const [assetSummary, setAssetSummary] = useState<AssetSummary | null>(null);
@@ -209,8 +283,6 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     const prefixMap: Record<MdfIdfType, string> = {
       'MDF': 'MDF',
       'IDF': 'IDF',
-      'Site': 'Site',
-      'Sala Técnica': 'Sala Técnica',
     };
     const prefix = prefixMap[type];
     // Sugerencias con sufijos comunes
@@ -277,10 +349,10 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
   // Cargar nomenclaturas al montar el wizard
   useEffect(() => {
-    loadNamingRules().then(() => {
-      // Generar sugerencias iniciales para el tipo por defecto
-    });
-    const reloadOnReturn = () => { void loadNamingRules(); };
+	void loadNamingRules();
+	void loadSites();
+	if (form.site_id) void loadAreas(form.site_id);
+    const reloadOnReturn = () => { void loadNamingRules(); void loadSites(); };
     window.addEventListener('focus', reloadOnReturn);
     return () => window.removeEventListener('focus', reloadOnReturn);
   }, []);
@@ -296,16 +368,11 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     // URL de nomenclaturas con el tipo del activo como parámetro
     const typeCode = TYPE_TO_CODE[form.type];
     setCodePatternUrl(`/infraestructura/catalogs/nomenclaturas?type=${typeCode}&from=wizard`);
-  }, [form.type, namingRules]);
+  }, [form.type, form.site_code, form.internal_area_code, branchCode, namingRules]);
 
-  // Cargar ubicaciones cuando se llega al paso 2
+  // Cargar activos cuando se llega al paso de capacidad.
   useEffect(() => {
-    if (stage === 2) loadLocations();
-  }, [stage]);
-
-  // Cargar activos cuando se llega al paso 3
-  useEffect(() => {
-    if (stage === 3) loadAssetSummary();
+    if (stage === 4) loadAssetSummary();
   }, [stage]);
 
   const loadAssetSummary = async () => {
@@ -347,18 +414,19 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (codePattern && form.name && form.type && form.status) c.push(1);
-    if (form.building) c.push(2);
-    if (form.capacity_u) c.push(3);
-    if (form.responsible) c.push(4);
+    if (form.site_id) c.push(1);
+    if (form.internal_area_id) c.push(2);
+    if (codePattern && form.name && form.type && form.status) c.push(3);
+    if (form.capacity_u) c.push(4);
+    if (form.responsible) c.push(5);
     return c;
   };
 
   const handleSave = async () => {
-    if (!codePattern || !form.name || !form.type) return;
+    if (!codePattern || !form.site_id || !form.internal_area_id || !form.name || !form.type) return;
     setSaving(true);
     await new Promise(r => setTimeout(r, 300));
-    onSave(form);
+    onSave({ ...form, code: '' });
     setSaving(false);
   };
 
@@ -464,6 +532,51 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const renderStage = () => {
     switch (stage) {
       case 1: return (
+        <div>
+          <div style={{ padding: 12, marginBottom: 14, borderRadius: 10, background: '#EEF2FF', color: '#3730A3', fontSize: '0.8rem' }}>
+            <strong>Sucursal {branchCode}</strong> — autoridad derivada de la sesión. Selecciona un Sitio físico activo de esta sucursal.
+          </div>
+          {fld('Sitio físico', (
+            <select value={form.site_id} onChange={event => selectSite(event.target.value)} disabled={loadingSites}
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', background: '#FAFBFF', color: '#1E293B' }}>
+              <option value="">{loadingSites ? 'Cargando sitios…' : 'Seleccione sitio'}</option>
+              {sites.map(site => <option key={site.id} value={site.id}>{site.code} · {site.name}</option>)}
+            </select>
+          ), true)}
+          <button onClick={() => setShowSiteForm(value => !value)} style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #C7D2FE', background: '#EEF2FF', color: '#4361EE', fontWeight: 600, cursor: 'pointer' }}>
+            {showSiteForm ? 'Cancelar alta de sitio' : '+ Crear sitio'}
+          </button>
+          {showSiteForm && <div style={{ marginTop: 12, padding: 14, border: '1px solid #C7D2FE', borderRadius: 12, background: '#F8FAFF', display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
+            <input aria-label="Código de sitio" placeholder="Código (PARQUE)" value={newSite.code} onChange={event => setNewSite(value => ({ ...value, code: event.target.value }))} style={{ padding: 9, border: '1px solid #CBD5E1', borderRadius: 8 }} />
+            <input aria-label="Nombre de sitio" placeholder="Parque Industrial" value={newSite.name} onChange={event => setNewSite(value => ({ ...value, name: event.target.value }))} style={{ padding: 9, border: '1px solid #CBD5E1', borderRadius: 8 }} />
+            <input aria-label="Dirección de sitio" placeholder="Dirección (opcional)" value={newSite.address} onChange={event => setNewSite(value => ({ ...value, address: event.target.value }))} style={{ gridColumn: '1/-1', padding: 9, border: '1px solid #CBD5E1', borderRadius: 8 }} />
+            <button onClick={saveSite} disabled={!newSite.code.trim() || !newSite.name.trim()} style={{ gridColumn: '1/-1', padding: 9, border: 0, borderRadius: 8, background: '#4361EE', color: '#fff', fontWeight: 600 }}>Guardar y seleccionar sitio</button>
+          </div>}
+        </div>
+      );
+      case 2: return (
+        <div>
+          <div style={{ padding: 12, marginBottom: 14, borderRadius: 10, background: '#EEF2FF', color: '#3730A3', fontSize: '0.8rem' }}>
+            <strong>{form.site_code} · {form.building}</strong><br />El Área Interna pertenece al Sitio. “Almacén” como área física no equivale al placement WAREHOUSE.
+          </div>
+          {fld('Área interna', (
+            <select value={form.internal_area_id} onChange={event => selectArea(event.target.value)} disabled={!form.site_id || loadingAreas}
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', background: '#FAFBFF', color: '#1E293B' }}>
+              <option value="">{loadingAreas ? 'Cargando áreas…' : 'Seleccione área interna'}</option>
+              {areas.map(area => <option key={area.id} value={area.id}>{area.code} · {area.name}</option>)}
+            </select>
+          ), true)}
+          <button onClick={() => setShowAreaForm(value => !value)} disabled={!form.site_id} style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #C7D2FE', background: '#EEF2FF', color: '#4361EE', fontWeight: 600, cursor: form.site_id ? 'pointer' : 'not-allowed' }}>
+            {showAreaForm ? 'Cancelar alta de área' : '+ Crear área interna'}
+          </button>
+          {showAreaForm && <div style={{ marginTop: 12, padding: 14, border: '1px solid #C7D2FE', borderRadius: 12, background: '#F8FAFF', display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
+            <input aria-label="Código de área interna" placeholder="Código (PROD)" value={newArea.code} onChange={event => setNewArea(value => ({ ...value, code: event.target.value }))} style={{ padding: 9, border: '1px solid #CBD5E1', borderRadius: 8 }} />
+            <input aria-label="Nombre de área interna" placeholder="Producción" value={newArea.name} onChange={event => setNewArea(value => ({ ...value, name: event.target.value }))} style={{ padding: 9, border: '1px solid #CBD5E1', borderRadius: 8 }} />
+            <button onClick={saveArea} disabled={!newArea.code.trim() || !newArea.name.trim()} style={{ gridColumn: '1/-1', padding: 9, border: 0, borderRadius: 8, background: '#4361EE', color: '#fff', fontWeight: 600 }}>Guardar y seleccionar área</button>
+          </div>}
+        </div>
+      );
+      case 3: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             {/* Campo Código con dropdown de nomenclatura */}
@@ -634,7 +747,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
           </div>
         </div>
       );
-      case 2: return (
+      case 7: return (
         <div>
           {/* Encabezado del selector de ubicaciones */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -764,7 +877,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
           </div>
         </div>
       );
-      case 3: return (
+      case 4: return (
         <div>
           {/* Capacidad física — campos editables */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 18 }}>
@@ -829,7 +942,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
           )}
         </div>
       );
-      case 4: return (
+      case 5: return (
         <div>
           {fld('Responsable técnico', inp('responsible', 'Ing. Carlos Méndez'))}
           {fld('Correo del responsable', inp('responsible_email', 'carlos@empresa.com', 'email'))}
@@ -841,17 +954,18 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
           ))}
         </div>
       );
-      case 5: return (
+      case 6: return (
         <div>
           <div style={{ background: '#F0F4FF', borderRadius: 12, padding: 16, marginBottom: 16 }}>
             <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#4361EE', marginBottom: 12 }}>Resumen del registro</div>
             {[
-              ['Código', form.code || '—'],
+              ['Código técnico', codePattern || '—'],
               ['Tipo', form.type || '—'],
               ['Nombre', form.name || '—'],
               ['Estado', form.status || '—'],
-              ['Edificio / Piso', [form.building, form.floor].filter(Boolean).join(' / ') || '—'],
-              ['Zona', form.zone || '—'],
+              ['Sucursal', branchCode],
+              ['Sitio', `${form.site_code} · ${form.building}`],
+              ['Área interna', `${form.internal_area_code} · ${form.zone}`],
               ['Capacidad', form.capacity_u ? `${form.capacity_u}U` : '—'],
               ['Responsable', form.responsible || '—'],
               ['Racks / Switches', `${form.racks_count} / ${form.switches_count}`],
@@ -873,6 +987,13 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   };
 
   const completed = completedStages();
+  const canAdvance = stage === 1 ? Boolean(form.site_id)
+    : stage === 2 ? Boolean(form.internal_area_id)
+      : stage === 3 ? Boolean(codePattern && form.name && form.type)
+        : true;
+  const canOpenStage = (target: number) => target === 1
+    || (target === 2 && Boolean(form.site_id))
+    || (target >= 3 && Boolean(form.site_id && form.internal_area_id));
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(4px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
@@ -891,7 +1012,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
             const isDone = completed.includes(s.id);
             const Icon = s.icon;
             return (
-              <button key={s.id} onClick={() => setStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: 'pointer', background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
+              <button key={s.id} onClick={() => { if (canOpenStage(s.id)) setStage(s.id); }} disabled={!canOpenStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: canOpenStage(s.id) ? 'pointer' : 'not-allowed', opacity: canOpenStage(s.id) ? 1 : 0.55, background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
                 <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isActive ? '#4361EE' : isDone ? '#22C55E' : '#E2E8F0' }}>
                   {isDone && !isActive ? <Check size={14} color="#fff" /> : <Icon size={13} color={isActive ? '#fff' : '#94A3B8'} />}
                 </div>
@@ -909,13 +1030,13 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
             <ChevronLeft size={16} /> Anterior
           </button>
           {stage < STAGES.length ? (
-            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: '#4361EE', color: '#fff', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button onClick={() => { if (canAdvance) setStage(s => Math.min(STAGES.length, s + 1)); }} disabled={!canAdvance}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: canAdvance ? '#4361EE' : '#CBD5E1', color: '#fff', cursor: canAdvance ? 'pointer' : 'not-allowed', fontSize: '0.875rem', fontWeight: 600 }}>
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!codePattern || !form.name || saving}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!codePattern || !form.name) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!codePattern || !form.name) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+            <button onClick={handleSave} disabled={!codePattern || !form.site_id || !form.internal_area_id || !form.name || saving}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!codePattern || !form.site_id || !form.internal_area_id || !form.name) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!codePattern || !form.site_id || !form.internal_area_id || !form.name) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
               title={codeError ? 'Corrige el código duplicado antes de guardar' : ''}>
               {saving ? '...' : checkingCode ? 'Verificando...' : <><Check size={16} /> Guardar MDF/IDF</>}
             </button>

@@ -1981,6 +1981,32 @@ function TabInventario({ data, setData, highlightCode, onRackBuilder }: { data: 
     setShowModal(false); setEditRecord(null);
   };
 
+  const handleCreate = async (d: MdfIdfWizardData) => {
+    try {
+      const response = await axios.post('/api/infra/mdf-idf', {
+        name: d.name,
+        site_type: d.type,
+        site_id: d.site_id,
+        internal_area_id: d.internal_area_id,
+        status: 'active',
+        address: d.address,
+        responsible: d.responsible,
+        responsible_email: d.responsible_email,
+        capacity_u: d.capacity_u,
+        cooling: d.cooling,
+        power_kva: d.power_kva,
+        observations: d.notes,
+      });
+      const refreshed = await axios.get('/api/infra/mdf-idf');
+      setData(Array.isArray(refreshed.data) ? refreshed.data : []);
+      setShowMdfWizard(false);
+      return response.data;
+    } catch (error) {
+      console.error('[handleCreate] Error al guardar MDF/IDF:', error);
+      throw error;
+    }
+  };
+
   const handleExportCSV = () => {
     const hdr = ['Código','Nombre','Tipo','Edificio','Piso','Zona','Ref. Plano','Estado','Responsable','Racks','Switches','UPS','Nodos','Servidores','Capacidad U','Usadas U','Potencia kVA','Documentación %','Certificado'];
     const rows = filtered.map(r => [r.code, r.name, r.type, r.building, r.floor, r.zone, r.floor_plan_ref, r.status, r.responsible, r.racks_count, r.switches_count, r.ups_count, r.nodes_count, r.servers_count, r.capacity_u, r.used_u, r.power_kva, r.documentation_pct, r.certified ? 'Sí' : 'No']);
@@ -2136,42 +2162,7 @@ function TabInventario({ data, setData, highlightCode, onRackBuilder }: { data: 
       {showMdfWizard && (
         <MdfIdfWizard
           onClose={() => setShowMdfWizard(false)}
-          onSave={(data: MdfIdfWizardData) => {
-            const now = new Date().toISOString();
-            const newRecord: MdfIdfRecord = {
-              id: Date.now().toString(),
-              code: data.code,
-              name: data.name,
-              type: data.type as any,
-              status: data.status as any,
-              building: data.building,
-              floor: data.floor,
-              zone: data.zone ?? '',
-              address: data.address ?? '',
-              responsible: data.responsible ?? '',
-              responsible_email: data.responsible_email ?? '',
-              racks_count: data.racks_count ?? 0,
-              switches_count: data.switches_count ?? 0,
-              ups_count: data.ups_count ?? 0,
-              nodes_count: data.nodes_count ?? 0,
-              servers_count: data.servers_count ?? 0,
-              capacity_u: data.capacity_u ?? 0,
-              used_u: data.used_u ?? 0,
-              cooling: data.cooling ?? '',
-              power_kva: data.power_kva ?? 0,
-              documentation_pct: 0,
-              certified: false,
-              floor_plan_ref: data.floor_plan_ref ?? '',
-              photo_url: data.photo_url ?? '',
-              ref_image_url: '',
-              notes: data.notes ?? '',
-              last_updated: now,
-              created_at: now,
-              tags: data.tags ?? [],
-            };
-            handleSave(newRecord);
-            setShowMdfWizard(false);
-          }}
+          onSave={(data: MdfIdfWizardData) => { void handleCreate(data); }}
         />
       )}
     </div>
@@ -2357,6 +2348,8 @@ function MdfIdfContent() {
                 internal_code: '',
                 name: d.name,
                 site_type: d.type ?? 'IDF',
+                site_id: d.site_id,
+                internal_area_id: d.internal_area_id,
                 status: 'active',
                 building: d.building,
                 floor: d.floor,

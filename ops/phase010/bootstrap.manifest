@@ -11,3 +11,4 @@ migrations/014_dcim_assets_phase1_seed.sql
 migrations/019_asset_nomenclature_enforcement.sql
 migrations/020_nomenclature_normative_catalog.sql
 migrations/021_asset_placement_authority.sql
+migrations/022_physical_location_hierarchy.sql

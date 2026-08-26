@@ -252,6 +252,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 		rows, err := tenantTx.Query(`
 				SELECT a.id, a.internal_code, COALESCE(a.name, a.internal_code),
 					COALESCE(m.type,'MDF'),
+					COALESCE(b.name,''), COALESCE(f.name,''), COALESCE(ia.name,''), COALESCE(b.address,''),
 					COALESCE(a.status,'active'),
 					(SELECT COUNT(*) FROM racks rk WHERE rk.mdf_idf_id = m.id) AS real_rack_count,
 					COALESCE(m.switch_count,0), COALESCE(m.ups_count,0),
@@ -259,8 +260,12 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 					COALESCE(a.photo_url,''), COALESCE(a.ref_image_url,'')
 				FROM mdf_idf m
 				JOIN assets a ON a.id = m.asset_id
-				WHERE m.tenant_id = $1
-				ORDER BY a.created_at DESC`, tenantID)
+				LEFT JOIN locations l ON l.id=a.location_id AND l.tenant_id=a.tenant_id AND l.branch_id=a.branch_id
+				LEFT JOIN internal_areas ia ON ia.id=l.internal_area_id AND ia.tenant_id=l.tenant_id AND ia.branch_id=l.branch_id
+				LEFT JOIN buildings b ON b.id=ia.site_id AND b.tenant_id=ia.tenant_id AND b.branch_id=ia.branch_id
+				LEFT JOIN floors f ON f.id=ia.floor_id AND f.tenant_id=ia.tenant_id AND f.building_id=ia.site_id
+				WHERE m.tenant_id = $1 AND m.branch_id = $2
+				ORDER BY a.created_at DESC`, tenantID, branchID)
 		if err != nil {
 			jsonResp(w, 200, []MdfIdfRecord{})
 			return
@@ -270,6 +275,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var rec MdfIdfRecord
 			_ = rows.Scan(&rec.ID, &rec.Code, &rec.Name, &rec.Type,
+				&rec.Building, &rec.Floor, &rec.Zone, &rec.Address,
 				&rec.Status,
 				&rec.RacksCount, &rec.SwitchesCount, &rec.UpsCount,
 				&rec.Observations, &rec.CreatedAt,
@@ -292,6 +298,8 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			Building         string  `json:"building"`
 			Floor            string  `json:"floor"`
 			Zone             string  `json:"zone"`
+			SiteID           string  `json:"site_id"`
+			InternalAreaID   string  `json:"internal_area_id"`
 			Address          string  `json:"address"`
 			Status           string  `json:"status"`
 			Responsible      string  `json:"responsible"`
@@ -316,9 +324,19 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 		if mdfType != "MDF" && mdfType != "IDF" {
 			mdfType = "MDF"
 		}
+		physicalLocation, err := ResolvePhysicalLocation(r.Context(), tenantTx, tenantID, branchID, strings.TrimSpace(req.SiteID), strings.TrimSpace(req.InternalAreaID))
+		if err != nil {
+			writeManagedAssetError(w, ErrInvalidPhysicalLocation, mdfType)
+			return
+		}
+		placementID := generateID()
+		if _, err = tenantTx.Exec(`INSERT INTO locations(id,tenant_id,branch_id,placement_type,name,status,internal_area_id) VALUES($1,$2,$3,$4,$5,'active',$6)`, placementID, tenantID, branchID, mdfType, req.Name, physicalLocation.AreaID); err != nil {
+			writeManagedAssetError(w, err, mdfType)
+			return
+		}
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: mdfType, Name: req.Name, ManualCode: req.Code + req.InternalCode,
-			Status: req.Status, Observations: req.Observations,
+			Status: req.Status, Observations: req.Observations, PlacementID: placementID, PhysicalLocation: &physicalLocation,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, mdfType)
@@ -333,12 +351,11 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			writeManagedAssetError(w, err, mdfType)
 			return
 		}
-		placementID := generateID()
-		if _, err = tenantTx.Exec(`INSERT INTO locations(id,tenant_id,branch_id,placement_type,placement_code,name,status,asset_id) VALUES($1,$2,$3,$4,$5,$6,'active',$7)`, placementID, tenantID, branchID, mdfType, managed.Assignment.Code, req.Name, managed.AssetID); err != nil {
+		if _, err = tenantTx.Exec(`UPDATE locations SET placement_code=$1,asset_id=$2,updated_at=NOW() WHERE id=$3 AND tenant_id=$4 AND branch_id=$5`, managed.Assignment.Code, managed.AssetID, placementID, tenantID, branchID); err != nil {
 			writeManagedAssetError(w, err, mdfType)
 			return
 		}
-		if _, err = tenantTx.Exec(`UPDATE assets SET location_id=$1 WHERE id=$2 AND tenant_id=$3`, placementID, managed.AssetID, tenantID); err != nil {
+		if _, err = tenantTx.Exec(`INSERT INTO asset_logs(tenant_id,asset_id,event_type,new_value,notes,performed_by) VALUES($1,$2,'created',$3,$4,$5)`, tenantID, managed.AssetID, managed.Assignment.Code, "Alta MDF/IDF con ubicación física canónica", userID); err != nil {
 			writeManagedAssetError(w, err, mdfType)
 			return
 		}

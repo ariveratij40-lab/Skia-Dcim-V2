@@ -38,8 +38,8 @@ func TestSpecializedPostUsesInjectedTenantDB(t *testing.T) {
 	tenantMock.ExpectQuery("SELECT id,placement_type").WithArgs("placement-1", "tenant-1", "branch-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "placement_type", "branch_id", "placement_code", "name", "status"}).AddRow("placement-1", "IDF", "branch-1", "IDF01", "IDF 01", "active"))
 	tenantMock.ExpectQuery("SELECT id, prefix, separator").WithArgs("tenant-1", "SWITCH").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "include_placement", "custom_segment_1", "custom_segment_2"}).
-			AddRow("rule-1", "SW", "-", 4, 0, false, true, "", ""))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "include_placement", "include_site", "include_internal_area", "custom_segment_1", "custom_segment_2"}).
+			AddRow("rule-1", "SW", "-", 4, 0, false, true, false, false, "", ""))
 	tenantMock.ExpectExec("INSERT INTO nomenclature_counters").WillReturnResult(sqlmock.NewResult(0, 1))
 	tenantMock.ExpectQuery("SELECT last_seq FROM nomenclature_counters").WillReturnRows(sqlmock.NewRows([]string{"last_seq"}).AddRow(0))
 	tenantMock.ExpectExec("UPDATE nomenclature_counters").WillReturnResult(sqlmock.NewResult(0, 1))
