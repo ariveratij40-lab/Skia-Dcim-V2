@@ -35,7 +35,7 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 	userA, userB := uuid.NewString(), uuid.NewString()
 	tokenA, tokenA2, tokenB := "ready-"+uuid.NewString(), "ready-"+uuid.NewString(), "ready-"+uuid.NewString()
 	siteA, areaA := uuid.NewString(), uuid.NewString()
-	mdfRule, rackRule := uuid.NewString(), uuid.NewString()
+	mdfRule, idfRule, rackRule := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	statements := []struct {
 		query string
 		args  []interface{}
@@ -46,7 +46,7 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 		{`INSERT INTO user_tenants(user_id,tenant_id) VALUES($1,$3),($2,$4)`, []interface{}{userA, userB, tenantA, tenantB}},
 		{`INSERT INTO user_branches(user_id,branch_id) VALUES($1,$3),($1,$4),($2,$5)`, []interface{}{userA, userB, branchA, branchA2, branchB}},
 		{`INSERT INTO sessions(id,user_id,tenant_id,branch_id,token,expires_at) VALUES($1,$2,$3,$4,$5,4102444800),($6,$2,$3,$7,$8,4102444800),($9,$10,$11,$12,$13,4102444800)`, []interface{}{uuid.NewString(), userA, tenantA, branchA, tokenA, uuid.NewString(), branchA2, tokenA2, uuid.NewString(), userB, tenantB, branchB, tokenB}},
-		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_site,include_internal_area,include_placement,seq_digits,last_seq,active) VALUES($1,$3,'MDF','MDF','-',true,true,true,false,3,0,true),($2,$3,'RACK','RK','-',true,false,false,true,3,0,true)`, []interface{}{mdfRule, rackRule, tenantA}},
+		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_site,include_internal_area,include_placement,seq_digits,last_seq,active) VALUES($1,$4,'MDF','MDF','-',true,true,true,false,3,0,true),($2,$4,'IDF','IDF','-',true,true,true,false,3,0,true),($3,$4,'RACK','RK','-',true,false,false,true,3,0,true)`, []interface{}{mdfRule, idfRule, rackRule, tenantA}},
 	}
 	for _, statement := range statements {
 		if _, err = adminDB.Exec(statement.query, statement.args...); err != nil {
@@ -72,6 +72,18 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 	}
 	if got := readiness(tokenA); readinessStep(t, got, "site").Status != "pending" || readinessStep(t, got, "internal_area").Status != "blocked" {
 		t.Fatalf("empty=%+v", got)
+	}
+	if nomenclature := readinessStep(t, readiness(tokenA), "nomenclature"); nomenclature.Status != "configured" || nomenclature.Required || nomenclature.Example != "MDF-A1-[SITIO]-[AREA]-###" {
+		t.Fatalf("configured nomenclature=%+v", nomenclature)
+	}
+	if _, err = adminDB.Exec(`UPDATE naming_rules SET active=false WHERE id=$1`, idfRule); err != nil {
+		t.Fatal(err)
+	}
+	if nomenclature := readinessStep(t, readiness(tokenA), "nomenclature"); nomenclature.Status != "unavailable" || len(nomenclature.UnavailableTypes) != 1 || nomenclature.UnavailableTypes[0] != "IDF" {
+		t.Fatalf("partial nomenclature did not fail closed: %+v", nomenclature)
+	}
+	if _, err = adminDB.Exec(`UPDATE naming_rules SET active=true WHERE id=$1`, idfRule); err != nil {
+		t.Fatal(err)
 	}
 	if _, err = adminDB.Exec(`INSERT INTO buildings(id,tenant_id,branch_id,code,name,status) VALUES($1,$2,$3,'SITE','Site','active')`, siteA, tenantA, branchA); err != nil {
 		t.Fatal(err)
@@ -169,9 +181,13 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 
 	if got := readiness(tokenA2); got.Branch.ID != branchA2 || readinessStep(t, got, "site").Count != 0 || got.Ready {
 		t.Fatalf("cross branch leaked: %+v", got)
+	} else if nomenclature := readinessStep(t, got, "nomenclature"); nomenclature.Status != "configured" || nomenclature.Example != "MDF-A2-[SITIO]-[AREA]-###" {
+		t.Fatalf("cross branch nomenclature leaked: %+v", nomenclature)
 	}
 	if got := readiness(tokenB); got.Branch.ID != branchB || readinessStep(t, got, "site").Count != 0 || got.Ready {
 		t.Fatalf("cross tenant leaked: %+v", got)
+	} else if nomenclature := readinessStep(t, got, "nomenclature"); nomenclature.Status != "unavailable" || len(nomenclature.ConfiguredTypes) != 0 {
+		t.Fatalf("cross tenant nomenclature leaked: %+v", nomenclature)
 	}
 
 	tx, err := runtimeDB.Begin()

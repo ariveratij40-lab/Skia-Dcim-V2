@@ -3,17 +3,20 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import { beginReadinessRequest, rejectReadinessRequest, resolveReadinessRequest, type ReadinessRequestState } from './infrastructureReadinessState';
 
-export type ReadinessStatus = 'complete' | 'pending' | 'blocked' | 'available' | 'optional';
+export type ReadinessStatus = 'complete' | 'pending' | 'blocked' | 'available' | 'optional' | 'configured' | 'unavailable' | 'not_applicable';
 export type ReadinessActionTarget = 'site_create' | 'internal_area_create' | 'mdf_idf_create' | 'rack_create';
 
 export interface InfrastructureReadinessStep {
-  key: 'branch' | 'site' | 'internal_area' | 'mdf_idf' | 'rack';
+  key: 'branch' | 'site' | 'internal_area' | 'nomenclature' | 'mdf_idf' | 'rack';
   status: ReadinessStatus;
   count: number;
   required: boolean;
   message: string;
   action: { kind: 'open'; target: ReadinessActionTarget } | null;
   unresolved_count?: number;
+  example?: string;
+  configured_asset_types?: string[];
+  unavailable_asset_types?: string[];
 }
 
 export interface InfrastructureReadiness {

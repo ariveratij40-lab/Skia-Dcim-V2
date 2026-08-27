@@ -30,7 +30,8 @@ func TestBuildInfrastructureReadinessStates(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			response := buildInfrastructureReadiness("branch-1", "TJ", "Tijuana", test.counts)
+			nomenclature := buildNomenclatureReadiness("TJ", []readinessNamingRule{{AssetTypeCode: "MDF"}, {AssetTypeCode: "IDF"}})
+			response := buildInfrastructureReadiness("branch-1", "TJ", "Tijuana", test.counts, nomenclature)
 			if response.Ready != test.ready || response.Progress.RequiredComplete != test.progress || response.Progress.RequiredTotal != 4 || response.Progress.Percent != test.progress*25 {
 				t.Fatalf("ready=%v progress=%+v", response.Ready, response.Progress)
 			}
@@ -46,5 +47,24 @@ func TestBuildInfrastructureReadinessStates(t *testing.T) {
 				t.Fatal("legacy rack was not reported unresolved")
 			}
 		})
+	}
+}
+
+func TestBuildNomenclatureReadiness(t *testing.T) {
+	rule := readinessNamingRule{AssetTypeCode: "MDF", Prefix: "MDF", Separator: "-", SeqDigits: 3,
+		IncludeBranch: true, IncludeSite: true, IncludeInternalArea: true}
+	partial := buildNomenclatureReadiness("PRI", []readinessNamingRule{rule})
+	if partial.Status != "unavailable" || partial.Required || partial.Example != "MDF-PRI-[SITIO]-[AREA]-###" || len(partial.UnavailableTypes) != 1 || partial.UnavailableTypes[0] != "IDF" {
+		t.Fatalf("partial nomenclature=%+v", partial)
+	}
+	configured := buildNomenclatureReadiness("PRI", []readinessNamingRule{rule, {
+		AssetTypeCode: "IDF", Prefix: "IDF", Separator: "-", SeqDigits: 3,
+	}})
+	if configured.Status != "configured" || configured.Required || configured.Count != 2 {
+		t.Fatalf("configured nomenclature=%+v", configured)
+	}
+	missing := buildNomenclatureReadiness("PRI", nil)
+	if missing.Status != "unavailable" || missing.Example != "" || len(missing.UnavailableTypes) != 2 {
+		t.Fatalf("missing nomenclature=%+v", missing)
 	}
 }

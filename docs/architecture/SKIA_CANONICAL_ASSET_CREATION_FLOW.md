@@ -882,6 +882,36 @@ Phase 1 implements `GET /api/dcim/readiness` under `RequireTenantTx` and derives
 
 The current schema can derive active Branch, Site, Internal Area, MDF/IDF placement and conservative Rack readiness. Phase 1 does not persist progress, assign lifecycle defaults, add AP, redesign Backbone, change Rack constraints, or consolidate `technical_rooms`. Any later enforcement discovered during Rack refactoring must be proposed as a separate migration and separately approved.
 
+## 31. Wizard Phase 1.1 — Nomenclature and Contextual Help
+
+### Executable authority audit
+
+- `naming_rules` is the format authority, scoped by `(tenant_id, asset_type_code)`. A rule is configured for an asset type only when that exact rule exists and `active=true`.
+- MDF and IDF use `nomenclature_branch_counters`, scoped by `(nomenclature_id, branch_id)`. Placement-dependent installable assets use `nomenclature_counters`, scoped additionally by `placement_id`.
+- `generateInternalCodeWithContext` creates a missing counter row, locks the applicable counter with `SELECT ... FOR UPDATE`, increments it and inserts the managed asset inside the same request `TenantTx`. A rollback therefore rolls back the counter and asset together.
+- The database trigger validates the emitted code against the selected rule and canonical Branch/Site/Area/Placement references. `assets.internal_code`, `nomenclature_id` and `nomenclature_sequence` preserve the issued identity.
+- There is no fallback when an active rule is absent: managed creation returns `422 nomenclature_required`. Existing `internal_code` values are not evidence that a current rule is configured.
+- Managed coverage currently includes MDF, IDF, Rack, Switch, UPS, PDU, Patch Panel, Node and Backbone. The catalog may contain additional future/configurable types, but readiness Phase 1.1 reports only the MDF/IDF capability relevant to its flow.
+- Readiness nomenclature is `configured` only when active MDF and IDF rules are both visible for the session tenant. A partial or absent pair is `unavailable`; the payload lists configured and unavailable asset types. It is tenant-scoped configuration with a Branch-specific preview because Branch is an optional rule component and the real counter is Branch-scoped.
+- The educational example is derived from the active rule: prefix, separator, enabled canonical components, custom rule literals and sequence width. Site/Area remain placeholders because readiness does not choose one of potentially several valid records. `#` represents width only and never reads, predicts or reserves the next counter.
+
+Nomenclature remains `required=false` in the read model and does not change the physical readiness baseline (`required_total=4`). This does not weaken the creation gate: `reserveManagedAsset` still fails closed without the exact active rule for the selected MDF or IDF type.
+
+### Educational interpretation
+
+| Concept | SKIA interpretation | Purpose |
+|---|---|---|
+| Branch | authorized active session Branch | tenant/Branch isolation and operational scope |
+| Site | canonical `buildings` record | physical property or facility |
+| Internal Area | active area under an active Site | precise physical context within the Site |
+| Nomenclature | active `naming_rules` pair for MDF/IDF | consistent technical identity; preview is not a reservation |
+| MDF/IDF | managed distribution asset with canonical physical placement | distribution parent for infrastructure |
+| Rack | valid Rack related to MDF/IDF | optional physical organization depending on modality |
+
+Contextual help uses keyboard-native `details/summary` inside the existing accessible dialog. The former standalone nomenclature notice is removed to avoid duplicating the new Nomenclature step.
+
+**DATABASE MIGRATION = NONE for Wizard Phase 1.1.** The existing rule, counter, RLS and transaction contracts are sufficient.
+
 ## Evidence inspected
 
 Primary schema and migrations:

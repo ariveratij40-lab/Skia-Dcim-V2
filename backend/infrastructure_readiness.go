@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 )
 
 type InfrastructureReadinessAction struct {
@@ -13,13 +14,16 @@ type InfrastructureReadinessAction struct {
 }
 
 type InfrastructureReadinessStep struct {
-	Key             string                         `json:"key"`
-	Status          string                         `json:"status"`
-	Count           int                            `json:"count"`
-	Required        bool                           `json:"required"`
-	Message         string                         `json:"message"`
-	Action          *InfrastructureReadinessAction `json:"action"`
-	UnresolvedCount int                            `json:"unresolved_count,omitempty"`
+	Key              string                         `json:"key"`
+	Status           string                         `json:"status"`
+	Count            int                            `json:"count"`
+	Required         bool                           `json:"required"`
+	Message          string                         `json:"message"`
+	Action           *InfrastructureReadinessAction `json:"action"`
+	UnresolvedCount  int                            `json:"unresolved_count,omitempty"`
+	Example          string                         `json:"example,omitempty"`
+	ConfiguredTypes  []string                       `json:"configured_asset_types,omitempty"`
+	UnavailableTypes []string                       `json:"unavailable_asset_types,omitempty"`
 }
 
 type InfrastructureReadinessResponse struct {
@@ -41,11 +45,65 @@ type infrastructureReadinessCounts struct {
 	Sites, InternalAreas, MdfIdf, ValidRacks, TotalRacks int
 }
 
+type readinessNamingRule struct {
+	AssetTypeCode, Prefix, Separator, CustomSegment1, CustomSegment2  string
+	SeqDigits                                                         int
+	IncludeBranch, IncludePlacement, IncludeSite, IncludeInternalArea bool
+}
+
 func readinessAction(target string) *InfrastructureReadinessAction {
 	return &InfrastructureReadinessAction{Kind: "open", Target: target}
 }
 
-func buildInfrastructureReadiness(branchID, branchCode, branchName string, counts infrastructureReadinessCounts) InfrastructureReadinessResponse {
+func buildNomenclatureReadiness(branchCode string, rules []readinessNamingRule) InfrastructureReadinessStep {
+	step := InfrastructureReadinessStep{Key: "nomenclature", Status: "unavailable", Required: false,
+		Message: "Falta una regla activa para MDF o IDF."}
+	configured := map[string]readinessNamingRule{}
+	for _, rule := range rules {
+		configured[rule.AssetTypeCode] = rule
+		step.ConfiguredTypes = append(step.ConfiguredTypes, rule.AssetTypeCode)
+	}
+	for _, assetType := range []string{"MDF", "IDF"} {
+		if _, ok := configured[assetType]; !ok {
+			step.UnavailableTypes = append(step.UnavailableTypes, assetType)
+		}
+	}
+	step.Count = len(step.ConfiguredTypes)
+	if len(step.UnavailableTypes) == 0 {
+		step.Status = "configured"
+		step.Message = "SKIA encontró reglas activas para MDF e IDF."
+	}
+	rule, ok := configured["MDF"]
+	if !ok {
+		rule, ok = configured["IDF"]
+	}
+	if ok {
+		parts := []string{rule.Prefix}
+		if rule.IncludeBranch {
+			parts = append(parts, branchCode)
+		}
+		if rule.IncludeSite {
+			parts = append(parts, "[SITIO]")
+		}
+		if rule.IncludeInternalArea {
+			parts = append(parts, "[AREA]")
+		}
+		if rule.IncludePlacement {
+			parts = append(parts, "[UBICACIÓN]")
+		}
+		if rule.CustomSegment1 != "" {
+			parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment1, " ", "")))
+		}
+		if rule.CustomSegment2 != "" {
+			parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment2, " ", "")))
+		}
+		parts = append(parts, strings.Repeat("#", rule.SeqDigits))
+		step.Example = strings.Join(parts, rule.Separator)
+	}
+	return step
+}
+
+func buildInfrastructureReadiness(branchID, branchCode, branchName string, counts infrastructureReadinessCounts, nomenclature InfrastructureReadinessStep) InfrastructureReadinessResponse {
 	response := InfrastructureReadinessResponse{}
 	response.Branch.ID, response.Branch.Code, response.Branch.Name = branchID, branchCode, branchName
 	response.Progress.RequiredTotal = 4
@@ -92,7 +150,7 @@ func buildInfrastructureReadiness(branchID, branchCode, branchName string, count
 		rack.UnresolvedCount = 0
 	}
 
-	response.Steps = []InfrastructureReadinessStep{branch, site, area, mdf, rack}
+	response.Steps = []InfrastructureReadinessStep{branch, site, area, nomenclature, mdf, rack}
 	for _, step := range response.Steps {
 		if step.Required && step.Status == "complete" {
 			response.Progress.RequiredComplete++
@@ -173,7 +231,37 @@ func handleInfrastructureReadiness(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := json.NewEncoder(w).Encode(buildInfrastructureReadiness(branchID, branchCode, branchName, counts)); err != nil {
+	rules := []readinessNamingRule{}
+	rows, err := tdb.QueryContext(r.Context(), `
+		SELECT asset_type_code,prefix,separator,seq_digits,include_branch,include_placement,
+		       include_site,include_internal_area,COALESCE(custom_segment_1,''),COALESCE(custom_segment_2,'')
+		FROM naming_rules
+		WHERE tenant_id=$1 AND asset_type_code IN ('MDF','IDF') AND active=true
+		ORDER BY CASE asset_type_code WHEN 'MDF' THEN 0 ELSE 1 END`, tenantID)
+	if err != nil {
+		log.Printf("infrastructure readiness: resolve nomenclature: %v", err)
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rule readinessNamingRule
+		if err := rows.Scan(&rule.AssetTypeCode, &rule.Prefix, &rule.Separator, &rule.SeqDigits,
+			&rule.IncludeBranch, &rule.IncludePlacement, &rule.IncludeSite, &rule.IncludeInternalArea,
+			&rule.CustomSegment1, &rule.CustomSegment2); err != nil {
+			log.Printf("infrastructure readiness: scan nomenclature: %v", err)
+			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+			return
+		}
+		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("infrastructure readiness: iterate nomenclature: %v", err)
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if err := json.NewEncoder(w).Encode(buildInfrastructureReadiness(branchID, branchCode, branchName, counts, buildNomenclatureReadiness(branchCode, rules))); err != nil {
 		log.Printf("infrastructure readiness: encode response: %v", err)
 	}
 }
