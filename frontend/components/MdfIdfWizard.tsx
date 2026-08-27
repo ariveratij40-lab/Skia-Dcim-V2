@@ -128,6 +128,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     setAreas([]);
     setNewSite({ code: '', name: '', address: '' });
     setShowSiteForm(false);
+    window.dispatchEvent(new Event('skia:infrastructure-changed'));
   };
 
   const saveArea = async () => {
@@ -140,6 +141,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     setForm(previous => ({ ...previous, internal_area_id: created.id, internal_area_code: created.code, zone: created.name }));
     setNewArea({ code: '', name: '' });
     setShowAreaForm(false);
+    window.dispatchEvent(new Event('skia:infrastructure-changed'));
   };
 
   // ── Estado del paso 1: nomenclaturas para sugerencias de código ──────────────

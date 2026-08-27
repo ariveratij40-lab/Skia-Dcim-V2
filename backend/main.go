@@ -220,6 +220,7 @@ func main() {
 	http.HandleFunc("/api/dcim/placements", RequireTenantTx(db, HandlePlacements))
 	http.HandleFunc("/api/dcim/sites", RequireTenantTx(db, HandleSites))
 	http.HandleFunc("/api/dcim/internal-areas", RequireTenantTx(db, HandleInternalAreas))
+	http.HandleFunc("/api/dcim/readiness", RequireTenantTx(db, handleInfrastructureReadiness))
 	http.HandleFunc("/api/dcim/catalogs/locations", RequireTenantTx(db, dcim.HandleLocationsManage))
 	http.HandleFunc("/api/dcim/catalogs/locations/", RequireTenantTx(db, dcim.HandleLocationsManage))
 

@@ -38,6 +38,7 @@ export default function SelectBranchPage() {
     setSelectedBranch(branchId);
     try {
       await axios.post('/api/auth/select-branch', { branchId: branchId });
+      window.dispatchEvent(new Event('skia:branch-changed'));
       localStorage.setItem('selected_branch', branchId);
       
       // Pequeña pausa para animación
