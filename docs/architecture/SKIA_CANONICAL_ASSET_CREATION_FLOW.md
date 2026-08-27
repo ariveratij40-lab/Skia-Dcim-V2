@@ -647,8 +647,8 @@ The frontend should not receive or construct URLs supplied by arbitrary data. `a
 
 - Site count: active `buildings` in the current tenant/Branch.
 - Internal Area count: active `internal_areas` joined to active `buildings` in the same tenant/Branch.
-- MDF/IDF count: active/non-decommissioned `assets` joined to `asset_types`, `mdf_idf`, and active typed `locations`, where the placement's Internal Area and Site are active and scope-consistent.
-- Rack count: active/non-decommissioned Rack assets in the current tenant/Branch that have a valid MDF/IDF parent under the current transitional model. The initial implementation must report invalid/unresolved legacy racks separately rather than count them as complete.
+- MDF/IDF count: strictly `status='active'`, non-retired `assets` joined to `asset_types`, `mdf_idf`, and active typed `locations`, where the placement's Internal Area and Site are active and scope-consistent. Inactive, maintenance, unknown, decommissioned or retired assets do not satisfy readiness.
+- Rack count: strictly active, non-retired Rack assets in the current tenant/Branch that have a valid MDF/IDF parent under the current transitional model. Active legacy Racks with an incomplete relationship are reported as unresolved; inactive, maintenance, unknown, decommissioned and retired Racks are excluded rather than classified as unresolved.
 - All counts are computed in the same request `TenantTx` and are returned as one consistent snapshot.
 
 ## 26. Wizard State Machine and Gates
@@ -844,7 +844,7 @@ No files are created or modified by this plan. Probable future touch points are 
 
 ### Implemented contract
 
-Phase 1 implements `GET /api/dcim/readiness` under `RequireTenantTx` and derives every count from the authenticated Tenant and active Branch in the request transaction. The frontend consumes that read model through a typed hook; successful Branch, Site, Internal Area and MDF/IDF mutations invalidate and refetch it. No completion state or wizard progress is persisted in the browser or database. Rack readiness remains optional and conservative: inconsistent legacy relationships are reported but never inferred or repaired.
+Phase 1 implements `GET /api/dcim/readiness` under `RequireTenantTx` and derives every count from the authenticated Tenant and active Branch in the request transaction. The frontend consumes that read model through a typed hook; a Branch change invalidates the prior payload immediately, and a request identity prevents a late response from replacing the current Branch. Successful Branch, Site, Internal Area and MDF/IDF mutations invalidate and refetch readiness. No completion state or wizard progress is persisted in the browser or database. Rack readiness remains optional and conservative: inconsistent active legacy relationships are reported but never inferred or repaired, while inactive assets are excluded. The Rack CTA is intentionally labelled `Ir a Racks` because Phase 1 navigates to the existing Rack page and does not perform the deferred deep Rack refactor.
 
 ### Required behavior matrix
 

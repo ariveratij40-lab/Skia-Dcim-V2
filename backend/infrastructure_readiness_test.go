@@ -31,8 +31,11 @@ func TestBuildInfrastructureReadinessStates(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			response := buildInfrastructureReadiness("branch-1", "TJ", "Tijuana", test.counts)
-			if response.Ready != test.ready || response.Progress.RequiredComplete != test.progress || response.Progress.RequiredTotal != 4 {
+			if response.Ready != test.ready || response.Progress.RequiredComplete != test.progress || response.Progress.RequiredTotal != 4 || response.Progress.Percent != test.progress*25 {
 				t.Fatalf("ready=%v progress=%+v", response.Ready, response.Progress)
+			}
+			if readinessStep(t, response, "rack").Required {
+				t.Fatal("Rack changed the required baseline")
 			}
 			for key, want := range test.want {
 				if got := readinessStep(t, response, key).Status; got != want {

@@ -145,17 +145,20 @@ func handleInfrastructureReadiness(w http.ResponseWriter, r *http.Request) {
 			JOIN mdf_idf m ON m.asset_id=a.id AND m.tenant_id=a.tenant_id AND m.branch_id=a.branch_id AND m.type=at.code
 			JOIN locations l ON l.id=a.location_id AND l.asset_id=a.id AND l.tenant_id=a.tenant_id AND l.branch_id=a.branch_id
 			JOIN valid_areas va ON va.id=l.internal_area_id
-			WHERE a.tenant_id=$1 AND a.branch_id=$2 AND a.status <> 'decommissioned'
+			WHERE a.tenant_id=$1 AND a.branch_id=$2 AND a.status='active'
+			  AND a.inventory_status IS DISTINCT FROM 'retired'
 			  AND l.status='active' AND l.placement_type=at.code
 		), valid_racks AS (
 			SELECT DISTINCT rk.id
 			FROM racks rk
 			JOIN assets ra ON ra.id=rk.asset_id AND ra.tenant_id=rk.tenant_id AND ra.branch_id=rk.branch_id
 			JOIN valid_distribution vd ON vd.satellite_id=rk.mdf_idf_id AND vd.placement_id=ra.location_id
-			WHERE rk.tenant_id=$1 AND rk.branch_id=$2 AND ra.status <> 'decommissioned'
+			WHERE rk.tenant_id=$1 AND rk.branch_id=$2 AND ra.status='active'
+			  AND ra.inventory_status IS DISTINCT FROM 'retired'
 		), all_racks AS (
 			SELECT rk.id FROM racks rk JOIN assets ra ON ra.id=rk.asset_id
-			WHERE rk.tenant_id=$1 AND rk.branch_id=$2 AND ra.tenant_id=$1 AND ra.branch_id=$2 AND ra.status <> 'decommissioned'
+			WHERE rk.tenant_id=$1 AND rk.branch_id=$2 AND ra.tenant_id=$1 AND ra.branch_id=$2
+			  AND ra.status='active' AND ra.inventory_status IS DISTINCT FROM 'retired'
 		)
 		SELECT (SELECT count(*) FROM valid_sites),
 		       (SELECT count(*) FROM valid_areas),
@@ -170,5 +173,7 @@ func handleInfrastructureReadiness(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = json.NewEncoder(w).Encode(buildInfrastructureReadiness(branchID, branchCode, branchName, counts))
+	if err := json.NewEncoder(w).Encode(buildInfrastructureReadiness(branchID, branchCode, branchName, counts)); err != nil {
+		log.Printf("infrastructure readiness: encode response: %v", err)
+	}
 }

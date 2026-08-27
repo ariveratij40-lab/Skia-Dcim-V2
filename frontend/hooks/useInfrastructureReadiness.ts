@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import axios from 'axios';
+import { beginReadinessRequest, rejectReadinessRequest, resolveReadinessRequest, type ReadinessRequestState } from './infrastructureReadinessState';
 
 export type ReadinessStatus = 'complete' | 'pending' | 'blocked' | 'available' | 'optional';
 export type ReadinessActionTarget = 'site_create' | 'internal_area_create' | 'mdf_idf_create' | 'rack_create';
@@ -24,34 +25,25 @@ export interface InfrastructureReadiness {
 
 export default function useInfrastructureReadiness(enabled = true) {
   const router = useRouter();
-  const [data, setData] = useState<InfrastructureReadiness | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<ReadinessRequestState<InfrastructureReadiness>>({ data: null, loading: false, error: null, requestID: 0 });
   const requestVersion = useRef(0);
 
   const refetch = useCallback(async () => {
     if (!enabled) return null;
     const version = ++requestVersion.current;
-    setLoading(true);
-    setError(null);
+    setState(previous => beginReadinessRequest(previous, version));
     try {
       const response = await axios.get<InfrastructureReadiness>('/api/dcim/readiness');
-      if (requestVersion.current === version) setData(response.data);
+      setState(previous => resolveReadinessRequest(previous, version, response.data));
       return response.data;
     } catch (requestError: any) {
-      if (requestVersion.current === version) {
-        setData(null);
-        const status = requestError?.response?.status;
-        setError(status === 409 ? 'Seleccione una sucursal para continuar.' : status === 403 ? 'No hay una sucursal autorizada disponible.' : 'No se pudo consultar la configuración de infraestructura.');
-      }
+      setState(previous => rejectReadinessRequest(previous, version, requestError?.response?.status));
       return null;
-    } finally {
-      if (requestVersion.current === version) setLoading(false);
     }
   }, [enabled]);
 
   useEffect(() => {
-    if (!enabled) { setData(null); return; }
+    if (!enabled) { setState({ data: null, loading: false, error: null, requestID: ++requestVersion.current }); return; }
     void refetch();
     const refresh = () => { void refetch(); };
     window.addEventListener('focus', refresh);
@@ -67,5 +59,5 @@ export default function useInfrastructureReadiness(enabled = true) {
     };
   }, [enabled, refetch, router.events]);
 
-  return { data, loading, error, refetch };
+  return { data: state.data, loading: state.loading, error: state.error, refetch };
 }

@@ -105,6 +105,23 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 	if got := readiness(tokenA); !got.Ready || readinessStep(t, got, "mdf_idf").Status != "complete" || readinessStep(t, got, "rack").Status != "available" {
 		t.Fatalf("MDF readiness=%+v", got)
 	}
+	for _, status := range []string{"inactive", "maintenance", "decommissioned"} {
+		if _, err = adminDB.Exec(`UPDATE assets SET status=$1 WHERE id=$2`, status, assetID); err != nil {
+			t.Fatal(err)
+		}
+		if got := readiness(tokenA); readinessStep(t, got, "mdf_idf").Count != 0 || got.Ready {
+			t.Fatalf("MDF status %s counted as active: %+v", status, got)
+		}
+	}
+	if _, err = adminDB.Exec(`UPDATE assets SET status='active',inventory_status='retired' WHERE id=$1`, assetID); err != nil {
+		t.Fatal(err)
+	}
+	if got := readiness(tokenA); readinessStep(t, got, "mdf_idf").Count != 0 || got.Ready {
+		t.Fatalf("retired MDF counted as active: %+v", got)
+	}
+	if _, err = adminDB.Exec(`UPDATE assets SET status='active',inventory_status=NULL WHERE id=$1`, assetID); err != nil {
+		t.Fatal(err)
+	}
 
 	rackReq := httptest.NewRequest(http.MethodPost, "/api/infra/mdf-idf/"+assetID+"/ensure-rack", bytes.NewBufferString(`{"total_u":42}`))
 	rackReq.AddCookie(&http.Cookie{Name: "session_token", Value: tokenA})
@@ -113,8 +130,41 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 	if rackRec.Code != http.StatusCreated {
 		t.Fatalf("rack status=%d body=%s", rackRec.Code, rackRec.Body.String())
 	}
+	var createdRack map[string]interface{}
+	if err = json.Unmarshal(rackRec.Body.Bytes(), &createdRack); err != nil {
+		t.Fatal(err)
+	}
+	rackAssetID, _ := createdRack["rack_asset_id"].(string)
+	rackID, _ := createdRack["rack_id"].(string)
+	if rackAssetID == "" || rackID == "" {
+		t.Fatalf("missing rack identity: %s", rackRec.Body.String())
+	}
 	if got := readiness(tokenA); readinessStep(t, got, "rack").Status != "complete" {
 		t.Fatalf("rack readiness=%+v", got)
+	}
+	for _, status := range []string{"inactive", "maintenance", "decommissioned"} {
+		if _, err = adminDB.Exec(`UPDATE assets SET status=$1 WHERE id=$2`, status, rackAssetID); err != nil {
+			t.Fatal(err)
+		}
+		got := readiness(tokenA)
+		if rack := readinessStep(t, got, "rack"); rack.Count != 0 || rack.UnresolvedCount != 0 || rack.Status != "available" {
+			t.Fatalf("Rack status %s counted or classified unresolved: %+v", status, rack)
+		}
+	}
+	if _, err = adminDB.Exec(`UPDATE assets SET status='active',inventory_status='retired' WHERE id=$1`, rackAssetID); err != nil {
+		t.Fatal(err)
+	}
+	if rack := readinessStep(t, readiness(tokenA), "rack"); rack.Count != 0 || rack.UnresolvedCount != 0 {
+		t.Fatalf("retired Rack counted or classified unresolved: %+v", rack)
+	}
+	if _, err = adminDB.Exec(`UPDATE assets SET status='active',inventory_status=NULL WHERE id=$1`, rackAssetID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = adminDB.Exec(`UPDATE racks SET mdf_idf_id=NULL WHERE id=$1`, rackID); err != nil {
+		t.Fatal(err)
+	}
+	if rack := readinessStep(t, readiness(tokenA), "rack"); rack.Count != 0 || rack.UnresolvedCount != 1 || rack.Status != "available" {
+		t.Fatalf("legacy Rack was not isolated as unresolved: %+v", rack)
 	}
 
 	if got := readiness(tokenA2); got.Branch.ID != branchA2 || readinessStep(t, got, "site").Count != 0 || got.Ready {
