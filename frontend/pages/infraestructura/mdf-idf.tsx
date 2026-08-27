@@ -2000,6 +2000,7 @@ function TabInventario({ data, setData, highlightCode, onRackBuilder }: { data: 
       const refreshed = await axios.get('/api/infra/mdf-idf');
       setData(Array.isArray(refreshed.data) ? refreshed.data : []);
       setShowMdfWizard(false);
+      window.dispatchEvent(new Event('skia:infrastructure-changed'));
       return response.data;
     } catch (error) {
       console.error('[handleCreate] Error al guardar MDF/IDF:', error);
@@ -2363,6 +2364,7 @@ function MdfIdfContent() {
             });
             setData(prev => [{ ...newRecord, id: resp.data.id ?? newRecord.id, code: resp.data.internal_code ?? newRecord.code }, ...prev]);
             setShowMdfWizard(false);
+            window.dispatchEvent(new Event('skia:infrastructure-changed'));
             if (typeof router.query.return_to === 'string' && window.opener) window.close();
           }}
         />

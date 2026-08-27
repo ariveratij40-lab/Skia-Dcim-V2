@@ -1,6 +1,8 @@
 import { useState, useEffect, ReactNode } from 'react';
 import GlobalSearch from './GlobalSearch';
 import AsistenteIA from './AsistenteIA';
+import InfrastructureReadinessWizard from './InfrastructureReadinessWizard';
+import useInfrastructureReadiness, { ReadinessActionTarget } from '../hooks/useInfrastructureReadiness';
 import { useRouter } from 'next/router';
 import axios from 'axios';
 import {
@@ -81,7 +83,26 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
   const [darkMode, setDarkMode] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [showAI, setShowAI] = useState(false);
+  const [showReadiness, setShowReadiness] = useState(false);
   const currentPath = router.pathname;
+  const readiness = useInfrastructureReadiness(Boolean(user));
+
+  useEffect(() => {
+    if (!readiness.data || readiness.data.ready) return;
+    const key = `skia_readiness_dismissed:${readiness.data.branch.id}`;
+    if (sessionStorage.getItem(key) !== 'true') setShowReadiness(true);
+  }, [readiness.data]);
+
+  const closeReadiness = () => {
+    if (readiness.data) sessionStorage.setItem(`skia_readiness_dismissed:${readiness.data.branch.id}`, 'true');
+    setShowReadiness(false);
+  };
+
+  const runReadinessAction = (target: ReadinessActionTarget) => {
+    setShowReadiness(false);
+    if (target === 'rack_create') void router.push('/infraestructura/racks');
+    else void router.push('/infraestructura/mdf-idf?create=MDF&from=readiness');
+  };
 
   // Verificar autenticación solo una vez al montar — no en cada cambio de ruta
   useEffect(() => {
@@ -397,6 +418,11 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
         {/* CTA Button + Footer */}
         <div style={{ padding: '10px 10px 6px', borderTop: `1px solid ${C.sidebarBorder}` }}>
           {sidebarOpen && (
+            <button onClick={() => { setShowReadiness(true); void readiness.refetch(); }} style={{ width:'100%', display:'flex', alignItems:'center', gap:7, padding:'8px 10px', marginBottom:6, borderRadius:9, border:`1px solid ${C.outline}`, background:C.surface2, color:C.text2, cursor:'pointer', fontSize:'0.76rem', fontWeight:600 }}>
+              <Building2 size={13}/> Configurar infraestructura
+            </button>
+          )}
+          {sidebarOpen && (
             <button
               onClick={() => router.push('/operaciones/tickets')}
               style={{
@@ -634,6 +660,9 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
         userName={user?.name ?? 'Usuario'}
         onClose={() => setShowAI(false)}
       />
+    )}
+    {showReadiness && (
+      <InfrastructureReadinessWizard data={readiness.data} loading={readiness.loading} error={readiness.error} darkMode={darkMode} onClose={closeReadiness} onRetry={() => { void readiness.refetch(); }} onAction={runReadinessAction}/>
     )}
     </>
   );
