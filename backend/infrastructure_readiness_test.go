@@ -22,8 +22,8 @@ func TestBuildInfrastructureReadinessStates(t *testing.T) {
 		progress int
 	}{
 		{"no site", infrastructureReadinessCounts{}, map[string]string{"branch": "complete", "site": "pending", "internal_area": "blocked", "mdf_idf": "blocked", "rack": "blocked"}, false, 1},
-		{"site", infrastructureReadinessCounts{Sites: 1}, map[string]string{"site": "complete", "internal_area": "available", "mdf_idf": "blocked", "rack": "blocked"}, false, 2},
-		{"area", infrastructureReadinessCounts{Sites: 1, InternalAreas: 1}, map[string]string{"internal_area": "complete", "mdf_idf": "available", "rack": "blocked"}, false, 3},
+		{"site", infrastructureReadinessCounts{Sites: 1}, map[string]string{"site": "complete", "internal_area": "pending", "mdf_idf": "blocked", "rack": "blocked"}, false, 2},
+		{"area", infrastructureReadinessCounts{Sites: 1, InternalAreas: 1}, map[string]string{"internal_area": "complete", "mdf_idf": "pending", "rack": "blocked"}, false, 3},
 		{"distribution", infrastructureReadinessCounts{Sites: 1, InternalAreas: 1, MdfIdf: 1}, map[string]string{"mdf_idf": "complete", "rack": "available"}, true, 4},
 		{"rack", infrastructureReadinessCounts{Sites: 1, InternalAreas: 1, MdfIdf: 1, ValidRacks: 1, TotalRacks: 1}, map[string]string{"rack": "complete"}, true, 4},
 		{"unresolved rack", infrastructureReadinessCounts{Sites: 1, InternalAreas: 1, MdfIdf: 1, TotalRacks: 1}, map[string]string{"rack": "available"}, true, 4},

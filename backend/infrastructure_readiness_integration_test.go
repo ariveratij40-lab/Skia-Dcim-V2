@@ -76,13 +76,13 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 	if _, err = adminDB.Exec(`INSERT INTO buildings(id,tenant_id,branch_id,code,name,status) VALUES($1,$2,$3,'SITE','Site','active')`, siteA, tenantA, branchA); err != nil {
 		t.Fatal(err)
 	}
-	if got := readiness(tokenA); readinessStep(t, got, "site").Status != "complete" || readinessStep(t, got, "internal_area").Status != "available" {
+	if got := readiness(tokenA); readinessStep(t, got, "site").Status != "complete" || readinessStep(t, got, "internal_area").Status != "pending" {
 		t.Fatalf("site=%+v", got)
 	}
 	if _, err = adminDB.Exec(`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,code,name,status) VALUES($1,$2,$3,$4,'AREA','Area','active')`, areaA, tenantA, branchA, siteA); err != nil {
 		t.Fatal(err)
 	}
-	if got := readiness(tokenA); readinessStep(t, got, "internal_area").Status != "complete" || readinessStep(t, got, "mdf_idf").Status != "available" {
+	if got := readiness(tokenA); readinessStep(t, got, "internal_area").Status != "complete" || readinessStep(t, got, "mdf_idf").Status != "pending" {
 		t.Fatalf("area=%+v", got)
 	}
 

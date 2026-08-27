@@ -101,6 +101,8 @@ export default function AppLayout({ children, title, breadcrumb }: AppLayoutProp
   const runReadinessAction = (target: ReadinessActionTarget) => {
     setShowReadiness(false);
     if (target === 'rack_create') void router.push('/infraestructura/racks');
+    // Site y Área se crean inline dentro de MdfIdfWizard: este es el
+    // orquestador canónico existente, no tres formularios independientes.
     else void router.push('/infraestructura/mdf-idf?create=MDF&from=readiness');
   };
 

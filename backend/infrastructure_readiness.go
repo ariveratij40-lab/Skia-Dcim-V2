@@ -67,7 +67,7 @@ func buildInfrastructureReadiness(branchID, branchCode, branchName string, count
 		area.Status, area.Message = "complete", "Existe al menos un Área interna válida."
 		area.Action = readinessAction("internal_area_create")
 	} else {
-		area.Status, area.Message = "available", "Ya puede crear un Área interna dentro del Sitio."
+		area.Status, area.Message = "pending", "Ya puede crear un Área interna dentro del Sitio."
 		area.Action = readinessAction("internal_area_create")
 	}
 	if counts.Sites == 0 || counts.InternalAreas == 0 {
@@ -76,7 +76,7 @@ func buildInfrastructureReadiness(branchID, branchCode, branchName string, count
 		mdf.Status, mdf.Message = "complete", "Existe al menos un MDF o IDF válido."
 		mdf.Action = readinessAction("mdf_idf_create")
 	} else {
-		mdf.Status, mdf.Message = "available", "Ya puede crear el primer MDF o IDF."
+		mdf.Status, mdf.Message = "pending", "Ya puede crear el primer MDF o IDF."
 		mdf.Action = readinessAction("mdf_idf_create")
 	}
 	if counts.MdfIdf == 0 {
