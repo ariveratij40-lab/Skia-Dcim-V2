@@ -3,8 +3,8 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import { beginReadinessRequest, rejectReadinessRequest, resolveReadinessRequest, type ReadinessRequestState } from './infrastructureReadinessState';
 
-export type ReadinessStatus = 'complete' | 'pending' | 'blocked' | 'available' | 'optional' | 'configured' | 'unavailable' | 'not_applicable';
-export type ReadinessActionTarget = 'site_create' | 'internal_area_create' | 'mdf_idf_create' | 'rack_create';
+export type ReadinessStatus = 'complete' | 'pending' | 'blocked' | 'available' | 'optional' | 'configured' | 'partial' | 'unavailable' | 'not_applicable';
+export type ReadinessActionTarget = 'site_create' | 'internal_area_create' | 'mdf_create' | 'idf_create' | 'nomenclature_configure' | 'rack_create';
 
 export interface InfrastructureReadinessStep {
   key: 'branch' | 'site' | 'internal_area' | 'nomenclature' | 'mdf_idf' | 'rack';
@@ -13,10 +13,11 @@ export interface InfrastructureReadinessStep {
   required: boolean;
   message: string;
   action: { kind: 'open'; target: ReadinessActionTarget } | null;
+  actions?: { kind: 'open'; target: ReadinessActionTarget }[];
   unresolved_count?: number;
-  example?: string;
-  configured_asset_types?: string[];
-  unavailable_asset_types?: string[];
+  configured_count?: number;
+  total_count?: number;
+  asset_types?: { asset_type_code: 'MDF' | 'IDF'; status: 'configured' | 'unavailable'; example: string | null }[];
 }
 
 export interface InfrastructureReadiness {

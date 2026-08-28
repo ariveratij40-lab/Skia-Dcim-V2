@@ -13,6 +13,33 @@ import (
 	"github.com/google/uuid"
 )
 
+func readinessAssetType(t *testing.T, step InfrastructureReadinessStep, code string) InfrastructureReadinessAssetType {
+	t.Helper()
+	for _, assetType := range step.AssetTypes {
+		if assetType.AssetTypeCode == code {
+			return assetType
+		}
+	}
+	t.Fatalf("missing readiness asset type %s", code)
+	return InfrastructureReadinessAssetType{}
+}
+
+func readinessDBSnapshot(t *testing.T, db *sql.DB) [3]string {
+	t.Helper()
+	queries := []string{
+		`SELECT COALESCE(json_agg(t ORDER BY id)::text,'[]') FROM (SELECT * FROM naming_rules) t`,
+		`SELECT COALESCE(json_agg(t ORDER BY nomenclature_id,branch_id)::text,'[]') FROM (SELECT * FROM nomenclature_branch_counters) t`,
+		`SELECT COALESCE(json_agg(t ORDER BY nomenclature_id,branch_id,placement_id)::text,'[]') FROM (SELECT * FROM nomenclature_counters) t`,
+	}
+	var snapshot [3]string
+	for index, query := range queries {
+		if err := db.QueryRow(query).Scan(&snapshot[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return snapshot
+}
+
 func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 	adminDSN := os.Getenv("ASSET_NOMENCLATURE_TEST_DATABASE_URL")
 	runtimeDSN := os.Getenv("ASSET_NOMENCLATURE_RUNTIME_TEST_DATABASE_URL")
@@ -54,6 +81,7 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 		}
 	}
 	defer adminDB.Exec(`DELETE FROM tenants WHERE id IN ($1,$2)`, tenantA, tenantB)
+	beforeReadiness := readinessDBSnapshot(t, adminDB)
 
 	readiness := func(token string) InfrastructureReadinessResponse {
 		t.Helper()
@@ -73,16 +101,31 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 	if got := readiness(tokenA); readinessStep(t, got, "site").Status != "pending" || readinessStep(t, got, "internal_area").Status != "blocked" {
 		t.Fatalf("empty=%+v", got)
 	}
-	if nomenclature := readinessStep(t, readiness(tokenA), "nomenclature"); nomenclature.Status != "configured" || nomenclature.Required || nomenclature.Example != "MDF-A1-[SITIO]-[AREA]-###" {
+	if afterReadiness := readinessDBSnapshot(t, adminDB); afterReadiness != beforeReadiness {
+		t.Fatalf("READINESS_DB_SIDE_EFFECTS changed before=%q after=%q", beforeReadiness, afterReadiness)
+	}
+	if nomenclature := readinessStep(t, readiness(tokenA), "nomenclature"); nomenclature.Status != "configured" || nomenclature.Required || *nomenclature.ConfiguredCount != 2 || *readinessAssetType(t, nomenclature, "MDF").Example != "MDF-A1-[SITIO]-[AREA]-###" {
 		t.Fatalf("configured nomenclature=%+v", nomenclature)
 	}
 	if _, err = adminDB.Exec(`UPDATE naming_rules SET active=false WHERE id=$1`, idfRule); err != nil {
 		t.Fatal(err)
 	}
-	if nomenclature := readinessStep(t, readiness(tokenA), "nomenclature"); nomenclature.Status != "unavailable" || len(nomenclature.UnavailableTypes) != 1 || nomenclature.UnavailableTypes[0] != "IDF" {
-		t.Fatalf("partial nomenclature did not fail closed: %+v", nomenclature)
+	if got := readiness(tokenA); readinessStep(t, got, "nomenclature").Status != "partial" || readinessAssetType(t, readinessStep(t, got, "nomenclature"), "IDF").Status != "unavailable" {
+		t.Fatalf("MDF-only nomenclature/actions incorrect: %+v", got)
 	}
-	if _, err = adminDB.Exec(`UPDATE naming_rules SET active=true WHERE id=$1`, idfRule); err != nil {
+	if _, err = adminDB.Exec(`UPDATE naming_rules SET active=(id=$1) WHERE id IN ($1,$2)`, idfRule, mdfRule); err != nil {
+		t.Fatal(err)
+	}
+	if got := readiness(tokenA); readinessStep(t, got, "nomenclature").Status != "partial" || readinessAssetType(t, readinessStep(t, got, "nomenclature"), "MDF").Status != "unavailable" {
+		t.Fatalf("IDF-only nomenclature/actions incorrect: %+v", got)
+	}
+	if _, err = adminDB.Exec(`UPDATE naming_rules SET active=false WHERE id IN ($1,$2)`, idfRule, mdfRule); err != nil {
+		t.Fatal(err)
+	}
+	if got := readiness(tokenA); readinessStep(t, got, "nomenclature").Status != "unavailable" || len(readinessStep(t, got, "mdf_idf").Actions) != 0 {
+		t.Fatalf("missing nomenclature/actions incorrect: %+v", got)
+	}
+	if _, err = adminDB.Exec(`UPDATE naming_rules SET active=true WHERE id IN ($1,$2)`, idfRule, mdfRule); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = adminDB.Exec(`INSERT INTO buildings(id,tenant_id,branch_id,code,name,status) VALUES($1,$2,$3,'SITE','Site','active')`, siteA, tenantA, branchA); err != nil {
@@ -181,12 +224,12 @@ func TestInfrastructureReadinessPostgreSQL16IsolationAndRefresh(t *testing.T) {
 
 	if got := readiness(tokenA2); got.Branch.ID != branchA2 || readinessStep(t, got, "site").Count != 0 || got.Ready {
 		t.Fatalf("cross branch leaked: %+v", got)
-	} else if nomenclature := readinessStep(t, got, "nomenclature"); nomenclature.Status != "configured" || nomenclature.Example != "MDF-A2-[SITIO]-[AREA]-###" {
+	} else if nomenclature := readinessStep(t, got, "nomenclature"); nomenclature.Status != "configured" || *readinessAssetType(t, nomenclature, "MDF").Example != "MDF-A2-[SITIO]-[AREA]-###" {
 		t.Fatalf("cross branch nomenclature leaked: %+v", nomenclature)
 	}
 	if got := readiness(tokenB); got.Branch.ID != branchB || readinessStep(t, got, "site").Count != 0 || got.Ready {
 		t.Fatalf("cross tenant leaked: %+v", got)
-	} else if nomenclature := readinessStep(t, got, "nomenclature"); nomenclature.Status != "unavailable" || len(nomenclature.ConfiguredTypes) != 0 {
+	} else if nomenclature := readinessStep(t, got, "nomenclature"); nomenclature.Status != "unavailable" || *nomenclature.ConfiguredCount != 0 {
 		t.Fatalf("cross tenant nomenclature leaked: %+v", nomenclature)
 	}
 

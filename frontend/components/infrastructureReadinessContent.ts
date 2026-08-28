@@ -1,4 +1,20 @@
-import type { InfrastructureReadinessStep } from '../hooks/useInfrastructureReadiness';
+import type { InfrastructureReadinessStep, ReadinessActionTarget } from '../hooks/useInfrastructureReadiness';
+
+export const READINESS_ACTION_LABELS: Record<ReadinessActionTarget, string> = {
+  site_create: 'Crear Sitio',
+  internal_area_create: 'Crear Área',
+  mdf_create: 'Crear MDF',
+  idf_create: 'Crear IDF',
+  nomenclature_configure: 'Configurar nomenclatura',
+  rack_create: 'Ir a Racks',
+};
+
+export function readinessActionPath(target: ReadinessActionTarget): string {
+  if (target === 'rack_create') return '/infraestructura/racks';
+  if (target === 'nomenclature_configure') return '/infraestructura/catalogs/nomenclaturas?from=readiness';
+  if (target === 'idf_create') return '/infraestructura/mdf-idf?create=IDF&from=readiness';
+  return '/infraestructura/mdf-idf?create=MDF&from=readiness';
+}
 
 export interface ReadinessHelp {
   what: string;

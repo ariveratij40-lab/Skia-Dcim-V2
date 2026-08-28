@@ -14,16 +14,23 @@ type InfrastructureReadinessAction struct {
 }
 
 type InfrastructureReadinessStep struct {
-	Key              string                         `json:"key"`
-	Status           string                         `json:"status"`
-	Count            int                            `json:"count"`
-	Required         bool                           `json:"required"`
-	Message          string                         `json:"message"`
-	Action           *InfrastructureReadinessAction `json:"action"`
-	UnresolvedCount  int                            `json:"unresolved_count,omitempty"`
-	Example          string                         `json:"example,omitempty"`
-	ConfiguredTypes  []string                       `json:"configured_asset_types,omitempty"`
-	UnavailableTypes []string                       `json:"unavailable_asset_types,omitempty"`
+	Key             string                             `json:"key"`
+	Status          string                             `json:"status"`
+	Count           int                                `json:"count"`
+	Required        bool                               `json:"required"`
+	Message         string                             `json:"message"`
+	Action          *InfrastructureReadinessAction     `json:"action"`
+	Actions         []InfrastructureReadinessAction    `json:"actions,omitempty"`
+	UnresolvedCount int                                `json:"unresolved_count,omitempty"`
+	ConfiguredCount *int                               `json:"configured_count,omitempty"`
+	TotalCount      *int                               `json:"total_count,omitempty"`
+	AssetTypes      []InfrastructureReadinessAssetType `json:"asset_types,omitempty"`
+}
+
+type InfrastructureReadinessAssetType struct {
+	AssetTypeCode string  `json:"asset_type_code"`
+	Status        string  `json:"status"`
+	Example       *string `json:"example"`
 }
 
 type InfrastructureReadinessResponse struct {
@@ -55,52 +62,76 @@ func readinessAction(target string) *InfrastructureReadinessAction {
 	return &InfrastructureReadinessAction{Kind: "open", Target: target}
 }
 
+func readinessActions(targets ...string) []InfrastructureReadinessAction {
+	actions := make([]InfrastructureReadinessAction, 0, len(targets))
+	for _, target := range targets {
+		actions = append(actions, InfrastructureReadinessAction{Kind: "open", Target: target})
+	}
+	return actions
+}
+
+func buildReadinessRuleExample(branchCode string, rule readinessNamingRule) string {
+	parts := []string{rule.Prefix}
+	if rule.IncludeBranch {
+		parts = append(parts, branchCode)
+	}
+	if rule.IncludeSite {
+		parts = append(parts, "[SITIO]")
+	}
+	if rule.IncludeInternalArea {
+		parts = append(parts, "[AREA]")
+	}
+	if rule.IncludePlacement {
+		parts = append(parts, "[UBICACIÓN]")
+	}
+	if rule.CustomSegment1 != "" {
+		parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment1, " ", "")))
+	}
+	if rule.CustomSegment2 != "" {
+		parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment2, " ", "")))
+	}
+	parts = append(parts, strings.Repeat("#", rule.SeqDigits))
+	return strings.Join(parts, rule.Separator)
+}
+
 func buildNomenclatureReadiness(branchCode string, rules []readinessNamingRule) InfrastructureReadinessStep {
 	step := InfrastructureReadinessStep{Key: "nomenclature", Status: "unavailable", Required: false,
-		Message: "Falta una regla activa para MDF o IDF."}
+		Message: "Configure la nomenclatura para MDF o IDF.", Actions: readinessActions("nomenclature_configure")}
 	configured := map[string]readinessNamingRule{}
 	for _, rule := range rules {
 		configured[rule.AssetTypeCode] = rule
-		step.ConfiguredTypes = append(step.ConfiguredTypes, rule.AssetTypeCode)
 	}
+	configuredCount, totalCount := 0, 2
 	for _, assetType := range []string{"MDF", "IDF"} {
-		if _, ok := configured[assetType]; !ok {
-			step.UnavailableTypes = append(step.UnavailableTypes, assetType)
+		detail := InfrastructureReadinessAssetType{AssetTypeCode: assetType, Status: "unavailable"}
+		if rule, ok := configured[assetType]; ok {
+			example := buildReadinessRuleExample(branchCode, rule)
+			detail.Status, detail.Example = "configured", &example
+			configuredCount++
 		}
+		step.AssetTypes = append(step.AssetTypes, detail)
 	}
-	step.Count = len(step.ConfiguredTypes)
-	if len(step.UnavailableTypes) == 0 {
+	step.ConfiguredCount, step.TotalCount = &configuredCount, &totalCount
+	switch configuredCount {
+	case totalCount:
 		step.Status = "configured"
 		step.Message = "SKIA encontró reglas activas para MDF e IDF."
-	}
-	rule, ok := configured["MDF"]
-	if !ok {
-		rule, ok = configured["IDF"]
-	}
-	if ok {
-		parts := []string{rule.Prefix}
-		if rule.IncludeBranch {
-			parts = append(parts, branchCode)
-		}
-		if rule.IncludeSite {
-			parts = append(parts, "[SITIO]")
-		}
-		if rule.IncludeInternalArea {
-			parts = append(parts, "[AREA]")
-		}
-		if rule.IncludePlacement {
-			parts = append(parts, "[UBICACIÓN]")
-		}
-		if rule.CustomSegment1 != "" {
-			parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment1, " ", "")))
-		}
-		if rule.CustomSegment2 != "" {
-			parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment2, " ", "")))
-		}
-		parts = append(parts, strings.Repeat("#", rule.SeqDigits))
-		step.Example = strings.Join(parts, rule.Separator)
+		step.Actions = nil
+	case 1:
+		step.Status = "partial"
+		step.Message = "Un tipo está configurado y el otro requiere nomenclatura."
 	}
 	return step
+}
+
+func configuredNomenclatureActions(nomenclature InfrastructureReadinessStep) []InfrastructureReadinessAction {
+	targets := []string{}
+	for _, assetType := range nomenclature.AssetTypes {
+		if assetType.Status == "configured" {
+			targets = append(targets, strings.ToLower(assetType.AssetTypeCode)+"_create")
+		}
+	}
+	return readinessActions(targets...)
 }
 
 func buildInfrastructureReadiness(branchID, branchCode, branchName string, counts infrastructureReadinessCounts, nomenclature InfrastructureReadinessStep) InfrastructureReadinessResponse {
@@ -130,12 +161,19 @@ func buildInfrastructureReadiness(branchID, branchCode, branchName string, count
 	}
 	if counts.Sites == 0 || counts.InternalAreas == 0 {
 		mdf.Status, mdf.Message = "blocked", "Requiere un Sitio y un Área interna válidos."
-	} else if counts.MdfIdf > 0 {
-		mdf.Status, mdf.Message = "complete", "Existe al menos un MDF o IDF válido."
-		mdf.Action = readinessAction("mdf_idf_create")
 	} else {
-		mdf.Status, mdf.Message = "pending", "Ya puede crear el primer MDF o IDF."
-		mdf.Action = readinessAction("mdf_idf_create")
+		mdf.Actions = configuredNomenclatureActions(nomenclature)
+		if counts.MdfIdf > 0 {
+			mdf.Status, mdf.Message = "complete", "Existe al menos un MDF o IDF válido."
+		} else if len(mdf.Actions) == 0 {
+			mdf.Status, mdf.Message = "pending", "Configure primero la nomenclatura para MDF o IDF."
+		} else if len(mdf.Actions) == 2 {
+			mdf.Status, mdf.Message = "pending", "Puede crear MDF o IDF."
+		} else if mdf.Actions[0].Target == "mdf_create" {
+			mdf.Status, mdf.Message = "pending", "Puede crear MDF. IDF requiere nomenclatura."
+		} else {
+			mdf.Status, mdf.Message = "pending", "Puede crear IDF. MDF requiere nomenclatura."
+		}
 	}
 	if counts.MdfIdf == 0 {
 		rack.Status, rack.Message = "blocked", "Requiere primero un MDF o IDF válido."
