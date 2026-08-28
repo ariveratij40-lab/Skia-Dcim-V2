@@ -14,3 +14,4 @@ migrations/021_asset_placement_authority.sql
 migrations/022_physical_location_hierarchy.sql
 migrations/023_canonical_physical_model_v2_additive.sql
 migrations/024_system_naming_presets_secure_reader.sql
+migrations/025_asset_type_placement_policy_provisioning.sql
