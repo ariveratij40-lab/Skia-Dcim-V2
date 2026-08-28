@@ -14,6 +14,7 @@ import (
 )
 
 var ErrInvalidPhysicalLocation = errors.New("invalid physical location")
+var ErrPhysicalScopeMismatch = errors.New("physical placement scope mismatch")
 
 type ResolvedPhysicalLocation struct {
 	SiteID, SiteCode, SiteName string
@@ -43,6 +44,36 @@ func ResolvePhysicalLocation(ctx context.Context, tdb TenantDB, tenantID, branch
 	result.Active = siteStatus == "active" && areaStatus == "active"
 	if !result.Active {
 		return ResolvedPhysicalLocation{}, ErrInvalidPhysicalLocation
+	}
+	return result, nil
+}
+
+// ResolvePhysicalLocationForZone validates an optional compatibility
+// InternalArea against an already-authoritative canonical Zone. It never
+// infers a Zone from the InternalArea and therefore cannot turn a legacy
+// reference into V2 placement authority.
+func ResolvePhysicalLocationForZone(ctx context.Context, tdb TenantDB, scope PhysicalScope, zone CanonicalZone, siteID, areaID string) (ResolvedPhysicalLocation, error) {
+	var result ResolvedPhysicalLocation
+	if tdb == nil || !scope.valid() || strings.TrimSpace(areaID) == "" || zone.ID == "" || zone.TenantID != scope.TenantID || zone.BranchID != scope.BranchID {
+		return result, ErrPhysicalScopeMismatch
+	}
+	var siteStatus, areaStatus string
+	err := tdb.QueryRowContext(ctx, `
+		SELECT b.id,b.code,b.name,b.status,ia.id,ia.code,ia.name,ia.status
+		FROM internal_areas ia
+		JOIN buildings b ON b.id=ia.site_id AND b.tenant_id=ia.tenant_id AND b.branch_id=ia.branch_id
+		WHERE ia.id=$1 AND ia.zone_id=$2 AND ia.tenant_id=$3 AND ia.branch_id=$4
+		  AND ($5::text='' OR ia.site_id::text=$5::text)`, areaID, zone.ID, scope.TenantID, scope.BranchID, strings.TrimSpace(siteID)).
+		Scan(&result.SiteID, &result.SiteCode, &result.SiteName, &siteStatus, &result.AreaID, &result.AreaCode, &result.AreaName, &areaStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ResolvedPhysicalLocation{}, ErrPhysicalScopeMismatch
+	}
+	if err != nil {
+		return ResolvedPhysicalLocation{}, err
+	}
+	result.Active = siteStatus == "active" && areaStatus == "active"
+	if !result.Active || (zone.BuildingID != "" && result.SiteID != zone.BuildingID) {
+		return ResolvedPhysicalLocation{}, ErrPhysicalScopeMismatch
 	}
 	return result, nil
 }
