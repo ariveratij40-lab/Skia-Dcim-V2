@@ -166,6 +166,8 @@ type NomenclatureContext struct {
 	TenantID, BranchID, AssetTypeCode string
 	Placement                         *ResolvedPlacement
 	PhysicalLocation                  *ResolvedPhysicalLocation
+	CanonicalZone                     *CanonicalZone
+	ContextMode                       string
 }
 
 var ErrNomenclatureRequired = fmt.Errorf("active nomenclature is required")
@@ -570,18 +572,29 @@ func (h *DCIMHandler) generateInternalCodeWithContext(tx TenantDB, ctx Nomenclat
 	var prefix, separator string
 	var seqDigits, lastSeq int
 	var includeBranch, includePlacement, includeSite, includeInternalArea bool
+	var includeZone bool
 	var customSeg1, customSeg2 sql.NullString
-	err := tx.QueryRow(
+	query :=
 		`SELECT id, prefix, separator, seq_digits, last_seq, include_branch, include_placement,
 		        include_site, include_internal_area,
 		        COALESCE(custom_segment_1,''), COALESCE(custom_segment_2,'')
 		 FROM naming_rules
-		 WHERE tenant_id = $1 AND asset_type_code = $2 AND active = TRUE
-		 FOR UPDATE`,
-		ctx.TenantID, ctx.AssetTypeCode,
-	).Scan(&ruleID, &prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &includePlacement, &includeSite, &includeInternalArea, &customSeg1, &customSeg2)
+		 WHERE tenant_id = $1 AND asset_type_code = $2 AND active = TRUE`
+	var err error
+	if ctx.ContextMode != "" {
+		query = strings.Replace(query, "COALESCE(custom_segment_1,''), COALESCE(custom_segment_2,'')", "include_zone, COALESCE(custom_segment_1,''), COALESCE(custom_segment_2,'')", 1) + ` AND context_mode=$3 FOR UPDATE`
+		err = tx.QueryRow(query, ctx.TenantID, ctx.AssetTypeCode, ctx.ContextMode).
+			Scan(&ruleID, &prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &includePlacement, &includeSite, &includeInternalArea, &includeZone, &customSeg1, &customSeg2)
+	} else {
+		query += ` FOR UPDATE`
+		err = tx.QueryRow(query, ctx.TenantID, ctx.AssetTypeCode).
+			Scan(&ruleID, &prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &includePlacement, &includeSite, &includeInternalArea, &customSeg1, &customSeg2)
+	}
 
 	if err == sql.ErrNoRows {
+		if ctx.ContextMode == "CANONICAL_ZONE" {
+			return NomenclatureAssignment{}, ErrCanonicalZoneNamingRequired
+		}
 		return NomenclatureAssignment{}, ErrNomenclatureRequired
 	} else if err != nil {
 		return NomenclatureAssignment{}, fmt.Errorf("error leyendo naming_rule: %w", err)
@@ -634,10 +647,23 @@ func (h *DCIMHandler) generateInternalCodeWithContext(tx TenantDB, ctx Nomenclat
 		parts = append(parts, branchCode)
 	}
 	if includeSite {
-		if ctx.PhysicalLocation == nil || !ctx.PhysicalLocation.Active {
-			return NomenclatureAssignment{}, ErrInvalidPhysicalLocation
+		if ctx.ContextMode == "CANONICAL_ZONE" {
+			if ctx.CanonicalZone == nil || strings.TrimSpace(ctx.CanonicalZone.BuildingCode) == "" {
+				return NomenclatureAssignment{}, ErrZoneNotFound
+			}
+			parts = append(parts, ctx.CanonicalZone.BuildingCode)
+		} else {
+			if ctx.PhysicalLocation == nil || !ctx.PhysicalLocation.Active {
+				return NomenclatureAssignment{}, ErrInvalidPhysicalLocation
+			}
+			parts = append(parts, ctx.PhysicalLocation.SiteCode)
 		}
-		parts = append(parts, ctx.PhysicalLocation.SiteCode)
+	}
+	if includeZone {
+		if ctx.ContextMode != "CANONICAL_ZONE" || ctx.CanonicalZone == nil || strings.TrimSpace(ctx.CanonicalZone.Code) == "" {
+			return NomenclatureAssignment{}, ErrZoneNotFound
+		}
+		parts = append(parts, ctx.CanonicalZone.Code)
 	}
 	if includeInternalArea {
 		if ctx.PhysicalLocation == nil || !ctx.PhysicalLocation.Active {

@@ -12,8 +12,10 @@ import (
 )
 
 var (
-	ErrManualAssetCode = errors.New("manual asset code is not allowed")
-	ErrAssetNameNeeded = errors.New("descriptive asset name is required")
+	ErrManualAssetCode             = errors.New("manual asset code is not allowed")
+	ErrAssetNameNeeded             = errors.New("descriptive asset name is required")
+	ErrCanonicalZoneNamingRequired = errors.New("canonical zone naming rule is required")
+	ErrZoneRequired                = errors.New("canonical zone is required")
 )
 
 var installableAssetTypes = map[string]bool{
@@ -22,17 +24,19 @@ var installableAssetTypes = map[string]bool{
 }
 
 type managedAssetInput struct {
-	AssetTypeCode    string
-	Name             string
-	ManualCode       string
-	Status           string
-	Manufacturer     string
-	Model            string
-	SerialNumber     string
-	Observations     string
-	InstallYear      int
-	PlacementID      string
-	PhysicalLocation *ResolvedPhysicalLocation
+	AssetTypeCode     string
+	Name              string
+	ManualCode        string
+	Status            string
+	Manufacturer      string
+	Model             string
+	SerialNumber      string
+	Observations      string
+	InstallYear       int
+	PlacementID       string
+	PhysicalLocation  *ResolvedPhysicalLocation
+	CanonicalZone     *CanonicalZone
+	NamingContextMode string
 }
 
 // managedAssetReservation is state produced inside the request TenantTx.
@@ -75,7 +79,7 @@ func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, i
 			input.Status = "inactive"
 		}
 	}
-	assignment, err := (&DCIMHandler{}).generateInternalCodeWithContext(tenantTx, NomenclatureContext{TenantID: tenantID, BranchID: branchID, AssetTypeCode: input.AssetTypeCode, Placement: placement, PhysicalLocation: input.PhysicalLocation})
+	assignment, err := (&DCIMHandler{}).generateInternalCodeWithContext(tenantTx, NomenclatureContext{TenantID: tenantID, BranchID: branchID, AssetTypeCode: input.AssetTypeCode, Placement: placement, PhysicalLocation: input.PhysicalLocation, CanonicalZone: input.CanonicalZone, ContextMode: input.NamingContextMode})
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +120,18 @@ func writeManagedAssetError(w http.ResponseWriter, err error, assetTypeCode stri
 	case errors.Is(err, ErrInvalidPhysicalLocation):
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_physical_location", "message": "Seleccione un sitio y un área interna activos de la sucursal actual."})
+	case errors.Is(err, ErrZoneRequired):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "ZONE_REQUIRED", "field": "zone_id", "message": "Seleccione una Zona canónica activa de la sucursal actual."})
+	case errors.Is(err, ErrZoneNotFound):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "ZONE_NOT_AUTHORIZED", "field": "zone_id", "message": "La Zona no está disponible en la sucursal actual."})
+	case errors.Is(err, ErrPhysicalScopeMismatch):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "PLACEMENT_SCOPE_MISMATCH", "message": "Las referencias físicas no pertenecen al mismo ámbito autorizado."})
+	case errors.Is(err, ErrCanonicalZoneNamingRequired):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "NAMING_RULE_ZONE_CONTEXT_REQUIRED", "asset_type": strings.ToLower(assetTypeCode), "message": "Configure y active una nomenclatura compatible con Zona antes de crear el activo."})
 	case strings.Contains(err.Error(), "unique"):
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "asset_code_conflict", "message": "No fue posible reservar un código técnico único."})

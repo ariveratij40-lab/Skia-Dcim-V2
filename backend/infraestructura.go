@@ -165,34 +165,37 @@ func nullableUUID(s string) interface{} {
 // ─── MDF/IDF ──────────────────────────────────────────────────────────────────
 
 type MdfIdfRecord struct {
-	ID               string    `json:"id"`
-	Code             string    `json:"code"`
-	Name             string    `json:"name"`
-	Type             string    `json:"type"`
-	Building         string    `json:"building"`
-	Floor            string    `json:"floor"`
-	Zone             string    `json:"zone"`
-	Address          string    `json:"address"`
-	Status           string    `json:"status"`
-	Responsible      string    `json:"responsible"`
-	ResponsibleEmail string    `json:"responsible_email"`
-	RacksCount       int       `json:"racks_count"`
-	SwitchesCount    int       `json:"switches_count"`
-	UpsCount         int       `json:"ups_count"`
-	NodesCount       int       `json:"nodes_count"`
-	ServersCount     int       `json:"servers_count"`
-	CapacityU        int       `json:"capacity_u"`
-	UsedU            int       `json:"used_u"`
-	Cooling          string    `json:"cooling"`
-	PowerKva         float64   `json:"power_kva"`
-	DocumentationPct int       `json:"documentation_pct"`
-	Certified        bool      `json:"certified"`
-	FloorPlanRef     string    `json:"floor_plan_ref"`
-	PhotoURL         string    `json:"photo_url"`
-	RefImageURL      string    `json:"ref_image_url"`
-	Observations     string    `json:"observations"`
-	Tags             []string  `json:"tags"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	Code               string    `json:"code"`
+	Name               string    `json:"name"`
+	Type               string    `json:"type"`
+	Building           string    `json:"building"`
+	Floor              string    `json:"floor"`
+	Zone               string    `json:"zone"`
+	ZoneID             string    `json:"zone_id"`
+	InternalAreaID     string    `json:"internal_area_id"`
+	PlacementAuthority string    `json:"placement_authority"`
+	Address            string    `json:"address"`
+	Status             string    `json:"status"`
+	Responsible        string    `json:"responsible"`
+	ResponsibleEmail   string    `json:"responsible_email"`
+	RacksCount         int       `json:"racks_count"`
+	SwitchesCount      int       `json:"switches_count"`
+	UpsCount           int       `json:"ups_count"`
+	NodesCount         int       `json:"nodes_count"`
+	ServersCount       int       `json:"servers_count"`
+	CapacityU          int       `json:"capacity_u"`
+	UsedU              int       `json:"used_u"`
+	Cooling            string    `json:"cooling"`
+	PowerKva           float64   `json:"power_kva"`
+	DocumentationPct   int       `json:"documentation_pct"`
+	Certified          bool      `json:"certified"`
+	FloorPlanRef       string    `json:"floor_plan_ref"`
+	PhotoURL           string    `json:"photo_url"`
+	RefImageURL        string    `json:"ref_image_url"`
+	Observations       string    `json:"observations"`
+	Tags               []string  `json:"tags"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 // handleMdfIdfCheck — GET /api/infra/mdf-idf/check?code=X&name=Y
@@ -252,7 +255,10 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 		rows, err := tenantTx.Query(`
 				SELECT a.id, a.internal_code, COALESCE(a.name, a.internal_code),
 					COALESCE(m.type,'MDF'),
-					COALESCE(b.name,''), COALESCE(f.name,''), COALESCE(ia.name,''), COALESCE(b.address,''),
+					COALESCE(zb.name,b.name,''), COALESCE(zf.name,f.name,''), COALESCE(z.name,ia.name,''),
+					COALESCE(l.zone_id::text,''), COALESCE(l.internal_area_id::text,''),
+					CASE WHEN l.zone_id IS NOT NULL THEN 'CANONICAL_ZONE' ELSE 'LEGACY_INTERNAL_AREA' END,
+					COALESCE(zb.address,b.address,''),
 					COALESCE(a.status,'active'),
 					(SELECT COUNT(*) FROM racks rk WHERE rk.mdf_idf_id = m.id) AS real_rack_count,
 					COALESCE(m.switch_count,0), COALESCE(m.ups_count,0),
@@ -264,6 +270,9 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 				LEFT JOIN internal_areas ia ON ia.id=l.internal_area_id AND ia.tenant_id=l.tenant_id AND ia.branch_id=l.branch_id
 				LEFT JOIN buildings b ON b.id=ia.site_id AND b.tenant_id=ia.tenant_id AND b.branch_id=ia.branch_id
 				LEFT JOIN floors f ON f.id=ia.floor_id AND f.tenant_id=ia.tenant_id AND f.building_id=ia.site_id
+				LEFT JOIN zones z ON z.id=l.zone_id AND z.tenant_id=l.tenant_id AND z.branch_id=l.branch_id
+				LEFT JOIN buildings zb ON zb.id=z.building_id AND zb.tenant_id=z.tenant_id AND zb.branch_id=z.branch_id
+				LEFT JOIN floors zf ON zf.id=z.floor_id AND zf.tenant_id=z.tenant_id AND zf.building_id=z.building_id
 				WHERE m.tenant_id = $1 AND m.branch_id = $2
 				ORDER BY a.created_at DESC`, tenantID, branchID)
 		if err != nil {
@@ -276,7 +285,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var rec MdfIdfRecord
 			if err = rows.Scan(&rec.ID, &rec.Code, &rec.Name, &rec.Type,
-				&rec.Building, &rec.Floor, &rec.Zone, &rec.Address,
+				&rec.Building, &rec.Floor, &rec.Zone, &rec.ZoneID, &rec.InternalAreaID, &rec.PlacementAuthority, &rec.Address,
 				&rec.Status,
 				&rec.RacksCount, &rec.SwitchesCount, &rec.UpsCount,
 				&rec.Observations, &rec.CreatedAt,
@@ -300,6 +309,8 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
+			TenantID         string  `json:"tenant_id"`
+			BranchID         string  `json:"branch_id"`
 			Code             string  `json:"code"`
 			InternalCode     string  `json:"internal_code"` // alias enviado por el wizard
 			SiteType         string  `json:"site_type"`     // alias enviado por el wizard
@@ -310,6 +321,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			Zone             string  `json:"zone"`
 			SiteID           string  `json:"site_id"`
 			InternalAreaID   string  `json:"internal_area_id"`
+			ZoneID           string  `json:"zone_id"`
 			Address          string  `json:"address"`
 			Status           string  `json:"status"`
 			Responsible      string  `json:"responsible"`
@@ -323,6 +335,14 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
+		if strings.TrimSpace(req.TenantID) != "" && req.TenantID != tenantID {
+			jsonResp(w, http.StatusForbidden, map[string]string{"error": "tenant_scope_mismatch"})
+			return
+		}
+		if strings.TrimSpace(req.BranchID) != "" && req.BranchID != branchID {
+			jsonResp(w, http.StatusForbidden, map[string]string{"error": "branch_scope_mismatch"})
+			return
+		}
 		if req.Type == "" && req.SiteType != "" {
 			req.Type = req.SiteType
 		}
@@ -330,23 +350,57 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			req.Status = "active"
 		}
 		// Determinar el tipo MDF o IDF
-		mdfType := req.Type
+		mdfType := strings.ToUpper(strings.TrimSpace(req.Type))
 		if mdfType != "MDF" && mdfType != "IDF" {
-			mdfType = "MDF"
+			jsonResp(w, http.StatusUnprocessableEntity, map[string]string{"error": "invalid_distribution_type", "message": "type debe ser MDF o IDF."})
+			return
 		}
-		physicalLocation, err := ResolvePhysicalLocation(r.Context(), tenantTx, tenantID, branchID, strings.TrimSpace(req.SiteID), strings.TrimSpace(req.InternalAreaID))
-		if err != nil {
-			writeManagedAssetError(w, ErrInvalidPhysicalLocation, mdfType)
+		scope := PhysicalScope{TenantID: tenantID, BranchID: branchID}
+		zoneID, areaID, siteID := strings.TrimSpace(req.ZoneID), strings.TrimSpace(req.InternalAreaID), strings.TrimSpace(req.SiteID)
+		var physicalLocation *ResolvedPhysicalLocation
+		var canonicalZone *CanonicalZone
+		var namingContextMode string
+		if zoneID != "" {
+			zone, err := ResolveCanonicalZone(r.Context(), tenantTx, scope, zoneID)
+			if err != nil {
+				writeManagedAssetError(w, err, mdfType)
+				return
+			}
+			if siteID != "" && zone.BuildingID != siteID {
+				writeManagedAssetError(w, ErrPhysicalScopeMismatch, mdfType)
+				return
+			}
+			canonicalZone = &zone
+			namingContextMode = "CANONICAL_ZONE"
+			if areaID != "" {
+				resolved, resolveErr := ResolvePhysicalLocationForZone(r.Context(), tenantTx, scope, zone, siteID, areaID)
+				if resolveErr != nil {
+					writeManagedAssetError(w, resolveErr, mdfType)
+					return
+				}
+				physicalLocation = &resolved
+			}
+		} else if areaID != "" {
+			resolved, err := ResolvePhysicalLocation(r.Context(), tenantTx, tenantID, branchID, siteID, areaID)
+			if err != nil {
+				writeManagedAssetError(w, ErrInvalidPhysicalLocation, mdfType)
+				return
+			}
+			physicalLocation = &resolved
+			namingContextMode = "LEGACY_INTERNAL_AREA"
+		} else {
+			writeManagedAssetError(w, ErrZoneRequired, mdfType)
 			return
 		}
 		placementID := generateID()
-		if _, err = tenantTx.Exec(`INSERT INTO locations(id,tenant_id,branch_id,placement_type,name,status,internal_area_id) VALUES($1,$2,$3,$4,$5,'active',$6)`, placementID, tenantID, branchID, mdfType, req.Name, physicalLocation.AreaID); err != nil {
+		if _, err := tenantTx.Exec(`INSERT INTO locations(id,tenant_id,branch_id,placement_type,name,status,zone_id,internal_area_id) VALUES($1,$2,$3,$4,$5,'active',NULLIF($6,'')::uuid,NULLIF($7,'')::uuid)`, placementID, tenantID, branchID, mdfType, req.Name, zoneID, areaID); err != nil {
 			writeManagedAssetError(w, err, mdfType)
 			return
 		}
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: mdfType, Name: req.Name, ManualCode: req.Code + req.InternalCode,
-			Status: req.Status, Observations: req.Observations, PlacementID: placementID, PhysicalLocation: &physicalLocation,
+			Status: req.Status, Observations: req.Observations, PlacementID: placementID,
+			PhysicalLocation: physicalLocation, CanonicalZone: canonicalZone, NamingContextMode: namingContextMode,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, mdfType)
