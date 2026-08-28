@@ -19,7 +19,7 @@ BEGIN
   SELECT string_agg(name, ', ') INTO missing
   FROM (VALUES ('buildings'),('floors'),('zones'),('technical_rooms'),('internal_areas'),
     ('locations'),('mdf_idf'),('naming_rules'),('nomenclature_counters'),
-    ('nomenclature_branch_counters')) v(name)
+    ('nomenclature_branch_counters'),('system_naming_presets')) v(name)
   WHERE to_regclass('public.' || name) IS NULL;
   IF missing IS NOT NULL THEN RAISE EXCEPTION 'missing physical-model tables: %', missing; END IF;
 END $$;

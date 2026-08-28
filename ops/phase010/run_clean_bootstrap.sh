@@ -48,3 +48,4 @@ SQL
 done < "$manifest"
 
 psql "$PHASE010_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$repo_root/ops/phase010/validate_bootstrap.sql"
+psql "$PHASE010_DATABASE_URL" -X -v ON_ERROR_STOP=1 -f "$repo_root/ops/phase010/validate_physical_model_v2.sql"
