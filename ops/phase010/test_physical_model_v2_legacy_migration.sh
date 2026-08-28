@@ -22,7 +22,7 @@ docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 
   < "$repo_root/ops/phase011/provision_database_roles.sql" >/dev/null
 
 # Reproduce the canonical checksum ledger through 022. The canonical runner
-# below then discovers these entries and applies 023/024 from the manifest.
+# below then discovers these entries and applies 023/024/025 from the manifest.
 while IFS= read -r relative_path; do
   [[ -n "$relative_path" ]] || continue
   [[ "$relative_path" != "migrations/023_canonical_physical_model_v2_additive.sql" ]] || break
@@ -78,7 +78,7 @@ fi
 ledger="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SELECT count(*) FROM production_bootstrap_migrations')"
 version="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc "SELECT current_setting('server_version')")"
 grants="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc "SELECT count(*) FROM information_schema.role_table_grants WHERE grantee='skia_runtime' AND table_schema='public' AND table_name='system_naming_presets'")"
-[[ "$ledger" == 16 ]]
+[[ "$ledger" == 17 ]]
 [[ "$version" == 16.14* ]]
 [[ "$grants" == 0 ]]
 if docker exec -e PGPASSWORD="$password" "$container" \
