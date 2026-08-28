@@ -50,13 +50,15 @@ type runtimeRoleState struct {
 	MissingRequiredGrants  bool
 	UnexpectedTableGrants  bool
 	UnsafeProtectedGrants  bool
+	MissingPresetReader    bool
+	DirectPresetTableGrant bool
 }
 
 func validateRuntimeRoleState(state runtimeRoleState) error {
 	if state.RoleName != "skia_runtime" {
 		return fmt.Errorf("runtime database identity must be skia_runtime, got %q", state.RoleName)
 	}
-	if state.Superuser || state.CreateDB || state.CreateRole || state.BypassRLS || state.OwnsProtectedTables || state.InheritsPrivilegedRole || state.MissingRequiredGrants || state.UnexpectedTableGrants || state.UnsafeProtectedGrants {
+	if state.Superuser || state.CreateDB || state.CreateRole || state.BypassRLS || state.OwnsProtectedTables || state.InheritsPrivilegedRole || state.MissingRequiredGrants || state.UnexpectedTableGrants || state.UnsafeProtectedGrants || state.MissingPresetReader || state.DirectPresetTableGrant {
 		return fmt.Errorf("runtime role %q does not satisfy restricted-role requirements", state.RoleName)
 	}
 	return nil
@@ -110,7 +112,9 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 		       EXISTS (SELECT * FROM actual EXCEPT SELECT * FROM required),
 		       NOT (SELECT bool_and(c.relrowsecurity AND c.relforcerowsecurity)
 		            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-		            WHERE n.nspname='public' AND c.relname IN ('assets','asset_logs','asset_relationships'))
+		            WHERE n.nspname='public' AND c.relname IN ('assets','asset_logs','asset_relationships')),
+		       NOT has_function_privilege(current_user,'public.read_active_system_naming_presets(text[])','EXECUTE'),
+		       has_table_privilege(current_user,'public.system_naming_presets','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
 		FROM pg_roles r WHERE r.rolname=current_user`
 	var state runtimeRoleState
 	if err := database.QueryRow(query).Scan(
@@ -124,6 +128,8 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 		&state.MissingRequiredGrants,
 		&state.UnexpectedTableGrants,
 		&state.UnsafeProtectedGrants,
+		&state.MissingPresetReader,
+		&state.DirectPresetTableGrant,
 	); err != nil {
 		return fmt.Errorf("cannot inspect runtime role: %w", err)
 	}

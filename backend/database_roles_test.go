@@ -21,6 +21,8 @@ func TestValidateRuntimeRoleState(t *testing.T) {
 		{RoleName: "skia_runtime", MissingRequiredGrants: true},
 		{RoleName: "skia_runtime", UnexpectedTableGrants: true},
 		{RoleName: "skia_runtime", UnsafeProtectedGrants: true},
+		{RoleName: "skia_runtime", MissingPresetReader: true},
+		{RoleName: "skia_runtime", DirectPresetTableGrant: true},
 	}
 	for _, state := range cases {
 		if err := validateRuntimeRoleState(state); err == nil {

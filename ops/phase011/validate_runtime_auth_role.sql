@@ -67,6 +67,20 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'skia_runtime must not have sequence privileges';
   END IF;
+  IF has_table_privilege('skia_runtime','public.system_naming_presets','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN
+    RAISE EXCEPTION 'skia_runtime must not have direct preset table privileges';
+  END IF;
+  IF NOT has_function_privilege('skia_runtime','public.read_active_system_naming_presets(text[])','EXECUTE') THEN
+    RAISE EXCEPTION 'skia_runtime secure preset reader EXECUTE is missing';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.routine_privileges
+    WHERE grantee='skia_runtime' AND specific_schema='public'
+      AND routine_name NOT IN ('assets_count_in_location_all_branches','read_active_system_naming_presets')
+  ) THEN
+    RAISE EXCEPTION 'skia_runtime has unexpected routine privileges';
+  END IF;
 END $$;
 
 SELECT 'RUNTIME_AUTH_ROLE_VALIDATION=APPROVED' AS result;
