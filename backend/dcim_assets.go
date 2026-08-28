@@ -104,10 +104,15 @@ type TechnicalData struct {
 }
 
 type CreateAssetRequest struct {
+	TenantID        string         `json:"tenant_id"`
+	BranchID        string         `json:"branch_id"`
 	AssetTypeID     string         `json:"asset_type_id"`
 	InternalCode    string         `json:"internal_code"`
 	LocationID      *string        `json:"location_id"`
 	TechnicalRoomID *string        `json:"technical_room_id"`
+	ZoneID          string         `json:"zone_id"`
+	SiteID          string         `json:"site_id"`
+	InternalAreaID  string         `json:"internal_area_id"`
 	Name            string         `json:"name"`
 	SerialNumber    *string        `json:"serial_number"`
 	Model           *string        `json:"model"`
@@ -244,13 +249,12 @@ func (h *DCIMHandler) HandleAssets(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		// C-6: listAssets solo lee el TenantDB del contexto que este
-		// middleware inyecta -- no usa h.DB directamente. createAsset
-		// (POST) NO se envuelve aquí porque ya abre su propia transacción
-		// vía BeginTenantTx (INV-DCM-0013); envolverlo también abriría una
-		// segunda transacción anidada e innecesaria.
+		// middleware inyecta -- no usa h.DB directamente.
 		RequireTenantTx(h.DB, h.listAssets)(w, r)
 	case http.MethodPost:
-		h.createAsset(w, r)
+		// B2: el POST completo comparte una única transacción tenant-scoped;
+		// createAsset no abre ni finaliza una transacción independiente.
+		RequireTenantTx(h.DB, h.createAsset)(w, r)
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
@@ -890,16 +894,11 @@ func (h *DCIMHandler) getAsset(w http.ResponseWriter, r *http.Request, assetID s
 // INV-DCM-0015: internal_code generado por el backend, nunca por el frontend.
 // ==========================================
 func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
-	userID, tenantID, branchID, err := h.getSessionContext(r)
-	if err != nil {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+	tx, txOK := TenantDBFromContext(r.Context())
+	userID, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !txOK || !identityOK || userID == "" || tenantID == "" || branchID == "" {
+		http.Error(w, `{"error":"missing tenant context"}`, http.StatusInternalServerError)
 		return
-	}
-	if branchID == "" {
-		if qerr := h.DB.QueryRow(`SELECT id FROM branches WHERE tenant_id = $1 ORDER BY created_at LIMIT 1`, tenantID).Scan(&branchID); qerr != nil {
-			http.Error(w, `{"error":"branch context is required"}`, http.StatusBadRequest)
-			return
-		}
 	}
 
 	var req CreateAssetRequest
@@ -913,6 +912,14 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"name and asset_type_id are required"}`, http.StatusBadRequest)
 		return
 	}
+	if strings.TrimSpace(req.TenantID) != "" && req.TenantID != tenantID {
+		jsonResp(w, http.StatusForbidden, map[string]string{"error": "tenant_scope_mismatch"})
+		return
+	}
+	if strings.TrimSpace(req.BranchID) != "" && req.BranchID != branchID {
+		jsonResp(w, http.StatusForbidden, map[string]string{"error": "branch_scope_mismatch"})
+		return
+	}
 	if strings.TrimSpace(req.InternalCode) != "" {
 		writeManagedAssetError(w, ErrManualAssetCode, "")
 		return
@@ -923,23 +930,37 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 
 	// Obtener el código del tipo de activo para el motor de nomenclaturas
 	var assetTypeCode string
-	err = h.DB.QueryRow(`SELECT code FROM asset_types WHERE id = $1`, req.AssetTypeID).Scan(&assetTypeCode)
+	err := tx.QueryRowContext(r.Context(), `SELECT code FROM asset_types WHERE id = $1`, req.AssetTypeID).Scan(&assetTypeCode)
 	if err != nil {
 		http.Error(w, `{"error":"asset_type_id not found"}`, http.StatusBadRequest)
 		return
 	}
-
-	// ─── INICIO DE TRANSACCIÓN POLIMÓRFICA (INV-DCM-0013) ───────────────────────
-	tx, err := BeginTenantTx(r.Context(), h.DB, tenantID, branchID)
-	if err != nil {
-		http.Error(w, `{"error":"could not begin transaction"}`, http.StatusInternalServerError)
+	if assetTypeCode == "MDF" || assetTypeCode == "IDF" {
+		if strings.TrimSpace(req.ZoneID) == "" || req.LocationID != nil || req.TechnicalRoomID != nil {
+			writeManagedAssetError(w, ErrZoneRequired, assetTypeCode)
+			return
+		}
+		observations := ""
+		if req.Observations != nil {
+			observations = *req.Observations
+		}
+		result, createErr := createMdfIdf(r.Context(), tx, userID, tenantID, branchID, mdfIdfCreateInput{
+			TenantAssertion: req.TenantID, BranchAssertion: req.BranchID,
+			Name: req.Name, Type: assetTypeCode, ManualCode: req.InternalCode,
+			Status: req.Status, SiteID: req.SiteID, InternalAreaID: req.InternalAreaID,
+			ZoneID: req.ZoneID, Observations: observations,
+		})
+		if createErr != nil {
+			writeManagedAssetError(w, createErr, assetTypeCode)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"id": result.Managed.AssetID, "internal_code": result.Managed.Assignment.Code,
+			"nomenclature_id": result.Managed.Assignment.ID, "status": "created", "satellite_id": result.MdfID,
+		})
 		return
 	}
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		}
-	}()
 
 	// Los tipos instalables resuelven placement dentro de esta misma TenantTx.
 	// location_id es únicamente la referencia; el cliente nunca aporta código o tipo.
@@ -1122,35 +1143,6 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 			satID, newID, tenantID, branchID, portCount, portType, rackID, rackUnit,
 		)
 
-	case "MDF", "IDF":
-		mdfType := assetTypeCode
-		rackCount := 0
-		ppCount := 0
-		swCount := 0
-		upsCount := 0
-		if td != nil {
-			if td.MDFType != nil {
-				mdfType = *td.MDFType
-			}
-			if td.RackCount != nil {
-				rackCount = *td.RackCount
-			}
-			if td.PatchPanelCount != nil {
-				ppCount = *td.PatchPanelCount
-			}
-			if td.SwitchCount != nil {
-				swCount = *td.SwitchCount
-			}
-			if td.UPSCount != nil {
-				upsCount = *td.UPSCount
-			}
-		}
-		_, err = tx.Exec(`
-			INSERT INTO mdf_idf (id, asset_id, tenant_id, branch_id, type, rack_count, patch_panel_count, switch_count, ups_count)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-			satID, newID, tenantID, branchID, mdfType, rackCount, ppCount, swCount, upsCount,
-		)
-
 	default:
 		// Tipos sin tabla satélite (NODE, BACKBONE, FIREWALL, SERVER, CCTV, AC_UNIT):
 		// solo se insertan en assets. No es un error.
@@ -1173,13 +1165,6 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 	if logErr != nil {
 		log.Printf("WARN: error registrando asset_log: %v", logErr)
 		// No es fatal — no abortamos la transacción por un log fallido
-	}
-
-	// ─── COMMIT ──────────────────────────────────────────────────────────────────
-	if err = tx.Commit(); err != nil {
-		log.Printf("ERROR committing transaction: %v", err)
-		http.Error(w, `{"error":"transaction commit failed"}`, http.StatusInternalServerError)
-		return
 	}
 
 	resp := map[string]string{

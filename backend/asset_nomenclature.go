@@ -48,6 +48,104 @@ type managedAssetReservation struct {
 	Assignment NomenclatureAssignment
 }
 
+type mdfIdfCreateInput struct {
+	TenantAssertion, BranchAssertion string
+	Name, Type, ManualCode, Status   string
+	SiteID, InternalAreaID, ZoneID   string
+	Observations                     string
+}
+
+type mdfIdfCreateResult struct {
+	Managed *managedAssetReservation
+	MdfID   string
+}
+
+var (
+	ErrTenantScopeMismatch = errors.New("tenant scope mismatch")
+	ErrBranchScopeMismatch = errors.New("branch scope mismatch")
+)
+
+// createMdfIdf owns the single MDF/IDF creation policy used by both HTTP
+// entry points. The caller supplies the request-scoped TenantDB; commit and
+// rollback remain exclusively owned by RequireTenantTx.
+func createMdfIdf(ctx context.Context, tenantTx TenantDB, userID, tenantID, branchID string, input mdfIdfCreateInput) (*mdfIdfCreateResult, error) {
+	if strings.TrimSpace(input.TenantAssertion) != "" && input.TenantAssertion != tenantID {
+		return nil, ErrTenantScopeMismatch
+	}
+	if strings.TrimSpace(input.BranchAssertion) != "" && input.BranchAssertion != branchID {
+		return nil, ErrBranchScopeMismatch
+	}
+	mdfType := strings.ToUpper(strings.TrimSpace(input.Type))
+	if mdfType != "MDF" && mdfType != "IDF" {
+		return nil, ErrInvalidDistributionType
+	}
+	if input.Status == "" {
+		input.Status = "active"
+	}
+	scope := PhysicalScope{TenantID: tenantID, BranchID: branchID}
+	zoneID, areaID, siteID := strings.TrimSpace(input.ZoneID), strings.TrimSpace(input.InternalAreaID), strings.TrimSpace(input.SiteID)
+	var physicalLocation *ResolvedPhysicalLocation
+	var canonicalZone *CanonicalZone
+	var namingContextMode string
+	if zoneID != "" {
+		zone, err := ResolveCanonicalZone(ctx, tenantTx, scope, zoneID)
+		if err != nil {
+			return nil, err
+		}
+		if siteID != "" && zone.BuildingID != siteID {
+			return nil, ErrPhysicalScopeMismatch
+		}
+		canonicalZone = &zone
+		namingContextMode = "CANONICAL_ZONE"
+		var compatibleRules int
+		if err := tenantTx.QueryRowContext(ctx, `SELECT count(*) FROM naming_rules WHERE tenant_id=$1 AND asset_type_code=$2 AND active=TRUE AND context_mode='CANONICAL_ZONE'`, tenantID, mdfType).Scan(&compatibleRules); err != nil {
+			return nil, err
+		}
+		if compatibleRules != 1 {
+			return nil, ErrCanonicalZoneNamingRequired
+		}
+		if areaID != "" {
+			resolved, err := ResolvePhysicalLocationForZone(ctx, tenantTx, scope, zone, siteID, areaID)
+			if err != nil {
+				return nil, err
+			}
+			physicalLocation = &resolved
+		}
+	} else if areaID != "" {
+		resolved, err := ResolvePhysicalLocation(ctx, tenantTx, tenantID, branchID, siteID, areaID)
+		if err != nil {
+			return nil, ErrInvalidPhysicalLocation
+		}
+		physicalLocation = &resolved
+		namingContextMode = "LEGACY_INTERNAL_AREA"
+	} else {
+		return nil, ErrZoneRequired
+	}
+	placementID := generateID()
+	if _, err := tenantTx.ExecContext(ctx, `INSERT INTO locations(id,tenant_id,branch_id,placement_type,name,status,zone_id,internal_area_id) VALUES($1,$2,$3,$4,$5,'active',NULLIF($6,'')::uuid,NULLIF($7,'')::uuid)`, placementID, tenantID, branchID, mdfType, input.Name, zoneID, areaID); err != nil {
+		return nil, err
+	}
+	managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
+		AssetTypeCode: mdfType, Name: input.Name, ManualCode: input.ManualCode,
+		Status: input.Status, Observations: input.Observations, PlacementID: placementID,
+		PhysicalLocation: physicalLocation, CanonicalZone: canonicalZone, NamingContextMode: namingContextMode,
+	})
+	if err != nil {
+		return nil, err
+	}
+	mdfID := generateID()
+	if _, err = tenantTx.ExecContext(ctx, `INSERT INTO mdf_idf (id,asset_id,tenant_id,branch_id,type) VALUES($1,$2,$3,$4,$5)`, mdfID, managed.AssetID, tenantID, branchID, mdfType); err != nil {
+		return nil, err
+	}
+	if _, err = tenantTx.ExecContext(ctx, `UPDATE locations SET placement_code=$1,asset_id=$2,updated_at=NOW() WHERE id=$3 AND tenant_id=$4 AND branch_id=$5`, managed.Assignment.Code, managed.AssetID, placementID, tenantID, branchID); err != nil {
+		return nil, err
+	}
+	if _, err = tenantTx.ExecContext(ctx, `INSERT INTO asset_logs(tenant_id,asset_id,event_type,new_value,notes,performed_by) VALUES($1,$2,'created',$3,$4,$5)`, tenantID, managed.AssetID, managed.Assignment.Code, "Alta MDF/IDF con ubicación física canónica", userID); err != nil {
+		return nil, err
+	}
+	return &mdfIdfCreateResult{Managed: managed, MdfID: mdfID}, nil
+}
+
 func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, input managedAssetInput) (*managedAssetReservation, error) {
 	if strings.TrimSpace(input.ManualCode) != "" {
 		return nil, ErrManualAssetCode

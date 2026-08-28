@@ -3,12 +3,15 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 )
+
+var ErrInvalidDistributionType = errors.New("invalid distribution type")
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -335,95 +338,33 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad request", http.StatusBadRequest)
 			return
 		}
-		if strings.TrimSpace(req.TenantID) != "" && req.TenantID != tenantID {
-			jsonResp(w, http.StatusForbidden, map[string]string{"error": "tenant_scope_mismatch"})
-			return
-		}
-		if strings.TrimSpace(req.BranchID) != "" && req.BranchID != branchID {
-			jsonResp(w, http.StatusForbidden, map[string]string{"error": "branch_scope_mismatch"})
-			return
-		}
 		if req.Type == "" && req.SiteType != "" {
 			req.Type = req.SiteType
 		}
-		if req.Status == "" {
-			req.Status = "active"
-		}
-		// Determinar el tipo MDF o IDF
 		mdfType := strings.ToUpper(strings.TrimSpace(req.Type))
-		if mdfType != "MDF" && mdfType != "IDF" {
-			jsonResp(w, http.StatusUnprocessableEntity, map[string]string{"error": "invalid_distribution_type", "message": "type debe ser MDF o IDF."})
-			return
-		}
-		scope := PhysicalScope{TenantID: tenantID, BranchID: branchID}
-		zoneID, areaID, siteID := strings.TrimSpace(req.ZoneID), strings.TrimSpace(req.InternalAreaID), strings.TrimSpace(req.SiteID)
-		var physicalLocation *ResolvedPhysicalLocation
-		var canonicalZone *CanonicalZone
-		var namingContextMode string
-		if zoneID != "" {
-			zone, err := ResolveCanonicalZone(r.Context(), tenantTx, scope, zoneID)
-			if err != nil {
-				writeManagedAssetError(w, err, mdfType)
-				return
-			}
-			if siteID != "" && zone.BuildingID != siteID {
-				writeManagedAssetError(w, ErrPhysicalScopeMismatch, mdfType)
-				return
-			}
-			canonicalZone = &zone
-			namingContextMode = "CANONICAL_ZONE"
-			if areaID != "" {
-				resolved, resolveErr := ResolvePhysicalLocationForZone(r.Context(), tenantTx, scope, zone, siteID, areaID)
-				if resolveErr != nil {
-					writeManagedAssetError(w, resolveErr, mdfType)
-					return
-				}
-				physicalLocation = &resolved
-			}
-		} else if areaID != "" {
-			resolved, err := ResolvePhysicalLocation(r.Context(), tenantTx, tenantID, branchID, siteID, areaID)
-			if err != nil {
-				writeManagedAssetError(w, ErrInvalidPhysicalLocation, mdfType)
-				return
-			}
-			physicalLocation = &resolved
-			namingContextMode = "LEGACY_INTERNAL_AREA"
-		} else {
-			writeManagedAssetError(w, ErrZoneRequired, mdfType)
-			return
-		}
-		placementID := generateID()
-		if _, err := tenantTx.Exec(`INSERT INTO locations(id,tenant_id,branch_id,placement_type,name,status,zone_id,internal_area_id) VALUES($1,$2,$3,$4,$5,'active',NULLIF($6,'')::uuid,NULLIF($7,'')::uuid)`, placementID, tenantID, branchID, mdfType, req.Name, zoneID, areaID); err != nil {
-			writeManagedAssetError(w, err, mdfType)
-			return
-		}
-		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
-			AssetTypeCode: mdfType, Name: req.Name, ManualCode: req.Code + req.InternalCode,
-			Status: req.Status, Observations: req.Observations, PlacementID: placementID,
-			PhysicalLocation: physicalLocation, CanonicalZone: canonicalZone, NamingContextMode: namingContextMode,
+		result, err := createMdfIdf(r.Context(), tenantTx, userID, tenantID, branchID, mdfIdfCreateInput{
+			TenantAssertion: req.TenantID, BranchAssertion: req.BranchID,
+			Name: req.Name, Type: mdfType, ManualCode: req.Code + req.InternalCode,
+			Status: req.Status, SiteID: req.SiteID, InternalAreaID: req.InternalAreaID,
+			ZoneID: req.ZoneID, Observations: req.Observations,
 		})
 		if err != nil {
+			if errors.Is(err, ErrTenantScopeMismatch) {
+				jsonResp(w, http.StatusForbidden, map[string]string{"error": "tenant_scope_mismatch"})
+				return
+			}
+			if errors.Is(err, ErrBranchScopeMismatch) {
+				jsonResp(w, http.StatusForbidden, map[string]string{"error": "branch_scope_mismatch"})
+				return
+			}
+			if errors.Is(err, ErrInvalidDistributionType) {
+				jsonResp(w, http.StatusUnprocessableEntity, map[string]string{"error": "invalid_distribution_type", "message": "type debe ser MDF o IDF."})
+				return
+			}
 			writeManagedAssetError(w, err, mdfType)
 			return
 		}
-		mdfID := generateID()
-		_, err = tenantTx.Exec(`
-			INSERT INTO mdf_idf (id, asset_id, tenant_id, branch_id, type)
-			VALUES ($1,$2,$3,$4,$5)`,
-			mdfID, managed.AssetID, tenantID, branchID, mdfType)
-		if err != nil {
-			writeManagedAssetError(w, err, mdfType)
-			return
-		}
-		if _, err = tenantTx.Exec(`UPDATE locations SET placement_code=$1,asset_id=$2,updated_at=NOW() WHERE id=$3 AND tenant_id=$4 AND branch_id=$5`, managed.Assignment.Code, managed.AssetID, placementID, tenantID, branchID); err != nil {
-			writeManagedAssetError(w, err, mdfType)
-			return
-		}
-		if _, err = tenantTx.Exec(`INSERT INTO asset_logs(tenant_id,asset_id,event_type,new_value,notes,performed_by) VALUES($1,$2,'created',$3,$4,$5)`, tenantID, managed.AssetID, managed.Assignment.Code, "Alta MDF/IDF con ubicación física canónica", userID); err != nil {
-			writeManagedAssetError(w, err, mdfType)
-			return
-		}
-		writeManagedAssetCreated(w, managed, map[string]interface{}{"id": managed.AssetID, "mdf_id": mdfID})
+		writeManagedAssetCreated(w, result.Managed, map[string]interface{}{"id": result.Managed.AssetID, "mdf_id": result.MdfID})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
