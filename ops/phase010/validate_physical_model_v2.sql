@@ -23,6 +23,36 @@ END $$;
 
 DO $$
 DECLARE
+  fn oid := to_regprocedure('public.read_active_system_naming_presets(text[])');
+  owner_name text;
+  secure boolean;
+  config text[];
+  result_type text;
+BEGIN
+  IF fn IS NULL THEN
+    RAISE EXCEPTION 'secure system naming preset reader is missing';
+  END IF;
+  SELECT r.rolname,p.prosecdef,p.proconfig,pg_get_function_result(p.oid)
+    INTO owner_name,secure,config,result_type
+  FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.oid=fn;
+  IF owner_name <> 'skia_migrator' OR NOT secure THEN
+    RAISE EXCEPTION 'secure preset reader owner/security differ: %/%', owner_name,secure;
+  END IF;
+  IF config IS DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp'] THEN
+    RAISE EXCEPTION 'secure preset reader search_path differs: %',config;
+  END IF;
+  IF result_type <> 'TABLE(asset_type_code character varying, preset_version integer, prefix character varying, separator character varying, include_branch boolean, include_placement boolean, seq_digits smallint)' THEN
+    RAISE EXCEPTION 'secure preset reader result differs: %',result_type;
+  END IF;
+  IF NOT has_function_privilege('skia_runtime',fn,'EXECUTE')
+     OR has_function_privilege('skia_onboarding',fn,'EXECUTE')
+     OR EXISTS (SELECT 1 FROM aclexplode((SELECT proacl FROM pg_proc WHERE oid=fn)) WHERE grantee=0 AND privilege_type='EXECUTE') THEN
+    RAISE EXCEPTION 'secure preset reader execute contract differs';
+  END IF;
+END $$;
+
+DO $$
+DECLARE
   tenant_a UUID := '21000000-0000-4000-8000-000000000001';
   tenant_b UUID := '21000000-0000-4000-8000-000000000002';
   branch_a UUID := '22000000-0000-4000-8000-000000000001';
