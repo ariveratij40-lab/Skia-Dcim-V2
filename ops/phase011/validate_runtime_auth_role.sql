@@ -70,6 +70,35 @@ BEGIN
   IF has_table_privilege('skia_runtime','public.system_naming_presets','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') THEN
     RAISE EXCEPTION 'skia_runtime must not have direct preset table privileges';
   END IF;
+  IF EXISTS (
+    SELECT 1 FROM (VALUES ('inventory_imports'),('inventory_import_rows'),('import_jobs'),('import_items')) AS s(name)
+    WHERE has_table_privilege('skia_runtime','public.'||s.name,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+  ) THEN
+    RAISE EXCEPTION 'skia_runtime must not have direct staging table privileges';
+  END IF;
+  IF NOT has_function_privilege('skia_runtime','public.validate_import_row_for_commit(bigint,bigint,uuid,uuid)','EXECUTE')
+     OR NOT has_function_privilege('skia_runtime','public.claim_import_row_for_commit(bigint,bigint,uuid,uuid,text)','EXECUTE')
+     OR NOT has_function_privilege('skia_runtime','public.complete_import_row_commit(bigint,bigint,uuid,uuid,uuid)','EXECUTE')
+     OR NOT has_function_privilege('skia_runtime','public.fail_import_row_commit(bigint,bigint,uuid,uuid,text)','EXECUTE')
+     OR NOT has_function_privilege('skia_runtime','public.recompute_inventory_import_state(bigint,uuid,uuid)','EXECUTE') THEN
+    RAISE EXCEPTION 'skia_runtime secure staging function EXECUTE contract differs';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    JOIN pg_roles o ON o.oid=p.proowner
+    WHERE n.nspname='public' AND p.proname IN ('validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit','fail_import_row_commit','recompute_inventory_import_state')
+      AND (o.rolname<>'skia_migrator' OR NOT p.prosecdef OR NOT COALESCE(p.proconfig,'{}'::text[]) @> ARRAY['search_path=pg_catalog, pg_temp'])
+  ) THEN
+    RAISE EXCEPTION 'secure staging function metadata is unsafe';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace,
+      LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+    WHERE n.nspname='public' AND p.proname IN ('validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit','fail_import_row_commit','recompute_inventory_import_state')
+      AND acl.grantee=0 AND acl.privilege_type='EXECUTE'
+  ) THEN
+    RAISE EXCEPTION 'PUBLIC must not execute secure staging functions';
+  END IF;
   IF NOT has_function_privilege('skia_runtime','public.read_active_system_naming_presets(text[])','EXECUTE') THEN
     RAISE EXCEPTION 'skia_runtime secure preset reader EXECUTE is missing';
   END IF;
@@ -77,7 +106,9 @@ BEGIN
     SELECT 1
     FROM information_schema.routine_privileges
     WHERE grantee='skia_runtime' AND specific_schema='public'
-      AND routine_name NOT IN ('assets_count_in_location_all_branches','read_active_system_naming_presets')
+      AND routine_name NOT IN ('assets_count_in_location_all_branches','read_active_system_naming_presets',
+        'validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit',
+        'fail_import_row_commit','recompute_inventory_import_state')
   ) THEN
     RAISE EXCEPTION 'skia_runtime has unexpected routine privileges';
   END IF;
