@@ -133,8 +133,13 @@ type CreateAssetRequest struct {
 }
 
 type UpdateAssetRequest struct {
+	TenantID        *string  `json:"tenant_id"`
+	BranchID        *string  `json:"branch_id"`
 	AssetTypeID     *string  `json:"asset_type_id"`
 	LocationID      *string  `json:"location_id"`
+	ZoneID          *string  `json:"zone_id"`
+	SiteID          *string  `json:"site_id"`
+	InternalAreaID  *string  `json:"internal_area_id"`
 	InternalCode    *string  `json:"internal_code"`
 	Name            *string  `json:"name"`
 	SerialNumber    *string  `json:"serial_number"`
@@ -1203,14 +1208,16 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 		return
 	}
 
-	// Verificar que el activo pertenece al tenant+branch
-	var exists bool
-	tdb.QueryRowContext(r.Context(),
-		`SELECT EXISTS(SELECT 1 FROM assets WHERE id=$1 AND tenant_id=$2 AND branch_id=$3)`,
-		assetID, tenantID, branchID,
-	).Scan(&exists)
-	if !exists {
+	// Resolver y bloquear el tipo persistido; la política nunca se selecciona
+	// usando el tipo solicitado por el cliente.
+	var currentAssetTypeID, currentAssetTypeCode string
+	err := tdb.QueryRowContext(r.Context(), `SELECT a.asset_type_id,at.code FROM assets a JOIN asset_types at ON at.id=a.asset_type_id WHERE a.id=$1 AND a.tenant_id=$2 AND a.branch_id=$3 FOR UPDATE OF a`, assetID, tenantID, branchID).Scan(&currentAssetTypeID, &currentAssetTypeCode)
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, `{"error":"asset not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -1223,6 +1230,37 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 		writeManagedAssetError(w, ErrManualAssetCode, "")
 		return
 	}
+	if req.TenantID != nil && strings.TrimSpace(*req.TenantID) != "" && *req.TenantID != tenantID {
+		jsonResp(w, http.StatusForbidden, map[string]string{"error": "tenant_scope_mismatch"})
+		return
+	}
+	if req.BranchID != nil && strings.TrimSpace(*req.BranchID) != "" && *req.BranchID != branchID {
+		jsonResp(w, http.StatusForbidden, map[string]string{"error": "branch_scope_mismatch"})
+		return
+	}
+
+	managedDistribution := currentAssetTypeCode == "MDF" || currentAssetTypeCode == "IDF"
+	if managedDistribution {
+		if _, relocateErr := relocateMdfIdf(r.Context(), tdb, userID, tenantID, branchID, mdfIdfRelocationInput{
+			AssetID: assetID, AssetTypeCode: currentAssetTypeCode, CurrentAssetTypeID: currentAssetTypeID,
+			RequestedAssetTypeID: req.AssetTypeID, RequestedLocationID: req.LocationID,
+			ZoneID: req.ZoneID, SiteID: req.SiteID, InternalAreaID: req.InternalAreaID,
+		}); relocateErr != nil {
+			log.Printf("updateAsset: MDF/IDF relocation failed tenant=%s branch=%s asset=%s: %v", tenantID, branchID, assetID, relocateErr)
+			writeAssetRelocationError(w, relocateErr)
+			return
+		}
+	} else if req.AssetTypeID != nil {
+		var requestedCode string
+		if resolveErr := tdb.QueryRowContext(r.Context(), `SELECT code FROM asset_types WHERE id=$1`, *req.AssetTypeID).Scan(&requestedCode); resolveErr != nil {
+			http.Error(w, `{"error":"invalid asset type"}`, http.StatusUnprocessableEntity)
+			return
+		}
+		if requestedCode == "MDF" || requestedCode == "IDF" {
+			writeAssetRelocationError(w, ErrAssetTypeMutationDenied)
+			return
+		}
+	}
 
 	// Construir UPDATE dinámico solo con campos enviados
 	setClauses := []string{"updated_by = $1", "updated_at = NOW()"}
@@ -1234,12 +1272,12 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 		args = append(args, *req.Name)
 		idx++
 	}
-	if req.AssetTypeID != nil {
+	if req.AssetTypeID != nil && !managedDistribution {
 		setClauses = append(setClauses, "asset_type_id = $"+itoa(idx))
 		args = append(args, *req.AssetTypeID)
 		idx++
 	}
-	if req.LocationID != nil {
+	if req.LocationID != nil && !managedDistribution {
 		setClauses = append(setClauses, "location_id = $"+itoa(idx))
 		args = append(args, *req.LocationID)
 		idx++
@@ -1326,7 +1364,7 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 		` AND tenant_id = $` + itoa(idx+1) +
 		` AND branch_id = $` + itoa(idx+2)
 
-	_, err := tdb.ExecContext(r.Context(), query, args...)
+	_, err = tdb.ExecContext(r.Context(), query, args...)
 	if err != nil {
 		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 		return
