@@ -20,7 +20,7 @@ docker cp "$repo_root/." "$container:/repo"
 # 025, persist representative legacy state, then let the checksum runner apply
 # 026 and its ledger row in one transaction.
 docker exec "$container" sh -c \
-  "cp /repo/ops/phase010/bootstrap.manifest /tmp/bootstrap.manifest.full && sed -e '/026_zone_naming_context_compatibility.sql/d' -e '/027_secure_import_staging_interface.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
+  "cp /repo/ops/phase010/bootstrap.manifest /tmp/bootstrap.manifest.full && sed -e '/026_zone_naming_context_compatibility.sql/d' -e '/027_secure_import_staging_interface.sql/d' -e '/028_secure_import_commit_coordinator_interface.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
 
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 \
   -v migrator_password="$password" -v runtime_password="$password" \
@@ -212,7 +212,7 @@ SQL
 
 ledger="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SELECT count(*) FROM production_bootstrap_migrations')"
 schema_hash="$(docker exec "$container" pg_dump -U postgres -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | shasum -a 256 | awk '{print $1}')"
-[[ "$ledger" == 19 ]]
+[[ "$ledger" == 20 ]]
 
 printf 'POSTGRES_VERSION=%s\n' "$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SHOW server_version')"
 printf 'SCHEMA_HASH=%s\nLEDGER_COUNT=%s\n' "$schema_hash" "$ledger"

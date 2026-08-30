@@ -10,7 +10,7 @@ psqlq(){ docker exec "$container" psql -X -U postgres -d skia_prod -Atqc "$1"; }
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 \
   -v migrator_password="$password" -v runtime_password="$password" -v onboarding_password="$password" \
   < "$repo_root/ops/phase011/provision_database_roles.sql" >/dev/null
-docker exec "$container" sh -c "cp /repo/ops/phase010/bootstrap.manifest /tmp/bootstrap.manifest.full && sed '/027_secure_import_staging_interface.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "cp /repo/ops/phase010/bootstrap.manifest /tmp/bootstrap.manifest.full && sed -e '/027_secure_import_staging_interface.sql/d' -e '/028_secure_import_commit_coordinator_interface.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
 docker exec -e PGPASSWORD="$password" -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_prod" \
   "$container" /repo/ops/phase010/run_clean_bootstrap.sh >/dev/null
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
@@ -166,9 +166,9 @@ done
 if docker exec "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 -c \
   "SET ROLE b3b2_public_test; SELECT * FROM public.validate_import_row_for_commit(6101,6111,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001')" >/dev/null 2>&1; then exit 1; fi
 [[ "$(psqlq "SELECT count(*) FROM inventory_import_rows WHERE normalized_row_hash IS NULL")" == 1 ]]
-[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 19 ]]
+[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 20 ]]
 docker exec "$container" createdb -U postgres -O skia_migrator skia_failure
-docker exec "$container" sh -c "sed '/027_secure_import_staging_interface.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "sed -e '/027_secure_import_staging_interface.sql/d' -e '/028_secure_import_commit_coordinator_interface.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
 docker exec -e PGPASSWORD="$password" -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_failure" \
   "$container" /repo/ops/phase010/run_clean_bootstrap.sh >/dev/null
 docker exec "$container" psql -X -U postgres -d skia_failure -v ON_ERROR_STOP=1 \
@@ -185,7 +185,7 @@ ALTER TABLE asset_logs ENABLE ROW LEVEL SECURITY; ALTER TABLE asset_logs FORCE R
 ALTER TABLE asset_relationships ENABLE ROW LEVEL SECURITY; ALTER TABLE asset_relationships FORCE ROW LEVEL SECURITY;
 SQL
 docker exec -i "$container" psql -X -U postgres -d skia_prod < "$repo_root/ops/phase011/validate_runtime_auth_role.sql" >/dev/null
-printf '%s\n' 'POSTGRES_VERSION=16.14' 'FRESH_BOOTSTRAP=PASS' 'SECOND_BOOTSTRAP=PASS' 'LEDGER_COUNT=19' \
+printf '%s\n' 'POSTGRES_VERSION=16.14' 'FRESH_BOOTSTRAP=PASS' 'SECOND_BOOTSTRAP=PASS' 'LEDGER_COUNT=20' \
  'DIRECT_TABLE_ACCESS_RUNTIME=DENIED' 'CROSS_SCOPE=DENIED' 'SECOND_COMMIT_RETURNS_EXISTING_ASSET=PASS' \
  'OUTER_TRANSACTION_ROLLBACK=PASS' 'CONCURRENT_DOUBLE_CLAIM=SERIALIZED' 'PUBLIC_EXECUTE=DENIED' \
  'LEGACY_NULL_HASH_COMPATIBILITY=PASS' 'MIGRATION_FAILURE_ROLLBACK=PASS' \
