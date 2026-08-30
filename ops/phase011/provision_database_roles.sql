@@ -56,6 +56,10 @@ SELECT 'REVOKE ALL ON FUNCTION public.list_import_rows_for_commit(BIGINT,UUID,UU
 WHERE to_regprocedure('public.fail_import_row_after_rollback(bigint,bigint,uuid,uuid,text,text)') IS NOT NULL \gexec
 SELECT 'GRANT EXECUTE ON FUNCTION public.list_import_rows_for_commit(BIGINT,UUID,UUID), public.fail_import_row_after_rollback(BIGINT,BIGINT,UUID,UUID,TEXT,TEXT) TO skia_runtime'
 WHERE to_regprocedure('public.fail_import_row_after_rollback(bigint,bigint,uuid,uuid,text,text)') IS NOT NULL \gexec
+SELECT 'REVOKE ALL ON FUNCTION public.create_inventory_import_staging(TEXT,TEXT,TEXT,TEXT,UUID), public.stage_inventory_import_row(BIGINT,INTEGER,JSONB,TEXT,TEXT,TEXT,TEXT), public.update_inventory_import_progress(BIGINT,INTEGER,INTEGER,INTEGER,INTEGER), public.finalize_inventory_import_staging(BIGINT) FROM PUBLIC'
+WHERE to_regprocedure('public.finalize_inventory_import_staging(bigint)') IS NOT NULL \gexec
+SELECT 'GRANT EXECUTE ON FUNCTION public.create_inventory_import_staging(TEXT,TEXT,TEXT,TEXT,UUID), public.stage_inventory_import_row(BIGINT,INTEGER,JSONB,TEXT,TEXT,TEXT,TEXT), public.update_inventory_import_progress(BIGINT,INTEGER,INTEGER,INTEGER,INTEGER), public.finalize_inventory_import_staging(BIGINT) TO skia_runtime'
+WHERE to_regprocedure('public.finalize_inventory_import_staging(bigint)') IS NOT NULL \gexec
 
 -- The role artifact runs once before and once after clean bootstrap. Apply table
 -- grants only after every required identity table exists.

@@ -212,7 +212,7 @@ SQL
 
 ledger="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SELECT count(*) FROM production_bootstrap_migrations')"
 schema_hash="$(docker exec "$container" pg_dump -U postgres -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | shasum -a 256 | awk '{print $1}')"
-[[ "$ledger" == 20 ]]
+[[ "$ledger" == 21 ]]
 
 printf 'POSTGRES_VERSION=%s\n' "$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SHOW server_version')"
 printf 'SCHEMA_HASH=%s\nLEDGER_COUNT=%s\n' "$schema_hash" "$ledger"
