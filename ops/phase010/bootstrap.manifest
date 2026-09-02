@@ -18,3 +18,4 @@ migrations/025_asset_type_placement_policy_provisioning.sql
 migrations/026_zone_naming_context_compatibility.sql
 migrations/027_secure_import_staging_interface.sql
 migrations/028_secure_import_commit_coordinator_interface.sql
+migrations/029_secure_import_staging_write_authority.sql

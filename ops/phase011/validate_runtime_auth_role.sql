@@ -82,13 +82,17 @@ BEGIN
      OR NOT has_function_privilege('skia_runtime','public.fail_import_row_commit(bigint,bigint,uuid,uuid,text)','EXECUTE')
      OR NOT has_function_privilege('skia_runtime','public.recompute_inventory_import_state(bigint,uuid,uuid)','EXECUTE')
      OR NOT has_function_privilege('skia_runtime','public.list_import_rows_for_commit(bigint,uuid,uuid)','EXECUTE')
-     OR NOT has_function_privilege('skia_runtime','public.fail_import_row_after_rollback(bigint,bigint,uuid,uuid,text,text)','EXECUTE') THEN
+     OR NOT has_function_privilege('skia_runtime','public.fail_import_row_after_rollback(bigint,bigint,uuid,uuid,text,text)','EXECUTE')
+     OR NOT has_function_privilege('skia_runtime','public.create_inventory_import_staging(text,text,text,text,uuid)','EXECUTE')
+     OR NOT has_function_privilege('skia_runtime','public.stage_inventory_import_row(bigint,integer,jsonb,text,text,text,text)','EXECUTE')
+     OR NOT has_function_privilege('skia_runtime','public.update_inventory_import_progress(bigint,integer,integer,integer,integer)','EXECUTE')
+     OR NOT has_function_privilege('skia_runtime','public.finalize_inventory_import_staging(bigint)','EXECUTE') THEN
     RAISE EXCEPTION 'skia_runtime secure staging function EXECUTE contract differs';
   END IF;
   IF EXISTS (
     SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     JOIN pg_roles o ON o.oid=p.proowner
-    WHERE n.nspname='public' AND p.proname IN ('validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit','fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit','fail_import_row_after_rollback')
+    WHERE n.nspname='public' AND p.proname IN ('validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit','fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit','fail_import_row_after_rollback','create_inventory_import_staging','stage_inventory_import_row','update_inventory_import_progress','finalize_inventory_import_staging')
       AND (o.rolname<>'skia_migrator' OR NOT p.prosecdef OR NOT COALESCE(p.proconfig,'{}'::text[]) @> ARRAY['search_path=pg_catalog, pg_temp'])
   ) THEN
     RAISE EXCEPTION 'secure staging function metadata is unsafe';
@@ -96,7 +100,7 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace,
       LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
-    WHERE n.nspname='public' AND p.proname IN ('validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit','fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit','fail_import_row_after_rollback')
+    WHERE n.nspname='public' AND p.proname IN ('validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit','fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit','fail_import_row_after_rollback','create_inventory_import_staging','stage_inventory_import_row','update_inventory_import_progress','finalize_inventory_import_staging')
       AND acl.grantee=0 AND acl.privilege_type='EXECUTE'
   ) THEN
     RAISE EXCEPTION 'PUBLIC must not execute secure staging functions';
@@ -111,7 +115,8 @@ BEGIN
       AND routine_name NOT IN ('assets_count_in_location_all_branches','read_active_system_naming_presets',
         'validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit',
         'fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit',
-        'fail_import_row_after_rollback')
+        'fail_import_row_after_rollback','create_inventory_import_staging','stage_inventory_import_row',
+        'update_inventory_import_progress','finalize_inventory_import_staging')
   ) THEN
     RAISE EXCEPTION 'skia_runtime has unexpected routine privileges';
   END IF;

@@ -127,7 +127,7 @@ committed_before="$(psqlq "SELECT status||'|'||canonical_asset_id||'|'||commit_a
 # Preserve migration 027 second-commit behavior.
 [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code||'|'||canonical_asset_id FROM public.claim_import_row_for_commit(7101,7112,$scope,repeat('b',64))")" == 'ALREADY_COMMITTED|75000000-0000-4000-8000-000000000001' ]]
 
-[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 20 ]]
+[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 21 ]]
 [[ "$(psqlq "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname IN ('validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit','fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit','fail_import_row_after_rollback')")" == 7 ]]
 docker exec -i "$container" psql -X -U postgres -d skia_prod \
   -v phase011_environment=production -v expected_database=skia_prod \
@@ -139,7 +139,7 @@ schema_hash="$(docker exec "$container" pg_dump -U postgres -d skia_prod \
   --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | shasum -a 256 | awk '{print $1}')"
 
 printf '%s\n' 'POSTGRES_VERSION=16.14' 'FRESH_BOOTSTRAP=PASS' 'SECOND_BOOTSTRAP=PASS' \
-  'LEDGER_COUNT=20' 'ROW_ENUMERATION=PASS' 'NO_EXISTENCE_LEAK=PASS' \
+  'LEDGER_COUNT=21' 'ROW_ENUMERATION=PASS' 'NO_EXISTENCE_LEAK=PASS' \
   'NORMALIZED_HASH_VISIBLE=PASS' 'DIRECT_STAGING_ACCESS=DENIED' \
   'POST_ROLLBACK_FAILURE_PERSISTENCE=PASS' 'FAILED_ATTEMPT_DELTA=1' \
   'STALE_FAILURE_WRITE=DENIED' 'COMMITTED_TERMINAL=PASS' \
