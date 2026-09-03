@@ -198,7 +198,7 @@ done
 
 # 028 legacy fixture remains byte-for-byte equivalent after 029.
 docker exec "$container" createdb -U postgres -O skia_migrator skia_legacy
-docker exec "$container" sh -c "grep -v '029_secure_import_staging_write_authority.sql' /repo/ops/phase010/bootstrap.manifest > /tmp/pre029.manifest && cp /repo/ops/phase010/bootstrap.manifest /tmp/full.manifest && cp /tmp/pre029.manifest /repo/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "grep -Ev '029_secure_import_staging_write_authority.sql|030_secure_import_commit_completion_rls_compatibility.sql' /repo/ops/phase010/bootstrap.manifest > /tmp/pre029.manifest && cp /repo/ops/phase010/bootstrap.manifest /tmp/full.manifest && cp /tmp/pre029.manifest /repo/ops/phase010/bootstrap.manifest"
 provision skia_legacy; bootstrap skia_legacy
 docker exec -i "$container" psql -X -U postgres -d skia_legacy -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
 INSERT INTO tenants(id,name) VALUES('91000000-0000-4000-8000-000000000001','Legacy');
@@ -233,10 +233,10 @@ docker exec -i "$container" psql -X -U postgres -d skia_prod \
   -v execution_approval=PHASE011_CLEAN_RLS_BOOTSTRAP_APPROVED \
   < "$repo_root/ops/phase011/activate_clean_production_rls.sql" >/dev/null
 docker exec -i "$container" psql -X -U postgres -d skia_prod < "$repo_root/ops/phase011/validate_runtime_auth_role.sql" >/dev/null
-[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 21 ]]
+[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 22 ]]
 
 printf '%s\n' 'POSTGRES_VERSION=16.14' 'FRESH_BOOTSTRAP=PASS' 'SECOND_BOOTSTRAP=PASS' \
-  'LEDGER_COUNT=21' 'HEADER_CREATION=PASS' 'ROW_STAGING=PASS' 'STATE_AUTHORITY=PASS' \
+  'LEDGER_COUNT=22' 'HEADER_CREATION=PASS' 'ROW_STAGING=PASS' 'STATE_AUTHORITY=PASS' \
   'IDEMPOTENT_RESTAGE=PASS' 'HASH_PAYLOAD_CONFLICT=DENIED' \
   'CONCURRENT_SAME_ROW=IDEMPOTENT' 'CONCURRENT_DIFFERENT_CONTENT=ONE_WINNER_ONE_CONFLICT' \
   'CROSS_SCOPE=DENIED' 'CROSS_SCOPE_PROGRESS_FINALIZE=DENIED' 'INVALID_COUNTERS=DENIED' \
