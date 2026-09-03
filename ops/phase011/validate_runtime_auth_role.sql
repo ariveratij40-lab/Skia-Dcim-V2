@@ -78,7 +78,7 @@ BEGIN
   END IF;
   IF NOT has_function_privilege('skia_runtime','public.validate_import_row_for_commit(bigint,bigint,uuid,uuid)','EXECUTE')
      OR NOT has_function_privilege('skia_runtime','public.claim_import_row_for_commit(bigint,bigint,uuid,uuid,text)','EXECUTE')
-     OR NOT has_function_privilege('skia_runtime','public.complete_import_row_commit(bigint,bigint,uuid,uuid,uuid)','EXECUTE')
+     OR NOT has_function_privilege('skia_runtime','public.complete_import_row_commit(bigint,bigint,uuid,uuid,text,uuid)','EXECUTE')
      OR NOT has_function_privilege('skia_runtime','public.fail_import_row_commit(bigint,bigint,uuid,uuid,text)','EXECUTE')
      OR NOT has_function_privilege('skia_runtime','public.recompute_inventory_import_state(bigint,uuid,uuid)','EXECUTE')
      OR NOT has_function_privilege('skia_runtime','public.list_import_rows_for_commit(bigint,uuid,uuid)','EXECUTE')

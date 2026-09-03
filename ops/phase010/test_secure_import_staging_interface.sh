@@ -10,7 +10,7 @@ psqlq(){ docker exec "$container" psql -X -U postgres -d skia_prod -Atqc "$1"; }
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 \
   -v migrator_password="$password" -v runtime_password="$password" -v onboarding_password="$password" \
   < "$repo_root/ops/phase011/provision_database_roles.sql" >/dev/null
-docker exec "$container" sh -c "cp /repo/ops/phase010/bootstrap.manifest /tmp/bootstrap.manifest.full && sed -e '/027_secure_import_staging_interface.sql/d' -e '/028_secure_import_commit_coordinator_interface.sql/d' -e '/029_secure_import_staging_write_authority.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "cp /repo/ops/phase010/bootstrap.manifest /tmp/bootstrap.manifest.full && sed -e '/027_secure_import_staging_interface.sql/d' -e '/028_secure_import_commit_coordinator_interface.sql/d' -e '/029_secure_import_staging_write_authority.sql/d' -e '/030_secure_import_commit_completion_rls_compatibility.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
 docker exec -e PGPASSWORD="$password" -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_prod" \
   "$container" /repo/ops/phase010/run_clean_bootstrap.sh >/dev/null
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
@@ -75,7 +75,7 @@ INSERT INTO inventory_import_rows(id,import_id,tenant_id,branch_id,row_number,st
 SQL
 
 [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.claim_import_row_for_commit(6101,6111,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('a',64))")" == READY_FOR_COMMIT ]]
-[[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.complete_import_row_commit(6101,6111,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001','65000000-0000-4000-8000-000000000001')")" == COMMITTED ]]
+[[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.complete_import_row_commit(6101,6111,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('a',64),'65000000-0000-4000-8000-000000000001')")" == COMMITTED ]]
 second_commit_before="$(psqlq "SELECT status||'|'||canonical_asset_id||'|'||committed_at||'|'||commit_attempts||'|'||COALESCE(last_error_code,'')||'|'||normalized_row_hash FROM inventory_import_rows WHERE id=6111")"
 [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code||'|'||canonical_asset_id FROM public.claim_import_row_for_commit(6101,6111,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('a',64))")" == 'ALREADY_COMMITTED|65000000-0000-4000-8000-000000000001' ]]
 [[ "$(psqlq "SELECT status||'|'||canonical_asset_id||'|'||committed_at||'|'||commit_attempts||'|'||COALESCE(last_error_code,'')||'|'||normalized_row_hash FROM inventory_import_rows WHERE id=6111")" == "$second_commit_before" ]]
@@ -103,7 +103,7 @@ for row_hash in "6115 d" "6116 e" "6117 f"; do
   [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.claim_import_row_for_commit(6101,$1,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('$2',64))")" == INVALID_STATE ]]
 done
 for row in 6115 6116 6117 6118 6111; do
-  [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.complete_import_row_commit(6101,$row,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001','65000000-0000-4000-8000-000000000001')")" == INVALID_STATE ]]
+  [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.complete_import_row_commit(6101,$row,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('a',64),'65000000-0000-4000-8000-000000000001')")" == INVALID_STATE ]]
 done
 [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.claim_import_row_for_commit(6101,6118,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('1',64))")" == READY_FOR_COMMIT ]]
 [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.fail_import_row_commit(6101,6118,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001','CANONICAL_VALIDATION_FAILED')")" == FAILED_RETRYABLE ]]
@@ -121,7 +121,7 @@ for spec in "6120 3 65000000-0000-4000-8000-000000000003" "6121 4 65000000-0000-
   set -- $spec
   [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.claim_import_row_for_commit(6101,$1,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('$2',64))")" == READY_FOR_COMMIT ]]
   link_before="$(psqlq "SELECT status||'|'||COALESCE(canonical_asset_id::text,'')||'|'||COALESCE(committed_at::text,'') FROM inventory_import_rows WHERE id=$1")"
-  [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.complete_import_row_commit(6101,$1,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001','$3')")" == NOT_FOUND_OR_UNAUTHORIZED ]]
+  [[ "$(psqlq "SET ROLE skia_runtime; SELECT result_code FROM public.complete_import_row_commit(6101,$1,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('a',64),'$3')")" == NOT_FOUND_OR_UNAUTHORIZED ]]
   [[ "$(psqlq "SELECT status||'|'||COALESCE(canonical_asset_id::text,'')||'|'||COALESCE(committed_at::text,'') FROM inventory_import_rows WHERE id=$1")" == "$link_before" ]]
 done
 
@@ -130,7 +130,7 @@ header_before="$(psqlq "SELECT status||'|'||COALESCE(workflow_status,'') FROM in
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
 BEGIN; SET ROLE skia_runtime;
 SELECT * FROM public.claim_import_row_for_commit(6101,6112,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('b',64));
-SELECT * FROM public.complete_import_row_commit(6101,6112,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001','65000000-0000-4000-8000-000000000001');
+SELECT * FROM public.complete_import_row_commit(6101,6112,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001',repeat('b',64),'65000000-0000-4000-8000-000000000001');
 SELECT * FROM public.recompute_inventory_import_state(6101,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001');
 ROLLBACK;
 SQL
@@ -166,9 +166,9 @@ done
 if docker exec "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 -c \
   "SET ROLE b3b2_public_test; SELECT * FROM public.validate_import_row_for_commit(6101,6111,'61000000-0000-4000-8000-000000000001','63000000-0000-4000-8000-000000000001')" >/dev/null 2>&1; then exit 1; fi
 [[ "$(psqlq "SELECT count(*) FROM inventory_import_rows WHERE normalized_row_hash IS NULL")" == 1 ]]
-[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 21 ]]
+[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 22 ]]
 docker exec "$container" createdb -U postgres -O skia_migrator skia_failure
-docker exec "$container" sh -c "sed -e '/027_secure_import_staging_interface.sql/d' -e '/028_secure_import_commit_coordinator_interface.sql/d' -e '/029_secure_import_staging_write_authority.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "sed -e '/027_secure_import_staging_interface.sql/d' -e '/028_secure_import_commit_coordinator_interface.sql/d' -e '/029_secure_import_staging_write_authority.sql/d' -e '/030_secure_import_commit_completion_rls_compatibility.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
 docker exec -e PGPASSWORD="$password" -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_failure" \
   "$container" /repo/ops/phase010/run_clean_bootstrap.sh >/dev/null
 docker exec "$container" psql -X -U postgres -d skia_failure -v ON_ERROR_STOP=1 \
@@ -185,7 +185,7 @@ ALTER TABLE asset_logs ENABLE ROW LEVEL SECURITY; ALTER TABLE asset_logs FORCE R
 ALTER TABLE asset_relationships ENABLE ROW LEVEL SECURITY; ALTER TABLE asset_relationships FORCE ROW LEVEL SECURITY;
 SQL
 docker exec -i "$container" psql -X -U postgres -d skia_prod < "$repo_root/ops/phase011/validate_runtime_auth_role.sql" >/dev/null
-printf '%s\n' 'POSTGRES_VERSION=16.14' 'FRESH_BOOTSTRAP=PASS' 'SECOND_BOOTSTRAP=PASS' 'LEDGER_COUNT=21' \
+printf '%s\n' 'POSTGRES_VERSION=16.14' 'FRESH_BOOTSTRAP=PASS' 'SECOND_BOOTSTRAP=PASS' 'LEDGER_COUNT=22' \
  'DIRECT_TABLE_ACCESS_RUNTIME=DENIED' 'CROSS_SCOPE=DENIED' 'SECOND_COMMIT_RETURNS_EXISTING_ASSET=PASS' \
  'OUTER_TRANSACTION_ROLLBACK=PASS' 'CONCURRENT_DOUBLE_CLAIM=SERIALIZED' 'PUBLIC_EXECUTE=DENIED' \
  'LEGACY_NULL_HASH_COMPATIBILITY=PASS' 'MIGRATION_FAILURE_ROLLBACK=PASS' \

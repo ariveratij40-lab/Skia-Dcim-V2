@@ -78,7 +78,7 @@ fi
 ledger="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SELECT count(*) FROM production_bootstrap_migrations')"
 version="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc "SELECT current_setting('server_version')")"
 grants="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc "SELECT count(*) FROM information_schema.role_table_grants WHERE grantee='skia_runtime' AND table_schema='public' AND table_name='system_naming_presets'")"
-[[ "$ledger" == 21 ]]
+[[ "$ledger" == 22 ]]
 [[ "$version" == 16.14* ]]
 [[ "$grants" == 0 ]]
 if docker exec -e PGPASSWORD="$password" "$container" \
