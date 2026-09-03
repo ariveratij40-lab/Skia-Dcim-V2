@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -291,53 +292,15 @@ func callAIForPDFProcessing(prompt string) (string, error) {
 // ==========================================
 
 func saveImportResult(tenantID, branchID, userID, fileName, assetType string, result *AIProcessingResult) (int64, error) {
-	query := `
-		INSERT INTO inventory_imports (
-			tenant_id, branch_id, file_name, asset_type, 
-			total_items, valid_items, items_with_errors, 
-			status, created_by, user_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		RETURNING id
-	`
-
-	var importID int64
-	err := db.QueryRow(
-		query,
-		tenantID, branchID, fileName, assetType,
-		result.TotalItems, result.ValidItems, result.ItemsWithErrors,
-		"completed", userID, userID, time.Now(), time.Now(),
-	).Scan(&importID)
-
+	summary, err := createAndStageCanonicalImport(context.Background(), db,
+		CanonicalImportScope{TenantID: tenantID, BranchID: branchID, UserID: userID},
+		fileName, assetType, "pdf", "ai", result.ExtractedAssets)
 	if err != nil {
-		return 0, fmt.Errorf("error inserting import: %w", err)
+		return 0, fmt.Errorf("secure AI staging failed: %w", err)
 	}
-
-	// Guardar filas de importación
-	for i := range result.ExtractedAssets {
-		rowQuery := `
-			INSERT INTO inventory_import_rows (
-				import_id, tenant_id, branch_id, row_number, 
-				status, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		`
-
-		status := "valid"
-		if i < result.ItemsWithErrors {
-			status = "error"
-		}
-
-		_, err := db.Exec(
-			rowQuery,
-			importID, tenantID, branchID, i+1,
-			status, time.Now(), time.Now(),
-		)
-
-		if err != nil {
-			log.Printf("Error inserting import row: %v", err)
-		}
-	}
-
-	return importID, nil
+	// Report server-derived counts rather than trusting model-provided totals.
+	result.TotalItems, result.ValidItems, result.ItemsWithErrors = summary.Total, summary.Valid, summary.Invalid
+	return summary.ImportID, nil
 }
 
 // ==========================================

@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,11 +11,25 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
 )
+
+type importUploadStatus struct {
+	TenantID       string
+	BranchID       string
+	Status         string
+	Progress       int
+	Message        string
+	ItemsExtracted int
+	Result         interface{}
+}
+
+var importUploadStatuses sync.Map
 
 // ─── Route Registration ────────────────────────────────────────────────────────
 
@@ -39,17 +52,6 @@ func handleImportUploadStart(w http.ResponseWriter, r *http.Request) {
 	sessionID := uuid.New().String()
 	uploadID := uuid.New().String()
 
-	_, err := db.Exec(`
-		INSERT INTO import_sessions (id, tenant_id, branch_id, user_id, session_token, upload_id, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW())
-	`, sessionID, session.TenantID, session.BranchID, session.UserID, uuid.New().String(), uploadID)
-
-	if err != nil {
-		log.Printf("Error creating import session: %v", err)
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
-		return
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"sessionId": sessionID,
@@ -67,6 +69,14 @@ func handleImportUploadChunk(w http.ResponseWriter, r *http.Request) {
 	uploadID := r.FormValue("uploadId")
 	chunkIndex := r.FormValue("chunkIndex")
 	totalChunks := r.FormValue("totalChunks")
+	if _, err := uuid.Parse(uploadID); err != nil {
+		http.Error(w, "Invalid upload ID", http.StatusBadRequest)
+		return
+	}
+	if index, err := strconv.Atoi(chunkIndex); err != nil || index < 0 {
+		http.Error(w, "Invalid chunk index", http.StatusBadRequest)
+		return
+	}
 
 	file, _, err := r.FormFile("chunk")
 	if err != nil {
@@ -138,6 +148,7 @@ func handleImportUploadProcess(w http.ResponseWriter, r *http.Request) {
 		UploadID    string `json:"uploadId"`
 		FileName    string `json:"fileName"`
 		TotalChunks int    `json:"totalChunks"`
+		AssetType   string `json:"assetType"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&requestBody)
@@ -149,6 +160,10 @@ func handleImportUploadProcess(w http.ResponseWriter, r *http.Request) {
 	uploadID := requestBody.UploadID
 	fileName := requestBody.FileName
 	totalChunksInt := requestBody.TotalChunks
+	if _, err := uuid.Parse(uploadID); err != nil || totalChunksInt <= 0 {
+		http.Error(w, "Invalid upload metadata", http.StatusBadRequest)
+		return
+	}
 
 	// Reconstruir archivo desde chunks
 	filePath := fmt.Sprintf("/tmp/upload-%s", uploadID)
@@ -181,22 +196,11 @@ func handleImportUploadProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var dbJobID int64
-	err = db.QueryRow(`
-		INSERT INTO import_jobs (job_uuid, tenant_id, user_id, branch_id, file_name, file_type, status, progress, message, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'parsing', 10, 'Iniciando procesamiento...', NOW())
-		RETURNING id
-	`, jobUUID, session.TenantID, session.UserID, session.BranchID, fileName, fileType).Scan(&dbJobID)
-
-	if err != nil {
-		log.Printf("Error creating import job: %v", err)
-		http.Error(w, "Failed to create job", http.StatusInternalServerError)
-		return
-	}
-
-	// Procesar en background -- branchID explícito, ver corrección
-	// 2026-08-07 en la cabecera de esta función.
-	go processImportFileAsync(dbJobID, filePath, fileName, session.TenantID, session.BranchID, jobUUID)
+	// import_jobs/import_items are legacy compatibility tables, not canonical
+	// staging authority. Progress remains transport-only and in-memory; durable
+	// import state is created exclusively through migration 029 functions.
+	importUploadStatuses.Store(jobUUID, importUploadStatus{TenantID: session.TenantID, BranchID: session.BranchID, Status: "parsing", Progress: 10, Message: "Iniciando procesamiento..."})
+	go processImportFileAsync(filePath, fileName, requestBody.AssetType, session.TenantID, session.BranchID, session.UserID, jobUUID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"jobId": jobUUID})
@@ -211,33 +215,24 @@ func handleImportUploadStatus(w http.ResponseWriter, r *http.Request) {
 
 	jobUUID := strings.TrimPrefix(r.URL.Path, "/api/import/upload/status/")
 
-	var status, message string
-	var progress, itemsExtracted int
-	var resultJSON *json.RawMessage
-
-	err := db.QueryRow(`
-		SELECT status, progress, message, result_json, items_extracted
-		FROM import_jobs
-		WHERE job_uuid = $1 AND tenant_id = $2
-	`, jobUUID, session.TenantID).Scan(&status, &progress, &message, &resultJSON, &itemsExtracted)
-
-	if err == sql.ErrNoRows {
+	stored, ok := importUploadStatuses.Load(jobUUID)
+	if !ok {
 		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
-	if err != nil {
-		log.Printf("Error querying job: %v", err)
-		http.Error(w, "Database error", http.StatusInternalServerError)
+	status := stored.(importUploadStatus)
+	if status.TenantID != session.TenantID || status.BranchID == "" || status.BranchID != session.BranchID {
+		http.Error(w, "Job not found", http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":         status,
-		"progress":       progress,
-		"message":        message,
-		"itemsExtracted": itemsExtracted,
-		"result":         resultJSON,
+		"status":         status.Status,
+		"progress":       status.Progress,
+		"message":        status.Message,
+		"itemsExtracted": status.ItemsExtracted,
+		"result":         status.Result,
 	})
 }
 
@@ -249,25 +244,28 @@ func handleImportUploadStatus(w http.ResponseWriter, r *http.Request) {
 // llamarse desde otro lugar en el futuro sin pasar por
 // handleImportUploadProcess, y no debe confiar ciegamente en que quien la
 // llama ya validó tenant/sucursal).
-func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID string, branchID string, jobUUID string) {
-	log.Printf("DEBUG: processImportFileAsync started - dbJobID=%d, filePath=%s, fileName=%s", dbJobID, filePath, fileName)
+func processImportFileAsync(filePath, fileName, fallbackAssetType, tenantID, branchID, userID, jobUUID string) {
+	log.Printf("DEBUG: processImportFileAsync started - job=%s, filePath=%s, fileName=%s", jobUUID, filePath, fileName)
 	defer os.Remove(filePath)
+	setStatus := func(status string, progress int, message string, items int, result interface{}) {
+		importUploadStatuses.Store(jobUUID, importUploadStatus{TenantID: tenantID, BranchID: branchID, Status: status, Progress: progress, Message: message, ItemsExtracted: items, Result: result})
+	}
 
-	if tenantID == "" || branchID == "" {
-		log.Printf("ERROR: processImportFileAsync llamado sin tenant_id/branch_id (tenant=%q, branch=%q, job=%d) -- se rechaza el job en vez de asignar un valor por defecto", tenantID, branchID, dbJobID)
-		updateImportJobError(dbJobID, "Import rejected: missing tenant or branch context")
+	if tenantID == "" || branchID == "" || userID == "" {
+		log.Printf("ERROR: processImportFileAsync called without authoritative scope (job=%s)", jobUUID)
+		setStatus("error", 0, "Import rejected: missing authoritative context", 0, nil)
 		return // el defer de más arriba ya limpia filePath
 	}
 
 	// Verificar que el archivo existe
 	if _, err := os.Stat(filePath); err != nil {
 		log.Printf("ERROR: File not found: %s - %v", filePath, err)
-		updateImportJobError(dbJobID, fmt.Sprintf("File not found: %v", err))
+		setStatus("error", 0, "File not found", 0, nil)
 		return
 	}
 	log.Printf("DEBUG: File exists: %s", filePath)
 
-	updateImportJobProgress(dbJobID, 10, "Detecting file type...")
+	setStatus("parsing", 10, "Detecting file type...", 0, nil)
 
 	fileType := detectFileType(fileName)
 	log.Printf("DEBUG: File type detected: %s", fileType)
@@ -302,162 +300,30 @@ func processImportFileAsync(dbJobID int64, filePath, fileName string, tenantID s
 		}
 	default:
 		log.Printf("ERROR: Unsupported file type: %s", fileType)
-		updateImportJobError(dbJobID, "Unsupported file type")
+		setStatus("error", 0, "Unsupported file type", 0, nil)
 		return
 	}
 
 	if err != nil {
 		log.Printf("ERROR: File parsing failed: %v", err)
-		updateImportJobError(dbJobID, fmt.Sprintf("Failed to parse file: %v", err))
+		setStatus("error", 0, "Failed to parse file", 0, nil)
 		return
 	}
 
 	log.Printf("DEBUG: Successfully parsed file, extracted %d items", len(items))
 
-	updateImportJobProgress(dbJobID, 50, fmt.Sprintf("Extracted %d items", len(items)))
-
-	// Guardar items en BD
-	updateImportJobProgress(dbJobID, 90, "Saving to database...")
-	jobScope := JobTenantContext{TenantID: tenantID, BranchID: branchID}
-	jobTx, err := BeginJobTenantTx(context.Background(), db, jobScope, true)
+	setStatus("staging", 50, fmt.Sprintf("Extracted %d items", len(items)), len(items), nil)
+	summary, err := createAndStageCanonicalImport(context.Background(), db,
+		CanonicalImportScope{TenantID: tenantID, BranchID: branchID, UserID: userID},
+		fileName, fallbackAssetType, docType, fileType, items)
 	if err != nil {
-		log.Printf("ERROR: import job rejected before asset access: %v", err)
-		updateImportJobError(dbJobID, "Import rejected: invalid database context")
+		log.Printf("ERROR: secure canonical staging failed: %v", err)
+		setStatus("error", 0, "Secure staging failed", len(items), nil)
 		return
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = jobTx.Rollback()
-		}
-	}()
-	for _, item := range items {
-		// Validar que el item tenga al menos un nombre
-		if item["name"] == nil || item["name"] == "" {
-			continue
-		}
-
-		// Mapear categoría a valores válidos
-		categoryValue := "other"
-		switch item["category"] {
-		case "mdf_idf":
-			categoryValue = "network"
-		case "racks":
-			categoryValue = "rack"
-		case "switches":
-			categoryValue = "network"
-		case "ups_pdu":
-			if strings.HasPrefix(fmt.Sprintf("%v", item["name"]), "UPS") {
-				categoryValue = "ups"
-			} else {
-				categoryValue = "pdu"
-			}
-		case "patch_panels":
-			categoryValue = "patch_panel"
-		case "nodos":
-			categoryValue = "network"
-		case "backbone":
-			categoryValue = "network"
-		default:
-			categoryValue = "other"
-		}
-
-		_, err := db.Exec(`
-			INSERT INTO import_items (
-				import_job_id, tenant_id, branch_id, name, ip_address, mac_address,
-				model, brand, serial_number, location, category, confidence_score
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		`,
-			dbJobID, tenantID, branchID, item["name"], item["ip"], item["mac"],
-			item["model"], item["brand"], item["serial"], item["location"],
-			categoryValue, 0.85,
-		)
-		if err != nil {
-			log.Printf("Error saving item to import_items: %v", err)
-		}
-
-		// TAMBIÉN INSERTAR DIRECTAMENTE EN LA TABLA PRINCIPAL DE ASSETS
-		// 1. Determinar el asset_type_id según la categoría
-		assetTypeID := ""
-		switch item["category"] {
-		case "mdf_idf":
-			if strings.HasPrefix(fmt.Sprintf("%v", item["name"]), "MDF") {
-				assetTypeID = "a0000000-0000-0000-0000-000000000001" // MDF
-			} else {
-				assetTypeID = "a0000000-0000-0000-0000-000000000002" // IDF
-			}
-		case "racks":
-			assetTypeID = "a0000000-0000-0000-0000-000000000003" // RACK
-		case "switches":
-			assetTypeID = "a0000000-0000-0000-0000-000000000004" // SWITCH
-		case "ups_pdu":
-			if strings.HasPrefix(fmt.Sprintf("%v", item["name"]), "UPS") {
-				assetTypeID = "a0000000-0000-0000-0000-000000000005" // UPS
-			} else {
-				assetTypeID = "a0000000-0000-0000-0000-000000000006" // PDU
-			}
-		case "patch_panels":
-			assetTypeID = "a0000000-0000-0000-0000-000000000007" // PATCH_PANEL
-		case "nodos":
-			assetTypeID = "a0000000-0000-0000-0000-000000000008" // NODE
-		case "backbone":
-			assetTypeID = "a0000000-0000-0000-0000-000000000009" // BACKBONE
-		default:
-			assetTypeID = "a0000000-0000-0000-0000-000000000008" // Default a Nodo
-		}
-
-		// 2. Generar internal_code único usando UUID
-		importUUID := uuid.New().String()
-		internalCode := fmt.Sprintf("IMP-%s", importUUID[:8])
-
-		// 3. branch_id: el validado por ExtractSessionContextSecure y
-		// propagado explícitamente desde handleImportUploadProcess -- ver
-		// corrección 2026-08-07. Ya NO se usa un UUID por defecto ni "el
-		// primero disponible": ambos habrían repetido el mismo problema de
-		// asignación incorrecta de sucursal que este fix corrige.
-
-		// 4. Insertar en assets
-		_, err = jobTx.ExecContext(context.Background(), `
-			INSERT INTO assets (
-				tenant_id, branch_id, asset_type_id, internal_code, name,
-				serial_number, model, manufacturer, status, observations
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', 'Importado automáticamente desde PDF')
-			ON CONFLICT DO NOTHING
-		`,
-			tenantID, branchID, assetTypeID, internalCode, item["name"],
-			item["serial"], item["model"], item["brand"],
-		)
-		if err != nil {
-			log.Printf("Error saving item to assets table: %v", err)
-			updateImportJobError(dbJobID, "Import failed while saving assets")
-			return
-		}
-	}
-	if err = jobTx.Commit(); err != nil {
-		log.Printf("Error committing imported assets: %v", err)
-		updateImportJobError(dbJobID, "Import failed while committing assets")
-		return
-	}
-	committed = true
-
-	// Guardar resultado
-	result := map[string]interface{}{
-		"itemsExtracted": len(items),
-		"documentType":   docType,
-		"items":          items,
-	}
-
-	resultJSON, _ := json.Marshal(result)
-
-	_, err = db.Exec(`
-			UPDATE import_jobs
-			SET status = 'done', progress = 100, message = 'Import completed', result_json = $1, items_extracted = $2, updated_at = NOW()
-			WHERE id = $3
-		`, resultJSON, len(items), dbJobID)
-
-	if err != nil {
-		log.Printf("Error updating job: %v", err)
-	}
+	setStatus("done", 100, "Import staged; canonical commit pending", len(items), map[string]interface{}{
+		"importId": summary.ImportID, "aggregateState": summary.State, "validItems": summary.Valid, "invalidItems": summary.Invalid, "items": summary.Rows,
+	})
 }
 
 // ─── File Parsers ────────────────────────────────────────────────────────────

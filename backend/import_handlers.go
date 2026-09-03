@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -308,7 +309,7 @@ func handleImportInventorySecure(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validar extensión
-	ext := strings.ToLower(strings.TrimPrefix(handler.Filename, "."))
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(handler.Filename)), ".")
 	allowedExts := map[string]bool{
 		"csv":  true,
 		"xlsx": true,
@@ -323,29 +324,19 @@ func handleImportInventorySecure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Crear cabecera de importación en BD
-	importID := generateUUID()
+	// Crear cabecera mediante la autoridad SECURITY DEFINER de migration 029.
+	// No se conceden privilegios directos sobre las tablas de staging.
 	now := time.Now()
-
-	query := `
-		INSERT INTO inventory_imports (
-			id, tenant_id, branch_id, user_id,
-			filename, file_type, status,
-			total_rows, valid_rows, error_rows, duplicate_rows,
-			created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4,
-			$5, $6, $7,
-			0, 0, 0, 0,
-			$8, $9
-		)
-	`
-
-	_, err = db.Exec(query,
-		importID, ctx.TenantID, ctx.BranchID, ctx.UserID,
-		handler.Filename, ext, "staging",
-		now, now,
-	)
+	tx, err := BeginJobTenantTx(r.Context(), db, JobTenantContext{TenantID: ctx.TenantID, BranchID: ctx.BranchID}, true)
+	if err != nil {
+		writeErrorResponse(w, http.StatusInternalServerError, "DB_ERROR", "Error creating import")
+		return
+	}
+	defer tx.Rollback()
+	importID, err := createCanonicalImportHeader(r.Context(), tx, handler.Filename, "", ext, "upload", ctx.UserID)
+	if err == nil {
+		err = tx.Commit()
+	}
 
 	if err != nil {
 		log.Printf("Error creating import record: %v", err)
@@ -354,7 +345,7 @@ func handleImportInventorySecure(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Registrar auditoría
-	logAuditEvent(db, ctx.TenantID, ctx.BranchID, ctx.UserID, "import:create", "inventory_import", importID, "")
+	logAuditEvent(db, ctx.TenantID, ctx.BranchID, ctx.UserID, "import:create", "inventory_import", strconv.FormatInt(importID, 10), "")
 
 	// Respuesta exitosa
 	response := ImportResponse{
