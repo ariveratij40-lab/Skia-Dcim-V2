@@ -1985,9 +1985,11 @@ function TabInventario({ data, setData, highlightCode, onRackBuilder }: { data: 
     try {
       const response = await axios.post('/api/infra/mdf-idf', {
         name: d.name,
+        physical_identity: d.physical_identity,
         site_type: d.type,
         site_id: d.site_id,
         internal_area_id: d.internal_area_id,
+        zone_id: d.zone_id,
         status: 'active',
         address: d.address,
         responsible: d.responsible,
@@ -2347,9 +2349,11 @@ function MdfIdfContent() {
             const resp = await axios.post('/api/infra/mdf-idf', {
               internal_code: '',
               name: d.name,
+              physical_identity: d.physical_identity,
               site_type: d.type ?? 'IDF',
               site_id: d.site_id,
               internal_area_id: d.internal_area_id,
+              zone_id: d.zone_id,
               status: 'active',
               building: d.building,
               floor: d.floor,

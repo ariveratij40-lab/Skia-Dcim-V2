@@ -18,7 +18,7 @@ bootstrap
 bootstrap
 provision
 
-[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 22 ]]
+[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 23 ]]
 [[ "$(psqlq "SELECT prosecdef||'|'||pg_get_userbyid(proowner)||'|'||array_to_string(proconfig,',') FROM pg_proc WHERE oid='public.complete_import_row_commit(bigint,bigint,uuid,uuid,text,uuid)'::regprocedure")" == 't|skia_migrator|search_path=pg_catalog, pg_temp' ]]
 [[ "$(psqlq "SELECT has_function_privilege('skia_runtime','public.complete_import_row_commit(bigint,bigint,uuid,uuid,text,uuid)','EXECUTE')||'|'||has_function_privilege('public','public.complete_import_row_commit(bigint,bigint,uuid,uuid,text,uuid)','EXECUTE')")" == 'true|false' ]]
 [[ "$(psqlq "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='complete_import_row_commit'")" == 1 ]]
@@ -83,7 +83,7 @@ done
 # isolated database, append a deliberate error to the same psql transaction,
 # and prove that neither the function version nor constraints changed.
 docker exec "$container" createdb -U postgres -O skia_migrator skia_030_rollback
-docker exec "$container" sh -c "cp -a /repo /repo-pre030 && sed -i '/030_secure_import_commit_completion_rls_compatibility.sql/d' /repo-pre030/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "cp -a /repo /repo-pre030 && sed -i -e '/030_secure_import_commit_completion_rls_compatibility.sql/d' -e '/031_canonical_mdf_idf_physical_identity.sql/d' /repo-pre030/ops/phase010/bootstrap.manifest"
 docker exec -e PGPASSWORD="$password" -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_030_rollback" \
   "$container" /repo-pre030/ops/phase010/run_clean_bootstrap.sh >/dev/null
 if docker exec -i "$container" psql -X -U skia_migrator -d skia_030_rollback -v ON_ERROR_STOP=1 -1 \
@@ -98,5 +98,5 @@ fi
 schema_hash="$(docker exec "$container" pg_dump -U skia_migrator -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | sha256sum | awk '{print $1}')"
 printf '%s\n' 'POSTGRES_VERSION=16.14' 'MIGRATION_030_TESTS=PASS' 'FUNCTION_SECURITY=PASS' \
   'COMMITTING_TO_COMMITTED=PASS' 'TERMINAL_STATES=PASS' 'HASH_MISMATCH=DENIED' \
-  'CROSS_SCOPE_ASSET_LINKS=DENIED' 'FORCE_RLS_PRESERVED=PASS' 'MIGRATION_FAILURE_ROLLBACK=PASS' 'LEDGER_COUNT=22' \
+  'CROSS_SCOPE_ASSET_LINKS=DENIED' 'FORCE_RLS_PRESERVED=PASS' 'MIGRATION_FAILURE_ROLLBACK=PASS' 'LEDGER_COUNT=23' \
   "SCHEMA_HASH=$schema_hash"

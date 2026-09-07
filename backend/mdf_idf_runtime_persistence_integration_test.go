@@ -41,6 +41,7 @@ func TestMdfIdfRuntimePersistencePostgreSQL16(t *testing.T) {
 	ruleID, siteID, areaID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	otherBranchSiteID, otherBranchAreaID := uuid.NewString(), uuid.NewString()
 	otherTenantSiteID, otherTenantAreaID := uuid.NewString(), uuid.NewString()
+	floorID, zoneID, otherFloorID, otherZoneID, crossFloorID, crossZoneID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	setup := []struct {
 		query string
 		args  []interface{}
@@ -51,13 +52,19 @@ func TestMdfIdfRuntimePersistencePostgreSQL16(t *testing.T) {
 		{`INSERT INTO user_tenants(user_id,tenant_id) VALUES($1,$2)`, []interface{}{userID, tenantID}},
 		{`INSERT INTO user_branches(user_id,branch_id) VALUES($1,$2)`, []interface{}{userID, branchID}},
 		{`INSERT INTO sessions(id,user_id,tenant_id,branch_id,token,expires_at) VALUES($1,$2,$3,$4,$5,4102444800)`, []interface{}{uuid.NewString(), userID, tenantID, branchID, token}},
-		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_site,include_internal_area,include_placement,seq_digits,last_seq,active) VALUES($1,$2,'MDF','MDF','-',true,true,true,false,3,0,true)`, []interface{}{ruleID, tenantID}},
+		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_zone,context_mode,seq_digits,last_seq,active) VALUES($1,$2,'MDF','MDF','-',true,true,'CANONICAL_ZONE',3,0,true)`, []interface{}{ruleID, tenantID}},
 		{`INSERT INTO buildings(id,tenant_id,branch_id,code,name,status) VALUES($1,$2,$3,'PARQUE','Parque','active')`, []interface{}{siteID, tenantID, branchID}},
-		{`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,code,name,status) VALUES($1,$2,$3,$4,'PROD','Producción','active')`, []interface{}{areaID, tenantID, branchID, siteID}},
+		{`INSERT INTO floors(id,tenant_id,building_id,name,status) VALUES($1,$2,$3,'Piso 1','active')`, []interface{}{floorID, tenantID, siteID}},
+		{`INSERT INTO zones(id,tenant_id,branch_id,building_id,floor_id,code,name,status) VALUES($1,$2,$3,$4,$5,'PROD','Producción','active')`, []interface{}{zoneID, tenantID, branchID, siteID, floorID}},
+		{`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,floor_id,zone_id,code,name,status) VALUES($1,$2,$3,$4,$5,$6,'PROD','Producción','active')`, []interface{}{areaID, tenantID, branchID, siteID, floorID, zoneID}},
 		{`INSERT INTO buildings(id,tenant_id,branch_id,code,name,status) VALUES($1,$2,$3,'SUC-B','Sucursal B','active')`, []interface{}{otherBranchSiteID, tenantID, otherBranchID}},
-		{`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,code,name,status) VALUES($1,$2,$3,$4,'AREA-B','Área B','active')`, []interface{}{otherBranchAreaID, tenantID, otherBranchID, otherBranchSiteID}},
+		{`INSERT INTO floors(id,tenant_id,building_id,name,status) VALUES($1,$2,$3,'Piso 1','active')`, []interface{}{otherFloorID, tenantID, otherBranchSiteID}},
+		{`INSERT INTO zones(id,tenant_id,branch_id,building_id,floor_id,code,name,status) VALUES($1,$2,$3,$4,$5,'AREA-B','Área B','active')`, []interface{}{otherZoneID, tenantID, otherBranchID, otherBranchSiteID, otherFloorID}},
+		{`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,floor_id,zone_id,code,name,status) VALUES($1,$2,$3,$4,$5,$6,'AREA-B','Área B','active')`, []interface{}{otherBranchAreaID, tenantID, otherBranchID, otherBranchSiteID, otherFloorID, otherZoneID}},
 		{`INSERT INTO buildings(id,tenant_id,branch_id,code,name,status) VALUES($1,$2,$3,'TEN-B','Tenant B','active')`, []interface{}{otherTenantSiteID, otherTenantID, crossTenantBranchID}},
-		{`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,code,name,status) VALUES($1,$2,$3,$4,'AREA-TB','Área Tenant B','active')`, []interface{}{otherTenantAreaID, otherTenantID, crossTenantBranchID, otherTenantSiteID}},
+		{`INSERT INTO floors(id,tenant_id,building_id,name,status) VALUES($1,$2,$3,'Piso 1','active')`, []interface{}{crossFloorID, otherTenantID, otherTenantSiteID}},
+		{`INSERT INTO zones(id,tenant_id,branch_id,building_id,floor_id,code,name,status) VALUES($1,$2,$3,$4,$5,'AREA-TB','Área Tenant B','active')`, []interface{}{crossZoneID, otherTenantID, crossTenantBranchID, otherTenantSiteID, crossFloorID}},
+		{`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,floor_id,zone_id,code,name,status) VALUES($1,$2,$3,$4,$5,$6,'AREA-TB','Área Tenant B','active')`, []interface{}{otherTenantAreaID, otherTenantID, crossTenantBranchID, otherTenantSiteID, crossFloorID, crossZoneID}},
 	}
 	for _, statement := range setup {
 		if _, err = adminDB.Exec(statement.query, statement.args...); err != nil {
@@ -66,11 +73,11 @@ func TestMdfIdfRuntimePersistencePostgreSQL16(t *testing.T) {
 	}
 	defer adminDB.Exec(`DELETE FROM tenants WHERE id IN ($1,$2)`, tenantID, otherTenantID)
 
-	invoke := func(name, requestedSiteID, requestedAreaID string) *httptest.ResponseRecorder {
+	invoke := func(name, requestedSiteID, requestedAreaID, requestedZoneID string) *httptest.ResponseRecorder {
 		t.Helper()
 		body, marshalErr := json.Marshal(map[string]interface{}{
 			"name": name, "site_type": "MDF", "site_id": requestedSiteID,
-			"internal_area_id": requestedAreaID, "status": "active",
+			"internal_area_id": requestedAreaID, "zone_id": requestedZoneID, "physical_identity": name, "status": "active",
 		})
 		if marshalErr != nil {
 			t.Fatal(marshalErr)
@@ -81,10 +88,10 @@ func TestMdfIdfRuntimePersistencePostgreSQL16(t *testing.T) {
 		RequireTenantTx(runtimeDB, handleMdfIdf)(recorder, request)
 		return recorder
 	}
-	if crossBranch := invoke("MDF cross branch", otherBranchSiteID, otherBranchAreaID); crossBranch.Code != http.StatusUnprocessableEntity {
+	if crossBranch := invoke("MDF cross branch", otherBranchSiteID, otherBranchAreaID, otherZoneID); crossBranch.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("cross-branch physical context status=%d body=%s", crossBranch.Code, crossBranch.Body.String())
 	}
-	if crossTenant := invoke("MDF cross tenant", otherTenantSiteID, otherTenantAreaID); crossTenant.Code != http.StatusUnprocessableEntity {
+	if crossTenant := invoke("MDF cross tenant", otherTenantSiteID, otherTenantAreaID, crossZoneID); crossTenant.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("cross-tenant physical context status=%d body=%s", crossTenant.Code, crossTenant.Body.String())
 	}
 
@@ -92,7 +99,7 @@ func TestMdfIdfRuntimePersistencePostgreSQL16(t *testing.T) {
 	if _, err = adminDB.Exec(fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced MDF audit failure'; END $$; CREATE TRIGGER %s BEFORE INSERT ON asset_logs FOR EACH ROW EXECUTE FUNCTION %s()`, failureFunction, failureFunction, failureFunction)); err != nil {
 		t.Fatal(err)
 	}
-	failed := invoke("MDF audit rollback", siteID, areaID)
+	failed := invoke("MDF audit rollback", siteID, areaID, zoneID)
 	if _, err = adminDB.Exec(fmt.Sprintf(`DROP TRIGGER %s ON asset_logs; DROP FUNCTION %s()`, failureFunction, failureFunction)); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +125,7 @@ func TestMdfIdfRuntimePersistencePostgreSQL16(t *testing.T) {
 	if _, err = adminDB.Exec(fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'forced deferred commit failure'; END $$; CREATE CONSTRAINT TRIGGER %s AFTER INSERT ON assets DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.name = 'MDF commit failure') EXECUTE FUNCTION %s()`, commitFailureFunction, commitFailureFunction, commitFailureFunction)); err != nil {
 		t.Fatal(err)
 	}
-	commitFailed := invoke("MDF commit failure", siteID, areaID)
+	commitFailed := invoke("MDF commit failure", siteID, areaID, zoneID)
 	if _, err = adminDB.Exec(fmt.Sprintf(`DROP TRIGGER %s ON assets; DROP FUNCTION %s()`, commitFailureFunction, commitFailureFunction)); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +139,7 @@ func TestMdfIdfRuntimePersistencePostgreSQL16(t *testing.T) {
 		t.Fatalf("commit failure consumed sequence=%d err=%v", sequence, err)
 	}
 
-	created := invoke("MDF persisted", siteID, areaID)
+	created := invoke("MDF persisted", siteID, areaID, zoneID)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
 	}
@@ -140,7 +147,7 @@ func TestMdfIdfRuntimePersistencePostgreSQL16(t *testing.T) {
 		ID           string `json:"id"`
 		InternalCode string `json:"internal_code"`
 	}
-	if err = json.Unmarshal(created.Body.Bytes(), &response); err != nil || response.ID == "" || response.InternalCode != "MDF-TJ-PARQUE-PROD-001" {
+	if err = json.Unmarshal(created.Body.Bytes(), &response); err != nil || response.ID == "" || response.InternalCode != "MDF-TJ-PROD-001" {
 		t.Fatalf("create response=%s err=%v", created.Body.String(), err)
 	}
 	if err = adminDB.QueryRow(`SELECT count(*) FROM assets a JOIN mdf_idf m ON m.asset_id=a.id JOIN locations l ON l.asset_id=a.id JOIN asset_logs al ON al.asset_id=a.id WHERE a.id=$1 AND a.tenant_id=$2 AND a.branch_id=$3 AND al.event_type='created'`, response.ID, tenantID, branchID).Scan(&count); err != nil || count != 1 {

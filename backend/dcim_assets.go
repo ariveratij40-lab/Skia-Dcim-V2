@@ -104,32 +104,33 @@ type TechnicalData struct {
 }
 
 type CreateAssetRequest struct {
-	TenantID        string         `json:"tenant_id"`
-	BranchID        string         `json:"branch_id"`
-	AssetTypeID     string         `json:"asset_type_id"`
-	InternalCode    string         `json:"internal_code"`
-	LocationID      *string        `json:"location_id"`
-	TechnicalRoomID *string        `json:"technical_room_id"`
-	ZoneID          string         `json:"zone_id"`
-	SiteID          string         `json:"site_id"`
-	InternalAreaID  string         `json:"internal_area_id"`
-	Name            string         `json:"name"`
-	SerialNumber    *string        `json:"serial_number"`
-	Model           *string        `json:"model"`
-	Manufacturer    *string        `json:"manufacturer"`
-	ManufacturerID  *string        `json:"manufacturer_id"`
-	ModelID         *string        `json:"model_id"`
-	ProviderID      *string        `json:"provider_id"`
-	Status          string         `json:"status"`
-	InventoryStatus *string        `json:"inventory_status"`
-	RFIDTag         *string        `json:"rfid_tag"`
-	QRCode          *string        `json:"qr_code"`
-	InstallYear     *int           `json:"install_year"`
-	PurchaseDate    *string        `json:"purchase_date"`
-	WarrantyExpiry  *string        `json:"warranty_expiry"`
-	CostUSD         *float64       `json:"cost_usd"`
-	Observations    *string        `json:"observations"`
-	TechnicalData   *TechnicalData `json:"technical_data"`
+	TenantID         string         `json:"tenant_id"`
+	BranchID         string         `json:"branch_id"`
+	AssetTypeID      string         `json:"asset_type_id"`
+	InternalCode     string         `json:"internal_code"`
+	LocationID       *string        `json:"location_id"`
+	TechnicalRoomID  *string        `json:"technical_room_id"`
+	ZoneID           string         `json:"zone_id"`
+	SiteID           string         `json:"site_id"`
+	InternalAreaID   string         `json:"internal_area_id"`
+	Name             string         `json:"name"`
+	PhysicalIdentity string         `json:"physical_identity"`
+	SerialNumber     *string        `json:"serial_number"`
+	Model            *string        `json:"model"`
+	Manufacturer     *string        `json:"manufacturer"`
+	ManufacturerID   *string        `json:"manufacturer_id"`
+	ModelID          *string        `json:"model_id"`
+	ProviderID       *string        `json:"provider_id"`
+	Status           string         `json:"status"`
+	InventoryStatus  *string        `json:"inventory_status"`
+	RFIDTag          *string        `json:"rfid_tag"`
+	QRCode           *string        `json:"qr_code"`
+	InstallYear      *int           `json:"install_year"`
+	PurchaseDate     *string        `json:"purchase_date"`
+	WarrantyExpiry   *string        `json:"warranty_expiry"`
+	CostUSD          *float64       `json:"cost_usd"`
+	Observations     *string        `json:"observations"`
+	TechnicalData    *TechnicalData `json:"technical_data"`
 }
 
 type UpdateAssetRequest struct {
@@ -954,6 +955,7 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 			Name: req.Name, Type: assetTypeCode, ManualCode: req.InternalCode,
 			Status: req.Status, SiteID: req.SiteID, InternalAreaID: req.InternalAreaID,
 			ZoneID: req.ZoneID, Observations: observations,
+			PhysicalIdentity: req.PhysicalIdentity,
 		})
 		if createErr != nil {
 			writeManagedAssetError(w, createErr, assetTypeCode)

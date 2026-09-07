@@ -39,6 +39,7 @@ func TestGenericMdfIdfUpdateRelocationPostgreSQL16(t *testing.T) {
 	floor, floorB, otherFloor := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	zoneA, zoneB, crossBranchZone, crossTenantZone := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	areaA, areaB, crossBranchArea, crossTenantArea, unprovableArea, legacyArea := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	legacyAssetID, legacyLocationID, legacySubtypeID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	warehouse := uuid.NewString()
 	mdfRule, idfRule, otherRule, legacyRule, rackRule, switchRule, serverRule := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 
@@ -58,6 +59,10 @@ func TestGenericMdfIdfUpdateRelocationPostgreSQL16(t *testing.T) {
 		{`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,floor_id,zone_id,code,name,status) VALUES($1,$7,$8,$9,$10,$11,'AA','A','active'),($2,$7,$8,$9,$10,$12,'AB','B','active'),($3,$7,$13,$14,$15,$16,'AC','Cross branch','active'),($4,$17,$18,$19,$20,$21,'AO','Cross tenant','active'),($5,$7,$8,$9,NULL,NULL,'AU','Unprovable','active'),($6,$22,$23,$24,NULL,NULL,'AL','Legacy','active')`, []interface{}{areaA, areaB, crossBranchArea, crossTenantArea, unprovableArea, legacyArea, tenant, branch, site, floor, zoneA, zoneB, branchB, siteB, floorB, crossBranchZone, otherTenant, otherBranch, otherSite, otherFloor, crossTenantZone, legacyTenant, legacyBranch, legacySite}},
 		{`INSERT INTO locations(id,tenant_id,branch_id,placement_type,placement_code,name,status) VALUES($1,$2,$3,'WAREHOUSE','WH','Warehouse','active')`, []interface{}{warehouse, tenant, branch}},
 		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_zone,context_mode,seq_digits,last_seq,active) VALUES($1,$5,'MDF','MDF','-',true,true,'CANONICAL_ZONE',3,0,true),($2,$5,'IDF','IDF','-',true,true,'CANONICAL_ZONE',3,0,true),($3,$6,'MDF','MDF','-',true,true,'CANONICAL_ZONE',3,0,true),($4,$7,'MDF','MDF','-',true,false,'LEGACY_INTERNAL_AREA',3,0,true)`, []interface{}{mdfRule, idfRule, otherRule, legacyRule, tenant, otherTenant, legacyTenant}},
+		{`INSERT INTO locations(id,tenant_id,branch_id,placement_type,name,status,internal_area_id) VALUES($1,$2,$3,'MDF','Legacy MDF','active',$4)`, []interface{}{legacyLocationID, legacyTenant, legacyBranch, legacyArea}},
+		{`INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,internal_code,name,status,location_id,nomenclature_id,nomenclature_sequence) SELECT $1,$2,$3,id,'MDF-L-001','Legacy MDF','active',$4,$5,1 FROM asset_types WHERE code='MDF'`, []interface{}{legacyAssetID, legacyTenant, legacyBranch, legacyLocationID, legacyRule}},
+		{`UPDATE locations SET asset_id=$1 WHERE id=$2`, []interface{}{legacyAssetID, legacyLocationID}},
+		{`INSERT INTO mdf_idf(id,tenant_id,branch_id,asset_id,type) VALUES($1,$2,$3,$4,'MDF')`, []interface{}{legacySubtypeID, legacyTenant, legacyBranch, legacyAssetID}},
 		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_placement,seq_digits,last_seq,active) VALUES($1,$4,'RACK','RK','-',true,true,3,0,true),($2,$4,'SWITCH','SW','-',true,true,3,0,true),($3,$4,'SERVER','SRV','-',true,false,3,0,true)`, []interface{}{rackRule, switchRule, serverRule, tenant}},
 	}
 	for _, statement := range setup {
@@ -91,7 +96,7 @@ func TestGenericMdfIdfUpdateRelocationPostgreSQL16(t *testing.T) {
 		return id
 	}
 	create := func(session, typ, name, zone string, extra map[string]interface{}) string {
-		body := map[string]interface{}{"asset_type_id": assetTypeID(typ), "name": name}
+		body := map[string]interface{}{"asset_type_id": assetTypeID(typ), "name": name, "physical_identity": name}
 		if zone != "" {
 			body["zone_id"] = zone
 		}
@@ -116,19 +121,6 @@ func TestGenericMdfIdfUpdateRelocationPostgreSQL16(t *testing.T) {
 	rackID := create(token, "RACK", "Rack", "", map[string]interface{}{"location_id": warehouse})
 	switchID := create(token, "SWITCH", "Switch", "", map[string]interface{}{"location_id": warehouse})
 	serverID := create(token, "SERVER", "Server", "", nil)
-
-	legacyBody := map[string]interface{}{"type": "MDF", "name": "Legacy MDF", "site_id": legacySite, "internal_area_id": legacyArea}
-	encodedLegacy, _ := json.Marshal(legacyBody)
-	legacyReq := httptest.NewRequest(http.MethodPost, "/api/infra/mdf-idf", bytes.NewReader(encodedLegacy))
-	legacyReq.AddCookie(&http.Cookie{Name: "session_token", Value: legacyToken})
-	legacyCreate := httptest.NewRecorder()
-	RequireTenantTx(runtimeDB, handleMdfIdf)(legacyCreate, legacyReq)
-	if legacyCreate.Code != http.StatusCreated {
-		t.Fatalf("legacy create status=%d body=%s", legacyCreate.Code, legacyCreate.Body.String())
-	}
-	var legacyResponse map[string]interface{}
-	_ = json.Unmarshal(legacyCreate.Body.Bytes(), &legacyResponse)
-	legacyAssetID, _ := legacyResponse["asset_id"].(string)
 
 	type state struct {
 		Location, Zone, Area, Code, TypeID, Name, Satellite string
