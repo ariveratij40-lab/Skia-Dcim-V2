@@ -715,8 +715,9 @@ func handleInventoryImportRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleImportInventoryCommit maneja POST /api/import/inventory/{id}/commit
-// Retorna 501 Not Implemented temporalmente
+// handleImportInventoryCommit is the only import path allowed to persist
+// canonical assets. Tenant and branch are derived from the authenticated
+// session; the request contributes only the import identifier.
 func handleImportInventoryCommit(w http.ResponseWriter, r *http.Request, sessionCtx SessionContextSecure, importID string) {
 	// Validar método
 	if r.Method != http.MethodPost {
@@ -730,26 +731,12 @@ func handleImportInventoryCommit(w http.ResponseWriter, r *http.Request, session
 		return
 	}
 
-	// TODO: Implementar commit transaccional
-	// - Validar que importación existe y pertenece al tenant+branch
-	// - Validar que no fue commiteada previamente
-	// - Iniciar transacción
-	// - Copiar filas a tabla de assets
-	// - Registrar auditoría
-	// - Confirmar transacción
-	// - Retornar 200 con resultado
-
-	response := ImportResponse{
-		Success: false,
-		Error: &ErrorInfo{
-			Code:    "NOT_IMPLEMENTED",
-			Message: "Commit functionality not yet implemented",
-		},
+	parsedImportID, err := strconv.ParseInt(importID, 10, 64)
+	if err != nil || parsedImportID <= 0 {
+		writeErrorResponse(w, http.StatusBadRequest, "INVALID_ID", "Import ID must be a positive integer")
+		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	json.NewEncoder(w).Encode(response)
+	handleCanonicalImportCommit(w, r, sessionCtx, parsedImportID)
 }
 
 // validateImportIDFormat valida que el ID sea un INTEGER válido

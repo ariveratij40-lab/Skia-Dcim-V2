@@ -47,8 +47,8 @@ func TestCanonicalImportStagingPostgresZeroDomainDelta(t *testing.T) {
 	}
 	before := counts()
 	rows := []map[string]interface{}{
-		{"asset_type_code": "MDF", "zone_id": zone, "name": "MDF A", "internal_code": "IMP-MDF"},
-		{"asset_type_code": "IDF", "zone_code": "PROD", "name": "IDF A"},
+		{"asset_type_code": "MDF", "physical_identity": "MDF-STAGING-A", "zone_id": zone, "name": "MDF A", "internal_code": "IMP-MDF"},
+		{"asset_type_code": "IDF", "physical_identity": "IDF-STAGING-A", "zone_code": "PROD", "name": "IDF A"},
 		{"asset_type_code": "SWITCH", "name": "Switch A"},
 		{"asset_type_code": "MDF", "name": "Missing zone"},
 		{"asset_type_code": "IDF", "internal_area_id": "95000000-0000-4000-8000-000000000001"},

@@ -96,15 +96,23 @@ func TestHandleInventoryImportRoutes_RowsValid(t *testing.T) {
 	}
 }
 
-// TestHandleInventoryImportRoutes_CommitNotImplemented prueba POST /{id}/commit (501)
-func TestHandleInventoryImportRoutes_CommitNotImplemented(t *testing.T) {
+// TestHandleInventoryImportRoutes_CommitNotFound proves the coordinator uses
+// the scoped secure enumeration interface and does not disclose an unknown
+// import through a different response.
+func TestHandleInventoryImportRoutes_CommitNotFound(t *testing.T) {
 	mock := installInventoryRouteDBMock(t)
 	expectInventoryRouteSession(mock, "test-session", "user-1", "tenant-1", "branch-1")
+	mock.ExpectBegin()
+	mock.ExpectExec("SELECT set_config\\('app.tenant_id'").WithArgs("tenant-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("SELECT set_config\\('app.branch_id'").WithArgs("branch-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("list_import_rows_for_commit").WithArgs(int64(1), "tenant-1", "branch-1").
+		WillReturnRows(sqlmock.NewRows([]string{"result_code", "row_id", "row_number", "row_status", "normalized_row_hash", "row_data", "canonical_asset_id"}).
+			AddRow("NOT_FOUND_OR_UNAUTHORIZED", nil, nil, nil, nil, nil, nil))
+	mock.ExpectRollback()
 	w := runInventoryRouteTest(t, http.MethodPost, "/api/import/inventory/1/commit", "test-session")
 
-	// Verificar respuesta 501
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("Expected status 501, got %d", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
 	}
 }
 
