@@ -6,9 +6,9 @@ export type MdfIdfType = 'MDF' | 'IDF';
 export type MdfIdfStatus = 'Operativo' | 'Atención' | 'Crítico' | 'Planeado' | 'Fuera de servicio';
 
 export interface MdfIdfWizardData {
-  code: string; name: string; type: MdfIdfType; status: MdfIdfStatus;
+  code: string; name: string; physical_identity: string; type: MdfIdfType; status: MdfIdfStatus;
   site_id: string; internal_area_id: string; site_code: string; internal_area_code: string;
-  building: string; floor: string; zone: string; address: string;
+  building: string; floor: string; zone: string; zone_id: string; address: string;
   responsible: string; responsible_email: string;
   racks_count: number; switches_count: number; ups_count: number;
   nodes_count: number; servers_count: number;
@@ -49,9 +49,9 @@ const TYPE_COLORS: Record<MdfIdfType, string> = {
 };
 
 const EMPTY: MdfIdfWizardData = {
-  code: '', name: '', type: 'IDF', status: 'Operativo',
+  code: '', name: '', physical_identity: '', type: 'IDF', status: 'Operativo',
   site_id: '', internal_area_id: '', site_code: '', internal_area_code: '',
-  building: '', floor: '', zone: '', address: '',
+  building: '', floor: '', zone: '', zone_id: '', address: '',
   responsible: '', responsible_email: '',
   racks_count: 0, switches_count: 0, ups_count: 0, nodes_count: 0, servers_count: 0,
   capacity_u: 42, used_u: 0, cooling: '', power_kva: 0,
@@ -64,7 +64,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   interface Site { id: string; code: string; name: string; status: string; address: string }
-  interface InternalArea { id: string; site_id: string; code: string; name: string; status: string }
+  interface InternalArea { id: string; site_id: string; code: string; name: string; status: string; zone_id?: string | null }
   const [sites, setSites] = useState<Site[]>([]);
   const [areas, setAreas] = useState<InternalArea[]>([]);
   const [branchCode, setBranchCode] = useState('[SUCURSAL]');
@@ -98,7 +98,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
       const response = await fetch(`/api/dcim/internal-areas?site_id=${encodeURIComponent(siteID)}`);
       if (!response.ok) throw new Error();
       const body = await response.json();
-      setAreas((body.internal_areas ?? []).filter((area: InternalArea) => area.status === 'active'));
+      setAreas((body.internal_areas ?? []).filter((area: InternalArea) => area.status === 'active' && area.zone_id));
     } catch {
       setAreas([]);
     } finally {
@@ -108,13 +108,13 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
   const selectSite = (siteID: string) => {
     const site = sites.find(item => item.id === siteID);
-    setForm(previous => ({ ...previous, site_id: siteID, site_code: site?.code ?? '', building: site?.name ?? '', address: site?.address ?? '', internal_area_id: '', internal_area_code: '', zone: '' }));
+    setForm(previous => ({ ...previous, site_id: siteID, site_code: site?.code ?? '', building: site?.name ?? '', address: site?.address ?? '', internal_area_id: '', internal_area_code: '', zone: '', zone_id: '' }));
     void loadAreas(siteID);
   };
 
   const selectArea = (areaID: string) => {
     const area = areas.find(item => item.id === areaID);
-    setForm(previous => ({ ...previous, internal_area_id: areaID, internal_area_code: area?.code ?? '', zone: area?.name ?? '' }));
+    setForm(previous => ({ ...previous, internal_area_id: areaID, internal_area_code: area?.code ?? '', zone: area?.name ?? '', zone_id: area?.zone_id ?? '' }));
   };
 
   const saveSite = async () => {
@@ -124,7 +124,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     const created = await response.json();
     await loadSites();
     setSites(previous => previous.some(item => item.id === created.id) ? previous : [...previous, created]);
-    setForm(previous => ({ ...previous, site_id: created.id, site_code: created.code, building: created.name, address: newSite.address, internal_area_id: '', internal_area_code: '', zone: '' }));
+    setForm(previous => ({ ...previous, site_id: created.id, site_code: created.code, building: created.name, address: newSite.address, internal_area_id: '', internal_area_code: '', zone: '', zone_id: '' }));
     setAreas([]);
     setNewSite({ code: '', name: '', address: '' });
     setShowSiteForm(false);
@@ -137,8 +137,12 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     if (!response.ok) { alert('No se pudo crear el área interna. Verifica permisos y código.'); return; }
     const created = await response.json();
     await loadAreas(form.site_id);
+    if (!created.zone_id) {
+      alert('El área se creó sin una zona canónica y no puede usarse para un MDF/IDF. Asígnale una zona antes de continuar.');
+      return;
+    }
     setAreas(previous => previous.some(item => item.id === created.id) ? previous : [...previous, created]);
-    setForm(previous => ({ ...previous, internal_area_id: created.id, internal_area_code: created.code, zone: created.name }));
+    setForm(previous => ({ ...previous, internal_area_id: created.id, internal_area_code: created.code, zone: created.name, zone_id: created.zone_id }));
     setNewArea({ code: '', name: '' });
     setShowAreaForm(false);
     window.dispatchEvent(new Event('skia:infrastructure-changed'));
@@ -419,14 +423,14 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     const c: number[] = [];
     if (form.site_id) c.push(1);
     if (form.internal_area_id) c.push(2);
-    if (codePattern && form.name && form.type && form.status) c.push(3);
+    if (codePattern && form.name && form.physical_identity && form.type && form.status) c.push(3);
     if (form.capacity_u) c.push(4);
     if (form.responsible) c.push(5);
     return c;
   };
 
   const handleSave = async () => {
-    if (!codePattern || !form.site_id || !form.internal_area_id || !form.name || !form.type) return;
+    if (!codePattern || !form.site_id || !form.internal_area_id || !form.zone_id || !form.name || !form.physical_identity || !form.type) return;
     setSaving(true);
     setSaveError('');
     try {
@@ -704,6 +708,10 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
             ))}</div>
 
             {/* Campo Nombre con autocompletado */}
+            <div style={{ gridColumn: '1/-1' }}>
+              {fld('Identificador físico', inp('physical_identity', 'MDF-01'), true)}
+              <p style={{ margin: '-8px 0 12px', fontSize: '0.72rem', color: '#64748B' }}>Etiqueta física reconocida por su organización. No es el código técnico generado por SKIA.</p>
+            </div>
             <div style={{ gridColumn: '1/-1', position: 'relative' }}>
               {lbl('Nombre del cuarto técnico', true)}
               <input
@@ -997,7 +1005,7 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
   const completed = completedStages();
   const canAdvance = stage === 1 ? Boolean(form.site_id)
     : stage === 2 ? Boolean(form.internal_area_id)
-      : stage === 3 ? Boolean(codePattern && form.name && form.type)
+      : stage === 3 ? Boolean(codePattern && form.name && form.physical_identity && form.type)
         : true;
   const canOpenStage = (target: number) => target === 1
     || (target === 2 && Boolean(form.site_id))
@@ -1044,8 +1052,8 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!codePattern || !form.site_id || !form.internal_area_id || !form.name || saving}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!codePattern || !form.site_id || !form.internal_area_id || !form.name) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!codePattern || !form.site_id || !form.internal_area_id || !form.name) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
+            <button onClick={handleSave} disabled={!codePattern || !form.site_id || !form.internal_area_id || !form.zone_id || !form.name || !form.physical_identity || saving}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!codePattern || !form.site_id || !form.internal_area_id || !form.zone_id || !form.name || !form.physical_identity) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!codePattern || !form.site_id || !form.internal_area_id || !form.zone_id || !form.name || !form.physical_identity) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}
               title={codeError ? 'Corrige el código duplicado antes de guardar' : ''}>
               {saving ? '...' : checkingCode ? 'Verificando...' : <><Check size={16} /> Guardar MDF/IDF</>}
             </button>

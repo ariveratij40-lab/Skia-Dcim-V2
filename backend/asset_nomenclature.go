@@ -16,6 +16,8 @@ var (
 	ErrAssetNameNeeded             = errors.New("descriptive asset name is required")
 	ErrCanonicalZoneNamingRequired = errors.New("canonical zone naming rule is required")
 	ErrZoneRequired                = errors.New("canonical zone is required")
+	ErrPhysicalIdentityRequired    = errors.New("physical identity is required")
+	ErrPhysicalIdentityInvalid     = errors.New("physical identity is invalid")
 )
 
 var installableAssetTypes = map[string]bool{
@@ -53,6 +55,7 @@ type mdfIdfCreateInput struct {
 	Name, Type, ManualCode, Status   string
 	SiteID, InternalAreaID, ZoneID   string
 	Observations                     string
+	PhysicalIdentity                 string
 }
 
 type mdfIdfCreateResult struct {
@@ -81,6 +84,11 @@ func createMdfIdf(ctx context.Context, tenantTx TenantDB, userID, tenantID, bran
 	}
 	if input.Status == "" {
 		input.Status = "active"
+	}
+	physicalIdentity := strings.TrimSpace(input.PhysicalIdentity)
+	_, err := normalizeMdfIdfPhysicalIdentity(physicalIdentity)
+	if err != nil {
+		return nil, err
 	}
 	scope := PhysicalScope{TenantID: tenantID, BranchID: branchID}
 	zoneID, areaID, siteID := strings.TrimSpace(input.ZoneID), strings.TrimSpace(input.InternalAreaID), strings.TrimSpace(input.SiteID)
@@ -111,13 +119,6 @@ func createMdfIdf(ctx context.Context, tenantTx TenantDB, userID, tenantID, bran
 			}
 			physicalLocation = &resolved
 		}
-	} else if areaID != "" {
-		resolved, err := ResolvePhysicalLocation(ctx, tenantTx, tenantID, branchID, siteID, areaID)
-		if err != nil {
-			return nil, ErrInvalidPhysicalLocation
-		}
-		physicalLocation = &resolved
-		namingContextMode = "LEGACY_INTERNAL_AREA"
 	} else {
 		return nil, ErrZoneRequired
 	}
@@ -137,13 +138,51 @@ func createMdfIdf(ctx context.Context, tenantTx TenantDB, userID, tenantID, bran
 	if _, err = tenantTx.ExecContext(ctx, `INSERT INTO mdf_idf (id,asset_id,tenant_id,branch_id,type) VALUES($1,$2,$3,$4,$5)`, mdfID, managed.AssetID, tenantID, branchID, mdfType); err != nil {
 		return nil, err
 	}
-	if _, err = tenantTx.ExecContext(ctx, `UPDATE locations SET placement_code=$1,asset_id=$2,updated_at=NOW() WHERE id=$3 AND tenant_id=$4 AND branch_id=$5`, managed.Assignment.Code, managed.AssetID, placementID, tenantID, branchID); err != nil {
+	if _, err = tenantTx.ExecContext(ctx, `UPDATE locations SET placement_code=$1,asset_id=$2,physical_identity=$3,physical_identity_governed=TRUE,updated_at=NOW() WHERE id=$4 AND tenant_id=$5 AND branch_id=$6`, managed.Assignment.Code, managed.AssetID, physicalIdentity, placementID, tenantID, branchID); err != nil {
 		return nil, err
 	}
 	if _, err = tenantTx.ExecContext(ctx, `INSERT INTO asset_logs(tenant_id,asset_id,event_type,new_value,notes,performed_by) VALUES($1,$2,'created',$3,$4,$5)`, tenantID, managed.AssetID, managed.Assignment.Code, "Alta MDF/IDF con ubicación física canónica", userID); err != nil {
 		return nil, err
 	}
 	return &mdfIdfCreateResult{Managed: managed, MdfID: mdfID}, nil
+}
+
+func normalizeMdfIdfPhysicalIdentity(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ErrPhysicalIdentityRequired
+	}
+	var b strings.Builder
+	dash := false
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' {
+			r -= 'a' - 'A'
+		}
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' || r == '\v' {
+			if b.Len() > 0 && !dash {
+				b.WriteByte('-')
+				dash = true
+			}
+			continue
+		}
+		if r == '-' {
+			if b.Len() > 0 && !dash {
+				b.WriteByte('-')
+				dash = true
+			}
+			continue
+		}
+		if !((r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '/') {
+			return "", ErrPhysicalIdentityInvalid
+		}
+		b.WriteRune(r)
+		dash = false
+	}
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		return "", ErrPhysicalIdentityRequired
+	}
+	return result, nil
 }
 
 func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, input managedAssetInput) (*managedAssetReservation, error) {
@@ -212,6 +251,15 @@ func writeManagedAssetError(w http.ResponseWriter, err error, assetTypeCode stri
 	case errors.Is(err, ErrAssetNameNeeded):
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "name_required", "message": "El nombre descriptivo es obligatorio."})
+	case errors.Is(err, ErrPhysicalIdentityRequired):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "physical_identity_required", "field": "physical_identity", "message": "Capture el identificador físico del MDF/IDF."})
+	case errors.Is(err, ErrPhysicalIdentityInvalid):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "physical_identity_invalid", "field": "physical_identity", "message": "Use únicamente letras ASCII, números, punto, guion, guion bajo o diagonal."})
+	case strings.Contains(err.Error(), "uq_locations_mdf_idf_physical_identity"):
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "physical_identity_conflict", "message": "Ya existe un MDF/IDF con esa identidad física en la Zona actual."})
 	case errors.Is(err, ErrInvalidAssetPlacement):
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_asset_placement", "field": "placement_id", "message": "Seleccione una ubicación activa de la sucursal actual."})

@@ -81,7 +81,7 @@ func TestMdfIdfZoneHandlerPostgreSQL16(t *testing.T) {
 	defer adminDB.Exec(`DELETE FROM tenants WHERE id IN ($1,$2,$3)`, tenant, otherTenant, legacyTenant)
 
 	invoke := func(session, typ, name string, extra map[string]string) *httptest.ResponseRecorder {
-		body := map[string]string{"type": typ, "name": name}
+		body := map[string]string{"type": typ, "name": name, "physical_identity": name}
 		for key, value := range extra {
 			body[key] = value
 		}
@@ -109,7 +109,7 @@ func TestMdfIdfZoneHandlerPostgreSQL16(t *testing.T) {
 		t.Fatal(err)
 	}
 	invokeGeneric := func(session, assetTypeID, name string, extra map[string]interface{}) *httptest.ResponseRecorder {
-		body := map[string]interface{}{"asset_type_id": assetTypeID, "name": name}
+		body := map[string]interface{}{"asset_type_id": assetTypeID, "name": name, "physical_identity": name}
 		for key, value := range extra {
 			body[key] = value
 		}
@@ -334,22 +334,11 @@ func TestMdfIdfZoneHandlerPostgreSQL16(t *testing.T) {
 		t.Fatalf("generic rollback status=%d before=%+v after=%+v body=%s", genericFailed.Code, genericRollbackBefore, snapshot(tenant, mdfRule, branch), genericFailed.Body.String())
 	}
 
-	legacy := invoke(legacyToken, "MDF", "Legacy MDF", map[string]string{"site_id": legacySite, "internal_area_id": legacyArea})
-	if legacy.Code != http.StatusCreated || !strings.Contains(legacy.Body.String(), `"internal_code":"MDF-LG-LEGACY-LEG-001"`) {
-		t.Fatalf("legacy status=%d body=%s", legacy.Code, legacy.Body.String())
-	}
 	legacyBeforeRead := snapshot(legacyTenant, legacyRule, legacyBranch)
-	legacyGet := httptest.NewRequest(http.MethodGet, "/api/infra/mdf-idf", nil)
-	legacyGet.AddCookie(&http.Cookie{Name: "session_token", Value: legacyToken})
-	legacyGetRec := httptest.NewRecorder()
-	RequireTenantTx(runtimeDB, handleMdfIdf)(legacyGetRec, legacyGet)
-	if legacyGetRec.Code != http.StatusOK || !strings.Contains(legacyGetRec.Body.String(), `"internal_area_id":"`+legacyArea+`"`) || !strings.Contains(legacyGetRec.Body.String(), `"zone_id":""`) || !strings.Contains(legacyGetRec.Body.String(), `"placement_authority":"LEGACY_INTERNAL_AREA"`) {
-		t.Fatalf("legacy GET status=%d body=%s", legacyGetRec.Code, legacyGetRec.Body.String())
+	legacy := invoke(legacyToken, "MDF", "Legacy MDF", map[string]string{"site_id": legacySite, "internal_area_id": legacyArea})
+	if legacy.Code != http.StatusUnprocessableEntity || snapshot(legacyTenant, legacyRule, legacyBranch) != legacyBeforeRead {
+		t.Fatalf("new legacy-context MDF status=%d body=%s", legacy.Code, legacy.Body.String())
 	}
-	if legacyAfterRead := snapshot(legacyTenant, legacyRule, legacyBranch); legacyAfterRead != legacyBeforeRead {
-		t.Fatalf("legacy GET mutated state before=%+v after=%+v", legacyBeforeRead, legacyAfterRead)
-	}
-
 	get := httptest.NewRequest(http.MethodGet, "/api/infra/mdf-idf", nil)
 	get.AddCookie(&http.Cookie{Name: "session_token", Value: token})
 	getRec := httptest.NewRecorder()

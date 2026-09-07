@@ -318,6 +318,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			InternalCode     string  `json:"internal_code"` // alias enviado por el wizard
 			SiteType         string  `json:"site_type"`     // alias enviado por el wizard
 			Name             string  `json:"name"`
+			PhysicalIdentity string  `json:"physical_identity"`
 			Type             string  `json:"type"`
 			Building         string  `json:"building"`
 			Floor            string  `json:"floor"`
@@ -347,6 +348,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 			Name: req.Name, Type: mdfType, ManualCode: req.Code + req.InternalCode,
 			Status: req.Status, SiteID: req.SiteID, InternalAreaID: req.InternalAreaID,
 			ZoneID: req.ZoneID, Observations: req.Observations,
+			PhysicalIdentity: req.PhysicalIdentity,
 		})
 		if err != nil {
 			if errors.Is(err, ErrTenantScopeMismatch) {

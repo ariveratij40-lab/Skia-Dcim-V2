@@ -37,10 +37,11 @@ func TestMdfIdfZoneRequestContractFailsClosed(t *testing.T) {
 		name, body, errorCode string
 		status                int
 	}{
-		{"tenant spoof", `{"type":"MDF","name":"x","zone_id":"z1","tenant_id":"other"}`, "tenant_scope_mismatch", http.StatusForbidden},
-		{"branch spoof", `{"type":"MDF","name":"x","zone_id":"z1","branch_id":"other"}`, "branch_scope_mismatch", http.StatusForbidden},
-		{"missing placement", `{"type":"MDF","name":"x"}`, "ZONE_REQUIRED", http.StatusUnprocessableEntity},
-		{"invalid type", `{"type":"SERVER","name":"x","zone_id":"z1"}`, "invalid_distribution_type", http.StatusUnprocessableEntity},
+		{"tenant spoof", `{"type":"MDF","name":"x","physical_identity":"MDF-01","zone_id":"z1","tenant_id":"other"}`, "tenant_scope_mismatch", http.StatusForbidden},
+		{"branch spoof", `{"type":"MDF","name":"x","physical_identity":"MDF-01","zone_id":"z1","branch_id":"other"}`, "branch_scope_mismatch", http.StatusForbidden},
+		{"missing identity", `{"type":"MDF","name":"x","zone_id":"z1"}`, "physical_identity_required", http.StatusUnprocessableEntity},
+		{"missing placement", `{"type":"MDF","name":"x","physical_identity":"MDF-01"}`, "ZONE_REQUIRED", http.StatusUnprocessableEntity},
+		{"invalid type", `{"type":"SERVER","name":"x","physical_identity":"SERVER-01","zone_id":"z1"}`, "invalid_distribution_type", http.StatusUnprocessableEntity},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			database, mock, err := sqlmock.New()
