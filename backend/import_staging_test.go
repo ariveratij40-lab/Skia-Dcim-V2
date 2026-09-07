@@ -58,13 +58,13 @@ func TestNormalizeCanonicalImportRowMDFZoneMatrix(t *testing.T) {
 		zoneByCode string
 		wantState  string
 	}{
-		{"zone id", map[string]interface{}{"asset_type_code": "MDF", "zone_id": testImportZoneA}, testImportZoneA, "", "VALID"},
-		{"zone code", map[string]interface{}{"asset_type_code": "IDF", "zone_code": " prod "}, "", testImportZoneA, "VALID"},
-		{"both match", map[string]interface{}{"asset_type_code": "MDF", "zone_id": testImportZoneA, "zone_code": "PROD"}, testImportZoneA, testImportZoneA, "VALID"},
-		{"both mismatch", map[string]interface{}{"asset_type_code": "MDF", "zone_id": testImportZoneA, "zone_code": "OTHER"}, testImportZoneA, testImportZoneB, "INVALID"},
-		{"missing", map[string]interface{}{"asset_type_code": "IDF", "internal_area_id": "legacy"}, "", "", "INVALID"},
-		{"tenant spoof", map[string]interface{}{"asset_type_code": "MDF", "zone_id": testImportZoneA, "tenant_id": testImportZoneB}, "", "", "INVALID"},
-		{"branch spoof", map[string]interface{}{"asset_type_code": "MDF", "zone_id": testImportZoneA, "branch_id": testImportZoneB}, "", "", "INVALID"},
+		{"zone id", map[string]interface{}{"asset_type_code": "MDF", "physical_identity": "MDF-01", "zone_id": testImportZoneA}, testImportZoneA, "", "VALID"},
+		{"zone code", map[string]interface{}{"asset_type_code": "IDF", "physical_identity": "IDF-01", "zone_code": " prod "}, "", testImportZoneA, "VALID"},
+		{"both match", map[string]interface{}{"asset_type_code": "MDF", "physical_identity": "MDF-02", "zone_id": testImportZoneA, "zone_code": "PROD"}, testImportZoneA, testImportZoneA, "VALID"},
+		{"both mismatch", map[string]interface{}{"asset_type_code": "MDF", "physical_identity": "MDF-03", "zone_id": testImportZoneA, "zone_code": "OTHER"}, testImportZoneA, testImportZoneB, "INVALID"},
+		{"missing", map[string]interface{}{"asset_type_code": "IDF", "physical_identity": "IDF-02", "internal_area_id": "legacy"}, "", "", "INVALID"},
+		{"tenant spoof", map[string]interface{}{"asset_type_code": "MDF", "physical_identity": "MDF-04", "zone_id": testImportZoneA, "tenant_id": testImportZoneB}, "", "", "INVALID"},
+		{"branch spoof", map[string]interface{}{"asset_type_code": "MDF", "physical_identity": "MDF-05", "zone_id": testImportZoneA, "branch_id": testImportZoneB}, "", "", "INVALID"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -128,13 +128,34 @@ func TestStageCanonicalImportRowsUsesSecureFunctionsOnly(t *testing.T) {
 
 	summary, err := stageCanonicalImportRows(context.Background(), database,
 		CanonicalImportScope{TenantID: testImportTenant, BranchID: testImportBranch}, 77, "", []map[string]interface{}{{
-			"asset_type_code": "MDF", "zone_id": testImportZoneA, "internal_code": "IMP-NOT-AUTHORITY",
+			"asset_type_code": "MDF", "physical_identity": "MDF-STAGE-01", "zone_id": testImportZoneA, "internal_code": "IMP-NOT-AUTHORITY",
 		}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if summary.Total != 1 || summary.Valid != 1 || summary.Invalid != 0 || summary.State != "READY" {
 		t.Fatalf("unexpected summary: %+v", summary)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMdfIdfImportRequiresExplicitPhysicalIdentity(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT placement_policy FROM asset_types WHERE code=$1")).WithArgs("MDF").WillReturnRows(sqlmock.NewRows([]string{"placement_policy"}).AddRow("ZONE"))
+	row, err := normalizeCanonicalImportRow(context.Background(), database, CanonicalImportScope{TenantID: testImportTenant, BranchID: testImportBranch}, 1, "", map[string]interface{}{
+		"asset_type_code": "MDF", "zone_id": testImportZoneA, "internal_code": "MUST-NOT-PROMOTE",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.State != "INVALID" || row.Payload.PhysicalIdentity != "" {
+		t.Fatalf("missing identity was promoted: %+v", row)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

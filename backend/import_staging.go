@@ -24,6 +24,7 @@ type CanonicalStagingPayload struct {
 	SerialNumber       string                 `json:"serial_number,omitempty"`
 	AssetTag           string                 `json:"asset_tag,omitempty"`
 	Name               string                 `json:"name,omitempty"`
+	PhysicalIdentity   string                 `json:"physical_identity,omitempty"`
 	Description        string                 `json:"description,omitempty"`
 	PlacementIntent    string                 `json:"placement_intent,omitempty"`
 	ZoneID             string                 `json:"zone_id,omitempty"`
@@ -145,6 +146,7 @@ func normalizeCanonicalImportRow(ctx context.Context, tdb TenantDB, scope Canoni
 		SerialNumber:       strings.TrimSpace(firstNormalized(raw, "serial_number", "serial")),
 		AssetTag:           strings.TrimSpace(firstNormalized(raw, "asset_tag")),
 		Name:               strings.TrimSpace(firstNormalized(raw, "name")),
+		PhysicalIdentity:   strings.TrimSpace(firstNormalized(raw, "physical_identity")),
 		Description:        strings.TrimSpace(firstNormalized(raw, "description", "observations")),
 		SourceInternalCode: strings.TrimSpace(firstNormalized(raw, "internal_code", "asset_code", "code")),
 		SourceLocationID:   strings.TrimSpace(firstNormalized(raw, "location_id")),
@@ -176,6 +178,11 @@ func normalizeCanonicalImportRow(ctx context.Context, tdb TenantDB, scope Canoni
 	payload.PlacementIntent = placement.String
 
 	if typeCode == "MDF" || typeCode == "IDF" {
+		identity, identityErr := normalizeMdfIdfPhysicalIdentity(payload.PhysicalIdentity)
+		if identityErr != nil {
+			return invalidCanonicalRow(payload, "physical_identity is required and must use the canonical identifier alphabet")
+		}
+		payload.PhysicalIdentity = identity
 		zoneID := strings.TrimSpace(firstNormalized(raw, "zone_id"))
 		zoneCode := strings.ToUpper(strings.TrimSpace(firstNormalized(raw, "zone_code")))
 		if zoneID == "" && zoneCode == "" {
