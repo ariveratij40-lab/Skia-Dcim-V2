@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 
@@ -50,6 +51,7 @@ func TestPhysicalLocationHierarchyPostgreSQL16(t *testing.T) {
 	defer adminDB.Exec(`DELETE FROM users WHERE id=$1; DELETE FROM tenants WHERE id IN ($2,$3)`, user, tenant, otherTenant)
 
 	site, otherSite := uuid.NewString(), uuid.NewString()
+	floor, prodZone, warehouseZone := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	prodArea, warehouseArea := uuid.NewString(), uuid.NewString()
 	setupTx, err := BeginTenantTx(context.Background(), runtimeDB, tenant, branch)
 	if err != nil {
@@ -61,7 +63,17 @@ func TestPhysicalLocationHierarchyPostgreSQL16(t *testing.T) {
 	if _, err = setupTx.Exec(`INSERT INTO buildings(id,tenant_id,branch_id,code,name,status) VALUES($1,$2,$3,'CORP','Corporativo','active')`, otherSite, tenant, branch); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = setupTx.Exec(`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,code,name,status) VALUES($1,$3,$4,$5,'PROD','Producción','active'),($2,$3,$4,$5,'ALM','Almacén','active')`, prodArea, warehouseArea, tenant, branch, site); err != nil {
+	if _, err = setupTx.Exec(`INSERT INTO floors(id,tenant_id,building_id,code,name,status,hierarchy_governed) VALUES($1,$2,$3,'P01','Piso 1','active',true)`, floor, tenant, site); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = setupTx.Exec(`INSERT INTO zones(id,tenant_id,branch_id,building_id,floor_id,code,name,status,hierarchy_governed) VALUES
+		($1,$3,$4,$5,$6,'PROD','Producción','active',true),
+		($2,$3,$4,$5,$6,'ALM','Almacén','active',true)`, prodZone, warehouseZone, tenant, branch, site, floor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = setupTx.Exec(`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,floor_id,zone_id,code,name,status,hierarchy_governed) VALUES
+		($1,$3,$4,$5,$6,$7,'PROD','Producción','active',true),
+		($2,$3,$4,$5,$6,$8,'ALM','Almacén','active',true)`, prodArea, warehouseArea, tenant, branch, site, floor, prodZone, warehouseZone); err != nil {
 		t.Fatal(err)
 	}
 	if err = setupTx.Commit(); err != nil {
@@ -97,8 +109,12 @@ func TestPhysicalLocationHierarchyPostgreSQL16(t *testing.T) {
 		}
 		physical, createErr := ResolvePhysicalLocation(context.Background(), tx, tenant, branch, site, areaID)
 		locationID := uuid.NewString()
+		zoneID := prodZone
+		if areaID == warehouseArea {
+			zoneID = warehouseZone
+		}
 		if createErr == nil {
-			_, createErr = tx.Exec(`INSERT INTO locations(id,tenant_id,branch_id,placement_type,name,status,internal_area_id) VALUES($1,$2,$3,'MDF',$4,'active',$5)`, locationID, tenant, branch, name, areaID)
+			_, createErr = tx.Exec(`INSERT INTO locations(id,tenant_id,branch_id,placement_type,name,status,zone_id,internal_area_id) VALUES($1,$2,$3,'MDF',$4,'active',$5,$6)`, locationID, tenant, branch, name, zoneID, areaID)
 		}
 		var managed *managedAssetReservation
 		if createErr == nil {
@@ -108,7 +124,7 @@ func TestPhysicalLocationHierarchyPostgreSQL16(t *testing.T) {
 			_, createErr = tx.Exec(`INSERT INTO mdf_idf(id,asset_id,tenant_id,branch_id,type) VALUES($1,$2,$3,$4,'MDF')`, uuid.NewString(), managed.AssetID, tenant, branch)
 		}
 		if createErr == nil {
-			_, createErr = tx.Exec(`UPDATE locations SET placement_code=$1,asset_id=$2 WHERE id=$3`, managed.Assignment.Code, managed.AssetID, locationID)
+			_, createErr = tx.Exec(`UPDATE locations SET placement_code=$1,asset_id=$2,physical_identity=$3,physical_identity_governed=TRUE WHERE id=$4`, managed.Assignment.Code, managed.AssetID, "PHY-"+strings.ToUpper(locationID), locationID)
 		}
 		if createErr == nil {
 			_, createErr = tx.Exec(`INSERT INTO asset_logs(tenant_id,asset_id,event_type,new_value,notes) VALUES($1,$2,'created',$3,'physical hierarchy test')`, tenant, managed.AssetID, managed.Assignment.Code)
@@ -253,6 +269,12 @@ func TestPhysicalLocationHierarchyPostgreSQL16(t *testing.T) {
 		var allowed, deleteAllowed, truncateAllowed bool
 		if err = adminDB.QueryRow(`SELECT has_table_privilege('skia_runtime',$1,'SELECT,INSERT,UPDATE'),has_table_privilege('skia_runtime',$1,'DELETE'),has_table_privilege('skia_runtime',$1,'TRUNCATE')`, table).Scan(&allowed, &deleteAllowed, &truncateAllowed); err != nil || !allowed || deleteAllowed || truncateAllowed {
 			t.Fatalf("%s grants allowed=%v delete=%v truncate=%v err=%v", table, allowed, deleteAllowed, truncateAllowed, err)
+		}
+	}
+	for _, table := range []string{"floors", "zones"} {
+		var allowed, updateAllowed, deleteAllowed, truncateAllowed bool
+		if err = adminDB.QueryRow(`SELECT has_table_privilege('skia_runtime',$1,'SELECT,INSERT'),has_table_privilege('skia_runtime',$1,'UPDATE'),has_table_privilege('skia_runtime',$1,'DELETE'),has_table_privilege('skia_runtime',$1,'TRUNCATE')`, table).Scan(&allowed, &updateAllowed, &deleteAllowed, &truncateAllowed); err != nil || !allowed || updateAllowed || deleteAllowed || truncateAllowed {
+			t.Fatalf("%s grants allowed=%v update=%v delete=%v truncate=%v err=%v", table, allowed, updateAllowed, deleteAllowed, truncateAllowed, err)
 		}
 	}
 }

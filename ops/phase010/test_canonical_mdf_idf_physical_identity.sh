@@ -11,7 +11,7 @@ docker cp "$repo_root/." "$container:/repo"
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 -v migrator_password="$password" -v runtime_password="$password" -v onboarding_password="$password" < "$repo_root/ops/phase011/provision_database_roles.sql" >/dev/null
 for _ in 1 2; do docker exec -e PGPASSWORD="$password" -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_prod" "$container" /repo/ops/phase010/run_clean_bootstrap.sh >/dev/null; done
 ledger="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SELECT count(*) FROM production_bootstrap_migrations')"
-[[ "$ledger" == 23 ]]
+[[ "$ledger" == 24 ]]
 [[ "$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc "SELECT count(*) FROM locations WHERE physical_identity IS NOT NULL")" == 0 ]]
 docker exec "$container" createdb -U postgres -O skia_migrator skia_031_rollback
 docker exec "$container" sh -c "cp -a /repo /repo-pre031 && sed -i '/031_canonical_mdf_idf_physical_identity.sql/d' /repo-pre031/ops/phase010/bootstrap.manifest"

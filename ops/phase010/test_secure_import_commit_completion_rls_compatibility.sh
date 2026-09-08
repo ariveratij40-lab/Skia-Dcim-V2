@@ -18,7 +18,7 @@ bootstrap
 bootstrap
 provision
 
-[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 23 ]]
+[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 24 ]]
 [[ "$(psqlq "SELECT prosecdef||'|'||pg_get_userbyid(proowner)||'|'||array_to_string(proconfig,',') FROM pg_proc WHERE oid='public.complete_import_row_commit(bigint,bigint,uuid,uuid,text,uuid)'::regprocedure")" == 't|skia_migrator|search_path=pg_catalog, pg_temp' ]]
 [[ "$(psqlq "SELECT has_function_privilege('skia_runtime','public.complete_import_row_commit(bigint,bigint,uuid,uuid,text,uuid)','EXECUTE')||'|'||has_function_privilege('public','public.complete_import_row_commit(bigint,bigint,uuid,uuid,text,uuid)','EXECUTE')")" == 'true|false' ]]
 [[ "$(psqlq "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname='complete_import_row_commit'")" == 1 ]]
@@ -91,12 +91,12 @@ if docker exec -i "$container" psql -X -U skia_migrator -d skia_030_rollback -v 
   -c 'SELECT 1/0' >/dev/null 2>&1; then
   exit 1
 fi
-[[ "$(docker exec "$container" psql -X -U postgres -d skia_030_rollback -Atqc "SELECT count(*) FROM production_bootstrap_migrations")" == 21 ]]
+[[ "$(docker exec "$container" psql -X -U postgres -d skia_030_rollback -Atqc "SELECT count(*) FROM production_bootstrap_migrations")" == 22 ]]
 [[ "$(docker exec "$container" psql -X -U postgres -d skia_030_rollback -Atqc "SELECT to_regprocedure('public.complete_import_row_commit(bigint,bigint,uuid,uuid,uuid)') IS NOT NULL")" == t ]]
 [[ "$(docker exec "$container" psql -X -U postgres -d skia_030_rollback -Atqc "SELECT count(*) FROM pg_constraint WHERE conname IN ('assets_import_commit_scope_key','inventory_import_rows_canonical_asset_scope_fk')")" == 0 ]]
 
 schema_hash="$(docker exec "$container" pg_dump -U skia_migrator -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | sha256sum | awk '{print $1}')"
 printf '%s\n' 'POSTGRES_VERSION=16.14' 'MIGRATION_030_TESTS=PASS' 'FUNCTION_SECURITY=PASS' \
   'COMMITTING_TO_COMMITTED=PASS' 'TERMINAL_STATES=PASS' 'HASH_MISMATCH=DENIED' \
-  'CROSS_SCOPE_ASSET_LINKS=DENIED' 'FORCE_RLS_PRESERVED=PASS' 'MIGRATION_FAILURE_ROLLBACK=PASS' 'LEDGER_COUNT=23' \
+  'CROSS_SCOPE_ASSET_LINKS=DENIED' 'FORCE_RLS_PRESERVED=PASS' 'MIGRATION_FAILURE_ROLLBACK=PASS' 'LEDGER_COUNT=24' \
   "SCHEMA_HASH=$schema_hash"
