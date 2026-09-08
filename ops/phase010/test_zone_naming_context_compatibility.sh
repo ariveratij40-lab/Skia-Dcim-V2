@@ -20,7 +20,7 @@ docker cp "$repo_root/." "$container:/repo"
 # 025, persist representative legacy state, then let the checksum runner apply
 # 026 and its ledger row in one transaction.
 docker exec "$container" sh -c \
-  "cp /repo/ops/phase010/bootstrap.manifest /tmp/bootstrap.manifest.full && sed -e '/026_zone_naming_context_compatibility.sql/d' -e '/027_secure_import_staging_interface.sql/d' -e '/028_secure_import_commit_coordinator_interface.sql/d' -e '/029_secure_import_staging_write_authority.sql/d' -e '/030_secure_import_commit_completion_rls_compatibility.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
+  "cp /repo/ops/phase010/bootstrap.manifest /tmp/bootstrap.manifest.full && sed -e '/026_zone_naming_context_compatibility.sql/d' -e '/027_secure_import_staging_interface.sql/d' -e '/028_secure_import_commit_coordinator_interface.sql/d' -e '/029_secure_import_staging_write_authority.sql/d' -e '/030_secure_import_commit_completion_rls_compatibility.sql/d' -e '/031_canonical_mdf_idf_physical_identity.sql/d' -e '/032_canonical_physical_hierarchy_provisioning.sql/d' /tmp/bootstrap.manifest.full > /repo/ops/phase010/bootstrap.manifest"
 
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 \
   -v migrator_password="$password" -v runtime_password="$password" \
@@ -135,6 +135,10 @@ INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,floor_id,zone_id,code,
  ('56000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000001','52000000-0000-4000-8000-000000000001','53000000-0000-4000-8000-000000000001','54000000-0000-4000-8000-000000000001','55000000-0000-4000-8000-000000000001','AREA','Area','active'),
  ('56000000-0000-4000-8000-000000000002','51000000-0000-4000-8000-000000000001','52000000-0000-4000-8000-000000000001','53000000-0000-4000-8000-000000000001',NULL,NULL,'LEGACY','Legacy area','active');
 
+-- These rows represent evidence that predates migration 031. The dedicated
+-- fixture bypasses only trigger execution while loading that historical state;
+-- all compatibility assertions below run with normal trigger enforcement.
+SET session_replication_role=replica;
 INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,status,internal_area_id) VALUES
  ('57000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000001','52000000-0000-4000-8000-000000000001','Legacy MDF','MDF','active','56000000-0000-4000-8000-000000000001'),
  ('57000000-0000-4000-8000-000000000002','51000000-0000-4000-8000-000000000001','52000000-0000-4000-8000-000000000001','Legacy IDF','IDF','active','56000000-0000-4000-8000-000000000001');
@@ -143,6 +147,7 @@ INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,status,zone_id)
  ('57000000-0000-4000-8000-000000000004','51000000-0000-4000-8000-000000000001','52000000-0000-4000-8000-000000000001','Zone IDF','IDF','active','55000000-0000-4000-8000-000000000001');
 INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,status,zone_id,internal_area_id) VALUES
  ('57000000-0000-4000-8000-000000000005','51000000-0000-4000-8000-000000000001','52000000-0000-4000-8000-000000000001','Dual','MDF','active','55000000-0000-4000-8000-000000000001','56000000-0000-4000-8000-000000000001');
+SET session_replication_role=origin;
 
 DO $$ BEGIN
   BEGIN
@@ -212,7 +217,7 @@ SQL
 
 ledger="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SELECT count(*) FROM production_bootstrap_migrations')"
 schema_hash="$(docker exec "$container" pg_dump -U postgres -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | shasum -a 256 | awk '{print $1}')"
-[[ "$ledger" == 23 ]]
+[[ "$ledger" == 24 ]]
 
 printf 'POSTGRES_VERSION=%s\n' "$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SHOW server_version')"
 printf 'SCHEMA_HASH=%s\nLEDGER_COUNT=%s\n' "$schema_hash" "$ledger"

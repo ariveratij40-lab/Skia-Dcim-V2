@@ -36,7 +36,7 @@ BEGIN
              ('nomenclature_branch_counters','SELECT'),('nomenclature_branch_counters','INSERT'),('nomenclature_branch_counters','UPDATE'),
              ('buildings','SELECT'),('buildings','INSERT'),('buildings','UPDATE'),
              ('internal_areas','SELECT'),('internal_areas','INSERT'),('internal_areas','UPDATE'),
-             ('floors','SELECT'),('zones','SELECT'),('technical_rooms','SELECT'),
+             ('floors','SELECT'),('floors','INSERT'),('zones','SELECT'),('zones','INSERT'),('technical_rooms','SELECT'),
              ('mdf_idf','SELECT'),('mdf_idf','INSERT'),('racks','SELECT'),('racks','INSERT'),
              ('switches','SELECT'),('switches','INSERT'),('ups','SELECT'),('ups','INSERT'),
              ('pdus','SELECT'),('pdus','INSERT'),('patch_panels','SELECT'),('patch_panels','INSERT'),
