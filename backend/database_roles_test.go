@@ -1,8 +1,60 @@
 package main
 
 import (
+	"regexp"
+	"strings"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
+
+func TestRestrictedRuntimeQueryRequiresCanonicalFloorAndZonePrivileges(t *testing.T) {
+	database, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	query := regexp.QuoteMeta("('floors','SELECT'),('floors','INSERT'),('zones','SELECT'),('zones','INSERT'),('technical_rooms','SELECT')")
+	mock.ExpectQuery("(?s)" + query).WillReturnRows(sqlmock.NewRows([]string{
+		"role_name", "superuser", "createdb", "createrole", "bypassrls", "owns_protected_tables",
+		"inherits_privileged_role", "missing_required_grants", "unexpected_table_grants",
+		"unsafe_protected_grants", "missing_preset_reader", "direct_preset_table_grant",
+	}).AddRow("skia_runtime", false, false, false, false, false, false, false, false, false, false, false))
+
+	if err := validateRestrictedRuntimeDB(database); err != nil {
+		t.Fatalf("canonical B3B5C runtime contract should pass: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRestrictedRuntimeCanonicalContractRemainsFailClosed(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		state runtimeRoleState
+	}{
+		{name: "missing floors INSERT", state: runtimeRoleState{RoleName: "skia_runtime", MissingRequiredGrants: true}},
+		{name: "missing zones INSERT", state: runtimeRoleState{RoleName: "skia_runtime", MissingRequiredGrants: true}},
+		{name: "floors UPDATE", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+		{name: "floors DELETE", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+		{name: "floors TRUNCATE", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+		{name: "floors REFERENCES", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+		{name: "floors TRIGGER", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+		{name: "zones UPDATE", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+		{name: "zones DELETE", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+		{name: "zones TRUNCATE", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+		{name: "zones REFERENCES", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+		{name: "zones TRIGGER", state: runtimeRoleState{RoleName: "skia_runtime", UnexpectedTableGrants: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateRuntimeRoleState(test.state); err == nil || !strings.Contains(err.Error(), "restricted-role requirements") {
+				t.Fatalf("invalid contract state was not rejected: %v", err)
+			}
+		})
+	}
+}
 
 func TestValidateRuntimeRoleState(t *testing.T) {
 	valid := runtimeRoleState{RoleName: "skia_runtime"}
