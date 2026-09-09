@@ -21,7 +21,7 @@ docker exec -i "$container" psql -X -U postgres -d skia_prod \
   -v execution_approval=PHASE011_CLEAN_RLS_BOOTSTRAP_APPROVED \
   < "$repo_root/ops/phase011/activate_clean_production_rls.sql" >/dev/null
 docker exec -i "$container" psql -X -U postgres -d skia_prod < "$repo_root/ops/phase011/validate_runtime_auth_role.sql" >/dev/null
-[[ "$(q 'SELECT count(*) FROM production_bootstrap_migrations')" == 24 ]]
+[[ "$(q 'SELECT count(*) FROM production_bootstrap_migrations')" == 25 ]]
 
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
 INSERT INTO tenants(id,name) VALUES ('c1000000-0000-4000-8000-000000000001','T1'),('c1000000-0000-4000-8000-000000000002','T2');
@@ -151,4 +151,4 @@ if docker exec "$container" psql -X -U skia_migrator -d skia_032_rollback -v ON_
 [[ "$(docker exec "$container" psql -X -U postgres -d skia_032_rollback -Atqc 'SELECT count(*) FROM production_bootstrap_migrations')" == 23 ]]
 
 schema_hash="$(docker exec "$container" pg_dump -U skia_migrator -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | sha256sum | awk '{print $1}')"
-printf 'POSTGRES_VERSION=16.14\nLEDGER_COUNT=24\nSCHEMA_HASH=%s\nMIGRATION_032_TESTS=PASS\nMIGRATION_032_ROLLBACK=PASS\nRUNTIME_MINIMUM_PRIVILEGE=PASS\nRLS_FORCE=PASS\n' "$schema_hash"
+printf 'POSTGRES_VERSION=16.14\nLEDGER_COUNT=25\nSCHEMA_HASH=%s\nMIGRATION_032_TESTS=PASS\nMIGRATION_032_ROLLBACK=PASS\nRUNTIME_MINIMUM_PRIVILEGE=PASS\nRLS_FORCE=PASS\n' "$schema_hash"

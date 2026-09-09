@@ -1894,6 +1894,9 @@ type namingRuleResponse struct {
 	IncludePlacement    bool   `json:"include_placement"`
 	IncludeSite         bool   `json:"include_site"`
 	IncludeInternalArea bool   `json:"include_internal_area"`
+	IncludeZone         bool   `json:"include_zone"`
+	ContextMode         string `json:"context_mode"`
+	RuleVersion         int    `json:"rule_version"`
 	IncludeLocation     bool   `json:"include_location"`
 	SeqDigits           int    `json:"seq_digits"`
 	ResetPerLocation    bool   `json:"reset_per_location"`
@@ -1944,6 +1947,9 @@ func namingRulePreview(rule namingRuleResponse) string {
 	}
 	if rule.IncludeInternalArea {
 		parts = append(parts, "[AREA]")
+	}
+	if rule.IncludeZone {
+		parts = append(parts, "[ZONA]")
 	}
 	if rule.IncludePlacement {
 		parts = append(parts, "[UBICACIÓN]")
@@ -2080,13 +2086,14 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			`SELECT at.code, at.name, COALESCE(at.description,''), at.requires_nomenclature,
 			        nr.id, nr.asset_type_code,
 			        nr.prefix, nr.separator, nr.include_branch, nr.include_placement,
-			        nr.include_site, nr.include_internal_area, nr.include_location,
+			        nr.include_site, nr.include_internal_area, nr.include_zone,
+			        nr.context_mode, nr.rule_version, nr.include_location,
 			        nr.seq_digits, nr.reset_per_location, nr.last_seq, nr.updated_at,
 			        COALESCE(nr.custom_segment_1,''), COALESCE(nr.custom_segment_2,''),
 			        COALESCE(nr.custom_segment_1_label,'Segmento 1'), COALESCE(nr.custom_segment_2_label,'Segmento 2'),
 			        nr.active, COALESCE(nr.description,'')
 			 FROM asset_types at
-			 LEFT JOIN naming_rules nr ON nr.asset_type_code=at.code AND nr.tenant_id=$1
+			 LEFT JOIN naming_rules nr ON nr.asset_type_code=at.code AND nr.tenant_id=$1 AND nr.active
 			 ORDER BY at.requires_nomenclature DESC, at.name`, tenantID)
 		if err != nil {
 			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
@@ -2098,12 +2105,13 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 		for rows.Next() {
 			var item nomenclatureAssetTypeResponse
 			var ruleID, ruleType, prefix, separator, custom1, custom2, label1, label2, description sql.NullString
-			var includeBranch, includePlacement, includeSite, includeInternalArea, includeLocation, resetPerLocation, active sql.NullBool
-			var seqDigits, lastSeq sql.NullInt64
+			var includeBranch, includePlacement, includeSite, includeInternalArea, includeZone, includeLocation, resetPerLocation, active sql.NullBool
+			var contextMode sql.NullString
+			var seqDigits, ruleVersion, lastSeq sql.NullInt64
 			var ua interface{}
 			if err := rows.Scan(&item.Code, &item.Name, &item.Description, &item.RequiresNomenclature,
-				&ruleID, &ruleType, &prefix, &separator, &includeBranch, &includePlacement, &includeSite, &includeInternalArea, &includeLocation,
-				&seqDigits, &resetPerLocation, &lastSeq, &ua, &custom1, &custom2,
+				&ruleID, &ruleType, &prefix, &separator, &includeBranch, &includePlacement, &includeSite, &includeInternalArea, &includeZone,
+				&contextMode, &ruleVersion, &includeLocation, &seqDigits, &resetPerLocation, &lastSeq, &ua, &custom1, &custom2,
 				&label1, &label2, &active, &description); err != nil {
 				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 				return
@@ -2112,6 +2120,7 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 				rule := namingRuleResponse{ID: ruleID.String, AssetTypeCode: ruleType.String, AssetTypeName: item.Name,
 					Prefix: prefix.String, Separator: separator.String, IncludeBranch: includeBranch.Bool, IncludePlacement: includePlacement.Bool,
 					IncludeSite: includeSite.Bool, IncludeInternalArea: includeInternalArea.Bool,
+					IncludeZone: includeZone.Bool, ContextMode: contextMode.String, RuleVersion: int(ruleVersion.Int64),
 					IncludeLocation: includeLocation.Bool, SeqDigits: int(seqDigits.Int64), ResetPerLocation: resetPerLocation.Bool,
 					LastSeq: int(lastSeq.Int64), UpdatedAt: fmt.Sprintf("%v", ua), CustomSegment1: custom1.String,
 					CustomSegment2: custom2.String, CustomSegment1Label: label1.String,

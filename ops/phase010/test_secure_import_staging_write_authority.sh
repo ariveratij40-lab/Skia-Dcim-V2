@@ -233,10 +233,10 @@ docker exec -i "$container" psql -X -U postgres -d skia_prod \
   -v execution_approval=PHASE011_CLEAN_RLS_BOOTSTRAP_APPROVED \
   < "$repo_root/ops/phase011/activate_clean_production_rls.sql" >/dev/null
 docker exec -i "$container" psql -X -U postgres -d skia_prod < "$repo_root/ops/phase011/validate_runtime_auth_role.sql" >/dev/null
-[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 24 ]]
+[[ "$(psqlq 'SELECT count(*) FROM production_bootstrap_migrations')" == 25 ]]
 
 printf '%s\n' 'POSTGRES_VERSION=16.14' 'FRESH_BOOTSTRAP=PASS' 'SECOND_BOOTSTRAP=PASS' \
-  'LEDGER_COUNT=24' 'HEADER_CREATION=PASS' 'ROW_STAGING=PASS' 'STATE_AUTHORITY=PASS' \
+  'LEDGER_COUNT=25' 'HEADER_CREATION=PASS' 'ROW_STAGING=PASS' 'STATE_AUTHORITY=PASS' \
   'IDEMPOTENT_RESTAGE=PASS' 'HASH_PAYLOAD_CONFLICT=DENIED' \
   'CONCURRENT_SAME_ROW=IDEMPOTENT' 'CONCURRENT_DIFFERENT_CONTENT=ONE_WINNER_ONE_CONFLICT' \
   'CROSS_SCOPE=DENIED' 'CROSS_SCOPE_PROGRESS_FINALIZE=DENIED' 'INVALID_COUNTERS=DENIED' \

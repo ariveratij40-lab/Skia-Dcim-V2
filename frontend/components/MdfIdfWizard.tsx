@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Building2, Server, MapPin, Users, Shield, RefreshCw, AlertCircle, Package } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
+import { buildMdfIdfCanonicalPreview, resetMdfIdfAfterFloorChange, resetMdfIdfAfterSiteChange } from '../lib/mdfIdfNaming';
 
 export type MdfIdfType = 'MDF' | 'IDF';
 export type MdfIdfStatus = 'Operativo' | 'Atención' | 'Crítico' | 'Planeado' | 'Fuera de servicio';
@@ -142,14 +143,14 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
 
   const selectSite = (siteID: string) => {
     const site = sites.find(item => item.id === siteID);
-    setForm(previous => ({ ...previous, site_id: siteID, site_code: site?.code ?? '', building: site?.name ?? '', address: site?.address ?? '', floor: '', floor_id: '', zone: '', zone_id: '', internal_area_id: '', internal_area_code: '' }));
+    setForm(previous => resetMdfIdfAfterSiteChange(previous, site));
     setZones([]); setAreas([]);
     void loadFloors(siteID);
   };
 
   const selectFloor = (floorID: string) => {
     const selected = floors.find(item => item.id === floorID);
-    setForm(previous => ({ ...previous, floor_id: floorID, floor: selected?.name ?? '', zone: '', zone_id: '', internal_area_id: '', internal_area_code: '' }));
+    setForm(previous => resetMdfIdfAfterFloorChange(previous, selected));
     setAreas([]);
     void loadZones(form.site_id, floorID);
   };
@@ -220,20 +221,17 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     separator: string; seq_digits: number; last_seq: number;
     next_code_preview: string;
     custom_segment_1?: string; custom_segment_2?: string;
-    include_branch?: boolean; include_site?: boolean; include_internal_area?: boolean;
+    include_branch?: boolean; include_site?: boolean; include_zone?: boolean; include_internal_area?: boolean;
+    include_placement?: boolean; context_mode: string; rule_version: number;
     active: boolean;
   }
   const [namingRules, setNamingRules] = useState<NamingRule[]>([]);
+  const [namingRulesLoaded, setNamingRulesLoaded] = useState(false);
   const [codeSuggestions, setCodeSuggestions] = useState<string[]>([]);
   const [showCodeSuggestions, setShowCodeSuggestions] = useState(false);
   // Patrón de nomenclatura para mostrar como etiqueta de referencia
   const [codePattern, setCodePattern] = useState<string | null>(null);
   const [codePatternUrl, setCodePatternUrl] = useState<string>('/infraestructura/catalogs/nomenclaturas');
-
-  // Mapa de tipo MDF/IDF → asset_type_code para buscar la regla
-  const TYPE_TO_CODE: Record<MdfIdfType, string> = {
-    'MDF': 'MDF', 'IDF': 'IDF',
-  };
 
   const loadNamingRules = async () => {
     try {
@@ -241,24 +239,17 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
       if (!res.ok) return;
       const data = await res.json();
       setNamingRules(data.naming_rules ?? []);
-    } catch { /* silencioso */ }
+    } catch { setNamingRules([]); }
+    finally { setNamingRulesLoaded(true); }
   };
 
   // Construir el patrón legible para mostrar como etiqueta (ej: MDF-001, IDF-A-001)
   const buildCodePattern = (type: MdfIdfType, rules: NamingRule[]): string | null => {
-    const typeCode = TYPE_TO_CODE[type];
-    const rule = rules.find(r => r.asset_type_code === typeCode && r.active);
-    if (!rule) return null;
-    const sep = rule.separator || '-';
-    const digits = rule.seq_digits || 3;
-    const parts: string[] = [rule.prefix];
-    if (rule.include_branch) parts.push(branchCode || '[SUCURSAL]');
-    if (rule.include_site) parts.push(form.site_code || '[SITIO]');
-    if (rule.include_internal_area) parts.push(form.internal_area_code || '[AREA]');
-    if (rule.custom_segment_1) parts.push(rule.custom_segment_1.toUpperCase());
-    if (rule.custom_segment_2) parts.push(rule.custom_segment_2.toUpperCase());
-    parts.push(`[${'0'.repeat(digits)}]`); // la reserva autoritativa ocurre al guardar
-    return parts.join(sep);
+    return buildMdfIdfCanonicalPreview(type, rules, {
+      branchCode, siteCode: form.site_code,
+      zoneCode: zones.find(zone => zone.id === form.zone_id)?.code ?? '',
+      internalAreaCode: form.internal_area_code,
+    });
   };
 
   const buildCodeSuggestions = (_type: MdfIdfType, _rules: NamingRule[]): string[] => [];
@@ -441,9 +432,8 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
     const pattern = buildCodePattern(form.type, namingRules);
     setCodePattern(pattern);
     // URL de nomenclaturas con el tipo del activo como parámetro
-    const typeCode = TYPE_TO_CODE[form.type];
-    setCodePatternUrl(`/infraestructura/catalogs/nomenclaturas?type=${typeCode}&from=wizard`);
-  }, [form.type, form.site_code, form.internal_area_code, branchCode, namingRules]);
+    setCodePatternUrl(`/infraestructura/catalogs/nomenclaturas?type=${form.type}&from=wizard`);
+  }, [form.type, form.site_code, form.zone_id, form.internal_area_code, branchCode, namingRules, zones]);
 
   // Cargar activos cuando se llega al paso de capacidad.
   useEffect(() => {
@@ -692,6 +682,11 @@ export default function MdfIdfWizard({ onClose, onSave, initial }: Props) {
                 readOnly
                 style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: `1.5px solid ${codePattern ? '#4361EE' : '#F59E0B'}`, fontSize: '0.875rem', outline: 'none', background: codePattern ? '#EEF2FF' : '#FFF7ED', color: '#1E293B', boxSizing: 'border-box' }}
               />
+              {namingRulesLoaded && !codePattern && (
+                <div role="alert" style={{ marginTop: 6, color: '#B45309', fontSize: '0.75rem', fontWeight: 600 }}>
+                  No existe una norma canónica por Zona activa para {form.type}. Solicite su configuración antes de continuar.
+                </div>
+              )}
               {/* Indicador de verificación / error de duplicado */}
               {checkingCode && (
                 <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.72rem', color: '#64748B' }}>
