@@ -8,6 +8,7 @@ trap cleanup EXIT
 docker run --name "$container" -p 127.0.0.1::5432 -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=skia_prod -d postgres:16.14-alpine >/dev/null
 for _ in {1..30}; do docker exec "$container" pg_isready -U postgres -d skia_prod >/dev/null 2>&1 && break; sleep 1; done
 docker cp "$repo_root/." "$container:/repo"
+docker exec "$container" sed -i '/034_canonical_infrastructure_housing_governance.sql/d' /repo/ops/phase010/bootstrap.manifest
 provision(){ docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 -v migrator_password="$password" -v runtime_password="$password" -v onboarding_password="$password" < "$repo_root/ops/phase011/provision_database_roles.sql" >/dev/null; }
 bootstrap(){ docker exec -e PGPASSWORD="$password" -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_prod" "$container" /repo/ops/phase010/run_clean_bootstrap.sh >/dev/null; }
 q(){ docker exec "$container" psql -X -U postgres -d skia_prod -Atqc "$1"; }

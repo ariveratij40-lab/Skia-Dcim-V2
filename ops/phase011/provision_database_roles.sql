@@ -62,6 +62,10 @@ SELECT 'REVOKE ALL ON FUNCTION public.create_inventory_import_staging(TEXT,TEXT,
 WHERE to_regprocedure('public.finalize_inventory_import_staging(bigint)') IS NOT NULL \gexec
 SELECT 'GRANT EXECUTE ON FUNCTION public.create_inventory_import_staging(TEXT,TEXT,TEXT,TEXT,UUID), public.stage_inventory_import_row(BIGINT,INTEGER,JSONB,TEXT,TEXT,TEXT,TEXT), public.update_inventory_import_progress(BIGINT,INTEGER,INTEGER,INTEGER,INTEGER), public.finalize_inventory_import_staging(BIGINT) TO skia_runtime'
 WHERE to_regprocedure('public.finalize_inventory_import_staging(bigint)') IS NOT NULL \gexec
+SELECT 'REVOKE ALL ON FUNCTION public.assert_canonical_asset_housing(UUID) FROM PUBLIC'
+WHERE to_regprocedure('public.assert_canonical_asset_housing(uuid)') IS NOT NULL \gexec
+SELECT 'GRANT EXECUTE ON FUNCTION public.assert_canonical_asset_housing(UUID) TO skia_runtime'
+WHERE to_regprocedure('public.assert_canonical_asset_housing(uuid)') IS NOT NULL \gexec
 
 -- The role artifact runs once before and once after clean bootstrap. Apply table
 -- grants only after every required identity table exists.

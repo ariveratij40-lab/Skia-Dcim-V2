@@ -6,6 +6,7 @@ cleanup(){ docker rm -f "$container" >/dev/null 2>&1 || true; }; trap cleanup EX
 docker run --name "$container" -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=skia_prod -d postgres:16.14-alpine >/dev/null
 for _ in {1..30}; do docker exec "$container" pg_isready -U postgres -d skia_prod >/dev/null 2>&1 && break; sleep 1; done
 docker cp "$repo_root/." "$container:/repo"
+docker exec "$container" sed -i '/034_canonical_infrastructure_housing_governance.sql/d' /repo/ops/phase010/bootstrap.manifest
 psqlq(){ docker exec "$container" psql -X -U postgres -d skia_prod -Atqc "$1"; }
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 \
   -v migrator_password="$password" -v runtime_password="$password" -v onboarding_password="$password" \

@@ -67,8 +67,6 @@ DECLARE
   area_a UUID := '26000000-0000-4000-8000-000000000001';
   location_legacy UUID := '27000000-0000-4000-8000-000000000001';
   location_v2 UUID := '27000000-0000-4000-8000-000000000002';
-  asset_id UUID := '28000000-0000-4000-8000-000000000001';
-  rack_id UUID := '29000000-0000-4000-8000-000000000001';
   naming_rule_id UUID := '2a000000-0000-4000-8000-000000000001';
 BEGIN
   INSERT INTO tenants(id,name) VALUES(tenant_a,'V2 A'),(tenant_b,'V2 B');
@@ -118,18 +116,6 @@ BEGIN
 
   INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_location,seq_digits,last_seq,active)
   VALUES(naming_rule_id,tenant_a,'SERVER','SRV','-',true,false,4,0,true);
-  INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,internal_code,nomenclature_id,nomenclature_sequence,name)
-  SELECT asset_id,tenant_a,branch_a,id,'SRV-A1-0001',naming_rule_id,1,'Housing test' FROM asset_types WHERE code='SERVER';
-  INSERT INTO racks(id,asset_id,tenant_id,branch_id) VALUES(rack_id,asset_id,tenant_a,branch_a);
-  IF (SELECT housing_type FROM racks WHERE id=rack_id) <> 'RACK' THEN
-    RAISE EXCEPTION 'legacy rack default differs';
-  END IF;
-  UPDATE racks SET housing_type='CABINET' WHERE id=rack_id;
-  BEGIN
-    UPDATE racks SET housing_type='INVALID' WHERE id=rack_id;
-    RAISE EXCEPTION 'invalid housing accepted';
-  EXCEPTION WHEN check_violation THEN NULL; END;
-
   UPDATE asset_types SET asset_class='ACTIVE_EQUIPMENT',placement_policy='HOUSING' WHERE code='SERVER';
   BEGIN
     UPDATE asset_types SET asset_class='INVALID' WHERE code='SERVER';

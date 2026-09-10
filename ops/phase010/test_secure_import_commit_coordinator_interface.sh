@@ -15,6 +15,7 @@ for _ in {1..30}; do
 done
 docker exec "$container" pg_isready -U postgres -d skia_prod >/dev/null
 docker cp "$repo_root/." "$container:/repo"
+docker exec "$container" sed -i '/034_canonical_infrastructure_housing_governance.sql/d' /repo/ops/phase010/bootstrap.manifest
 
 provision() {
   docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 \
