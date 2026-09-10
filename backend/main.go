@@ -627,7 +627,7 @@ func handleSelectTenant(w http.ResponseWriter, r *http.Request) {
 		req.TenantID, sessionToken,
 	)
 	if err != nil {
-		log.Printf("ERROR select-tenant update session: %v tenantID=[%s] token=[%s]", err, req.TenantID, sessionToken)
+		log.Printf("ERROR select-tenant update session: %v tenantID=[%s]", err, req.TenantID)
 		http.Error(w, "Error updating session", http.StatusInternalServerError)
 		return
 	}
@@ -796,7 +796,6 @@ func handleSelectBranchWithDeps(w http.ResponseWriter, r *http.Request, deps bra
 
 func handleGetMe(w http.ResponseWriter, r *http.Request) {
 	sessionToken := extractSessionToken(r)
-	log.Printf("DEBUG /me sessionToken=[%s] len=%d", sessionToken, len(sessionToken))
 	if sessionToken == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -1205,7 +1204,6 @@ func sendPasswordResetEmail(toEmail, toName, resetLink string) error {
 	resendKey := os.Getenv("RESEND_API_KEY")
 	if resendKey == "" {
 		log.Printf("[WARN] RESEND_API_KEY no configurado, simulando envío a %s", toEmail)
-		log.Printf("[RESET LINK] %s", resetLink)
 		return nil
 	}
 

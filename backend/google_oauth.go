@@ -130,7 +130,7 @@ func handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	stateParam := r.URL.Query().Get("state")
 	stateCookie, err := r.Cookie("oauth_state")
 	if err != nil || stateParam == "" || stateCookie.Value != stateParam {
-		log.Printf("OAuth state mismatch: cookie=%v param=%s", err, stateParam)
+		log.Printf("OAuth state mismatch")
 		http.Redirect(w, r, frontendURL+"/login?error=state_mismatch", http.StatusFound)
 		return
 	}

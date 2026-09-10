@@ -120,7 +120,6 @@ func ExtractSessionContextSecure(r *http.Request, db *sql.DB) *SessionContextSec
 		return ctx
 	}
 	sessionToken := sessionCookie.Value
-	log.Printf("DEBUG: Session token: %s", sessionToken)
 	if sessionToken == "" {
 		ctx.Error = "Empty session token"
 		ctx.Reason = SessionReasonNoCookie
@@ -143,7 +142,7 @@ func ExtractSessionContextSecure(r *http.Request, db *sql.DB) *SessionContextSec
 	if err == sql.ErrNoRows {
 		ctx.Error = "Session not found or expired"
 		ctx.Reason = SessionReasonInvalidToken
-		log.Printf("DEBUG: Session not found for token: %s", sessionToken)
+		log.Printf("DEBUG: Session not found or expired")
 		return ctx
 	}
 
