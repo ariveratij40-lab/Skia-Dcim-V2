@@ -86,7 +86,9 @@ BEGIN
      OR NOT has_function_privilege('skia_runtime','public.create_inventory_import_staging(text,text,text,text,uuid)','EXECUTE')
      OR NOT has_function_privilege('skia_runtime','public.stage_inventory_import_row(bigint,integer,jsonb,text,text,text,text)','EXECUTE')
      OR NOT has_function_privilege('skia_runtime','public.update_inventory_import_progress(bigint,integer,integer,integer,integer)','EXECUTE')
-     OR NOT has_function_privilege('skia_runtime','public.finalize_inventory_import_staging(bigint)','EXECUTE') THEN
+     OR NOT has_function_privilege('skia_runtime','public.finalize_inventory_import_staging(bigint)','EXECUTE')
+     OR (EXISTS (SELECT 1 FROM public.production_bootstrap_migrations WHERE path='migrations/034_canonical_infrastructure_housing_governance.sql')
+         AND NOT COALESCE(has_function_privilege('skia_runtime',to_regprocedure('public.assert_canonical_asset_housing(uuid)'),'EXECUTE'),false)) THEN
     RAISE EXCEPTION 'skia_runtime secure staging function EXECUTE contract differs';
   END IF;
   IF EXISTS (
@@ -116,7 +118,7 @@ BEGIN
         'validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit',
         'fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit',
         'fail_import_row_after_rollback','create_inventory_import_staging','stage_inventory_import_row',
-        'update_inventory_import_progress','finalize_inventory_import_staging')
+        'update_inventory_import_progress','finalize_inventory_import_staging','assert_canonical_asset_housing')
   ) THEN
     RAISE EXCEPTION 'skia_runtime has unexpected routine privileges';
   END IF;
