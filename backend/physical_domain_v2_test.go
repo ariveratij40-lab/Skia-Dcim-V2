@@ -76,7 +76,8 @@ func TestHousingRackAndCabinetResolveScopedDistribution(t *testing.T) {
 		t.Run(typ, func(t *testing.T) {
 			db, mock := domainMock(t)
 			mock.ExpectQuery("SELECT r.id,r.id,r.asset_id").WithArgs("h1", "t1", "b1").WillReturnRows(sqlmock.NewRows([]string{"id", "rack_id", "asset_id", "housing_type", "mdf_idf_id", "location_id"}).AddRow("h1", "h1", "a1", typ, "m1", "l1"))
-			mock.ExpectQuery("SELECT m.id,m.asset_id,m.type").WithArgs("m1", "t1", "b1").WillReturnRows(sqlmock.NewRows([]string{"id", "asset_id", "type", "location_id", "zone_id", "internal_area_id", "status"}).AddRow("m1", "ma", "MDF", "ml", nil, "ia", "active"))
+			mock.ExpectQuery("SELECT m.id,m.asset_id,m.type").WithArgs("m1", "t1", "b1").WillReturnRows(sqlmock.NewRows([]string{"id", "asset_id", "type", "location_id", "zone_id", "internal_area_id", "status"}).AddRow("m1", "ma", "MDF", "l1", "z1", nil, "active"))
+			mock.ExpectQuery("SELECT z.id,z.tenant_id,z.branch_id").WithArgs("z1", "t1", "b1").WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "branch_id", "code", "name", "status", "building_id", "building_code", "floor_id", "floor_name"}).AddRow("z1", "t1", "b1", "Z1", "Zone 1", "active", nil, nil, nil, nil))
 			h, err := ResolveHousing(context.Background(), db, PhysicalScope{"t1", "b1"}, "h1")
 			if err != nil || h.Type != typ || h.RackID != h.ID {
 				t.Fatalf("h=%+v err=%v", h, err)

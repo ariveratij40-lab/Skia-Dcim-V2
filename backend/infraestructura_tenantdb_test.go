@@ -33,6 +33,13 @@ func TestSpecializedPostUsesInjectedTenantDB(t *testing.T) {
 	db = globalDatabase
 	defer func() { db = previousGlobal }()
 
+	tenantMock.ExpectQuery("SELECT r.id,r.id,r.asset_id").WithArgs("rack-1", "tenant-1", "branch-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "rack_id", "asset_id", "housing_type", "mdf_idf_id", "location_id"}).AddRow("rack-1", "rack-1", "rack-asset-1", "RACK", "mdf-1", "placement-1"))
+	tenantMock.ExpectQuery("SELECT m.id,m.asset_id,m.type").WithArgs("mdf-1", "tenant-1", "branch-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "asset_id", "type", "location_id", "zone_id", "internal_area_id", "status"}).AddRow("mdf-1", "mdf-asset-1", "MDF", "placement-1", "zone-1", nil, "active"))
+	tenantMock.ExpectQuery("SELECT z.id,z.tenant_id,z.branch_id").WithArgs("zone-1", "tenant-1", "branch-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "branch_id", "code", "name", "status", "building_id", "building_code", "floor_id", "floor_name"}).
+			AddRow("zone-1", "tenant-1", "branch-1", "ZONE1", "Zone 1", "active", nil, nil, nil, nil))
 	tenantMock.ExpectQuery("SELECT id FROM asset_types").WithArgs("SWITCH").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("asset-type-1"))
 	tenantMock.ExpectQuery("SELECT id,placement_type").WithArgs("placement-1", "tenant-1", "branch-1").
@@ -46,7 +53,7 @@ func TestSpecializedPostUsesInjectedTenantDB(t *testing.T) {
 	tenantMock.ExpectExec("INSERT INTO assets").WillReturnResult(sqlmock.NewResult(0, 1))
 	tenantMock.ExpectExec("INSERT INTO switches").WillReturnResult(sqlmock.NewResult(0, 1))
 
-	req := httptest.NewRequest(http.MethodPost, "/api/infra/switches", strings.NewReader(`{"name":"Switch principal","placement_id":"placement-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/infra/switches", strings.NewReader(`{"name":"Switch principal","placement_id":"placement-1","housing_rack_id":"rack-1"}`))
 	req = infrastructureRequestWithTenantDB(req, tenantDatabase)
 	rec := httptest.NewRecorder()
 	handleSwitches(rec, req)

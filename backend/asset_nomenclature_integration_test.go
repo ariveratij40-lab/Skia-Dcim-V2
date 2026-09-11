@@ -33,7 +33,7 @@ func TestSpecializedHandlerRollbackIsAtomic(t *testing.T) {
 	}
 	defer runtimeDB.Close()
 
-	tenantID, branchID, userID, ruleID, placementID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	tenantID, branchID, userID, ruleID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	setupTx, err := adminDB.Begin()
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,6 @@ func TestSpecializedHandlerRollbackIsAtomic(t *testing.T) {
 	}{
 		{`INSERT INTO tenants(id,name) VALUES($1,'Atomic handler test')`, []interface{}{tenantID}},
 		{`INSERT INTO branches(id,tenant_id,name,city) VALUES($1,$2,'Atomic branch','TIJ')`, []interface{}{branchID, tenantID}},
-		{`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,'Warehouse Atomic','WAREHOUSE','ALM01','active')`, []interface{}{placementID, tenantID, branchID}},
 		{`INSERT INTO users(id,email,name,password_hash,status) VALUES($1,$2,'Atomic user','x','active')`, []interface{}{userID, "atomic-" + userID + "@example.invalid"}},
 		{`INSERT INTO user_tenants(user_id,tenant_id) VALUES($1,$2)`, []interface{}{userID, tenantID}},
 		{`INSERT INTO user_branches(user_id,branch_id) VALUES($1,$2)`, []interface{}{userID, branchID}},
@@ -57,13 +56,19 @@ func TestSpecializedHandlerRollbackIsAtomic(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	parent := setupCanonicalParentFixture(t, setupTx, tenantID, branchID, userID)
+	placementID, rackID := parent.LocationID, parent.RackID
 	if err = setupTx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	defer adminDB.Exec(`DELETE FROM tenants WHERE id=$1`, tenantID)
+	var baselineAssets int
+	if err = adminDB.QueryRow(`SELECT count(*) FROM assets WHERE tenant_id=$1`, tenantID).Scan(&baselineAssets); err != nil {
+		t.Fatal(err)
+	}
 
 	invoke := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/infra/switches", bytes.NewBufferString(fmt.Sprintf(`{"name":"Atomic switch","placement_id":%q}`, placementID)))
+		req := httptest.NewRequest(http.MethodPost, "/api/infra/switches", bytes.NewBufferString(fmt.Sprintf(`{"name":"Atomic switch","placement_id":%q,"housing_rack_id":%q}`, placementID, rackID)))
 		req.AddCookie(&http.Cookie{Name: "session_token", Value: "token-" + userID})
 		rec := httptest.NewRecorder()
 		RequireTenantTx(runtimeDB, handleSwitches)(rec, req)
@@ -77,7 +82,7 @@ func TestSpecializedHandlerRollbackIsAtomic(t *testing.T) {
 		if err := adminDB.QueryRow(`SELECT count(*) FROM assets WHERE tenant_id=$1`, tenantID).Scan(&assets); err != nil {
 			t.Fatal(err)
 		}
-		if sequence != 0 || assets != 0 {
+		if sequence != 0 || assets != baselineAssets {
 			t.Fatalf("%s was not atomic: sequence=%d assets=%d", label, sequence, assets)
 		}
 	}

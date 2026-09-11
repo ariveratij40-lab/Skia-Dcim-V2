@@ -113,6 +113,9 @@ type CreateAssetRequest struct {
 	ZoneID           string         `json:"zone_id"`
 	SiteID           string         `json:"site_id"`
 	InternalAreaID   string         `json:"internal_area_id"`
+	MdfIdfID         string         `json:"mdf_idf_id"`
+	HousingRackID    string         `json:"housing_rack_id"`
+	MountMode        string         `json:"mount_mode"`
 	Name             string         `json:"name"`
 	PhysicalIdentity string         `json:"physical_identity"`
 	SerialNumber     *string        `json:"serial_number"`
@@ -141,6 +144,9 @@ type UpdateAssetRequest struct {
 	ZoneID          *string  `json:"zone_id"`
 	SiteID          *string  `json:"site_id"`
 	InternalAreaID  *string  `json:"internal_area_id"`
+	MdfIdfID        *string  `json:"mdf_idf_id"`
+	HousingRackID   *string  `json:"housing_rack_id"`
+	MountMode       *string  `json:"mount_mode"`
 	InternalCode    *string  `json:"internal_code"`
 	Name            *string  `json:"name"`
 	SerialNumber    *string  `json:"serial_number"`
@@ -749,7 +755,7 @@ func (h *DCIMHandler) listAssets(w http.ResponseWriter, r *http.Request) {
 		       a.rfid_tag, a.qr_code,
 		       a.install_year, a.observations,
 		       a.created_at, a.updated_at,
-		       COALESCE(sw.rack_id::TEXT, pp.rack_id::TEXT, pdu.rack_id::TEXT) AS rack_id,
+		       COALESCE(a.housing_rack_id::TEXT,'') AS rack_id,
 		       COALESCE(sw.rack_unit, pp.rack_unit) AS rack_unit
 		FROM assets a
 		JOIN asset_types at ON a.asset_type_id = at.id
@@ -969,7 +975,27 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Los tipos instalables resuelven placement dentro de esta misma TenantTx.
+	// Housing canónico se resuelve dentro de la misma TenantTx. location_id del
+	// cliente es, como máximo, una aserción que debe coincidir con el padre.
+	var canonicalHousing *CanonicalHousingState
+	if assetTypeCode == "RACK" || assetTypeCode == "PATCH_PANEL" || assetTypeCode == "SWITCH" || assetTypeCode == "PDU" || assetTypeCode == "UPS" {
+		placementAssertion := ""
+		if req.LocationID != nil {
+			placementAssertion = strings.TrimSpace(*req.LocationID)
+		}
+		resolved, resolveErr := ResolveCanonicalHousing(r.Context(), tx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, CanonicalHousingRequest{
+			AssetTypeCode: assetTypeCode, DistributionPointID: req.MdfIdfID,
+			HousingRackID: req.HousingRackID, MountMode: req.MountMode, PlacementID: placementAssertion,
+		})
+		if resolveErr != nil {
+			writeCanonicalHousingError(w, resolveErr)
+			return
+		}
+		canonicalHousing = &resolved
+		req.LocationID = &resolved.LocationID
+	}
+
+	// Los demás tipos instalables resuelven placement dentro de esta misma TenantTx.
 	// location_id es únicamente la referencia; el cliente nunca aporta código o tipo.
 	var placement *ResolvedPlacement
 	if installableAssetTypes[assetTypeCode] {
@@ -1016,7 +1042,7 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 			status, inventory_status,
 			rfid_tag, qr_code, install_year, observations,
 			purchase_date, warranty_expiry, cost_usd,
-			created_by, updated_by
+			created_by, updated_by, mount_mode, housing_rack_id
 		) VALUES (
 			$1,$2,$3,$4,$5,
 			$6,$7,$8,
@@ -1025,7 +1051,7 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 			$16,$17,
 			$18,$19,$20,$21,
 			$22,$23,$24,
-			$25,$26
+			$25,$26,$27,NULLIF($28,'')::uuid
 		)`,
 		newID, tenantID, branchID, req.AssetTypeID, req.LocationID,
 		assignment.Code, assignment.ID, assignment.Sequence,
@@ -1035,6 +1061,18 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 		req.RFIDTag, req.QRCode, req.InstallYear, req.Observations,
 		req.PurchaseDate, req.WarrantyExpiry, req.CostUSD,
 		userID, userID,
+		func() string {
+			if canonicalHousing != nil {
+				return canonicalHousing.MountMode
+			}
+			return "NONE"
+		}(),
+		func() string {
+			if canonicalHousing != nil {
+				return canonicalHousing.HousingRackID
+			}
+			return ""
+		}(),
 	)
 	if err != nil {
 		log.Printf("ERROR inserting asset: %v", err)
@@ -1067,16 +1105,15 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 			powerKW = td.PowerKW
 		}
 		_, err = tx.Exec(`
-			INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u, height_mm, width_mm, depth_mm, power_kw)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-			satID, newID, tenantID, branchID, totalU, heightMM, widthMM, depthMM, powerKW,
+			INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u, height_mm, width_mm, depth_mm, power_kw, mdf_idf_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+			satID, newID, tenantID, branchID, totalU, heightMM, widthMM, depthMM, powerKW, canonicalHousing.DistributionPointID,
 		)
 
 	case "SWITCH":
 		portCount := 24
 		uplinkCount := 2
 		var managementIP *string
-		var rackID *string
 		var rackUnit *int
 		if td != nil {
 			if td.PortCount != nil {
@@ -1086,13 +1123,12 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 				uplinkCount = *td.UplinkCount
 			}
 			managementIP = td.ManagementIP
-			rackID = td.RackID
 			rackUnit = td.RackUnit
 		}
 		_, err = tx.Exec(`
-			INSERT INTO switches (id, asset_id, tenant_id, branch_id, port_count, uplink_count, management_ip, rack_id, rack_unit)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-			satID, newID, tenantID, branchID, portCount, uplinkCount, managementIP, rackID, rackUnit,
+			INSERT INTO switches (id, asset_id, tenant_id, branch_id, port_count, uplink_count, management_ip, rack_unit)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+			satID, newID, tenantID, branchID, portCount, uplinkCount, managementIP, rackUnit,
 		)
 
 	case "UPS":
@@ -1114,25 +1150,22 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 		outletCount := 8
 		var amperage *float64
 		var managementIP *string
-		var rackID *string
 		if td != nil {
 			if td.OutletCount != nil {
 				outletCount = *td.OutletCount
 			}
 			amperage = td.Amperage
 			managementIP = td.ManagementIP
-			rackID = td.RackID
 		}
 		_, err = tx.Exec(`
-			INSERT INTO pdus (id, asset_id, tenant_id, branch_id, outlet_count, amperage, management_ip, rack_id)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-			satID, newID, tenantID, branchID, outletCount, amperage, managementIP, rackID,
+			INSERT INTO pdus (id, asset_id, tenant_id, branch_id, outlet_count, amperage, management_ip)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			satID, newID, tenantID, branchID, outletCount, amperage, managementIP,
 		)
 
 	case "PATCH_PANEL":
 		portCount := 24
 		portType := "RJ45"
-		var rackID *string
 		var rackUnit *int
 		if td != nil {
 			if td.PortCount != nil {
@@ -1141,13 +1174,12 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 			if td.PortType != nil {
 				portType = *td.PortType
 			}
-			rackID = td.RackID
 			rackUnit = td.RackUnit
 		}
 		_, err = tx.Exec(`
-			INSERT INTO patch_panels (id, asset_id, tenant_id, branch_id, port_count, port_type, rack_id, rack_unit)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-			satID, newID, tenantID, branchID, portCount, portType, rackID, rackUnit,
+			INSERT INTO patch_panels (id, asset_id, tenant_id, branch_id, port_count, port_type, rack_unit)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			satID, newID, tenantID, branchID, portCount, portType, rackUnit,
 		)
 
 	default:
@@ -1170,8 +1202,9 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 		logID, tenantID, newID, assignment.Code, userID,
 	)
 	if logErr != nil {
-		log.Printf("WARN: error registrando asset_log: %v", logErr)
-		// No es fatal — no abortamos la transacción por un log fallido
+		log.Printf("ERROR registrando asset_log: %v", logErr)
+		http.Error(w, `{"error":"database error creating audit log"}`, http.StatusInternalServerError)
+		return
 	}
 
 	resp := map[string]string{
@@ -1238,6 +1271,14 @@ func (h *DCIMHandler) updateAsset(w http.ResponseWriter, r *http.Request, assetI
 	}
 	if req.BranchID != nil && strings.TrimSpace(*req.BranchID) != "" && *req.BranchID != branchID {
 		jsonResp(w, http.StatusForbidden, map[string]string{"error": "branch_scope_mismatch"})
+		return
+	}
+	canonicalHousingType := currentAssetTypeCode == "RACK" || currentAssetTypeCode == "PATCH_PANEL" || currentAssetTypeCode == "SWITCH" || currentAssetTypeCode == "PDU" || currentAssetTypeCode == "UPS"
+	if canonicalHousingType && (req.LocationID != nil || req.MdfIdfID != nil || req.HousingRackID != nil || req.MountMode != nil || req.AssetTypeID != nil) {
+		// Coordinated descendant relocation is deliberately deferred. Refuse all
+		// partial housing mutations instead of letting callers construct an
+		// intermediate or final divergent graph.
+		writeCanonicalHousingError(w, ErrCanonicalRelocationConflict)
 		return
 	}
 
