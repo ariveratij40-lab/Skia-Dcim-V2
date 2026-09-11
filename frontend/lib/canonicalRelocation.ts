@@ -78,6 +78,9 @@ const messages: Record<string, string> = {
   DISTRIBUTION_POINT_NOT_FOUND: 'El MDF/IDF destino no está disponible en la sucursal activa.',
   HOUSING_RACK_NOT_FOUND: 'El Rack destino no está disponible en la sucursal activa.',
   PLACEMENT_NOT_FOUND: 'La ubicación destino no está disponible en la sucursal activa.',
+  ZONE_REQUIRED: 'Debe seleccionar una Zona canónica.',
+  ZONE_NOT_FOUND: 'La Zona destino no está disponible en la sucursal activa.',
+  INVALID_ASSET_PLACEMENT: 'La ubicación física del activo no es válida para esta operación.',
   PHYSICAL_SCOPE_MISMATCH: 'El destino no pertenece al mismo contexto físico autorizado.',
   INCOMPATIBLE_HOUSING: 'El alojamiento seleccionado es incompatible con el activo.',
   INVALID_PARENT_TYPE: 'El padre físico seleccionado no es válido.',
@@ -86,7 +89,6 @@ const messages: Record<string, string> = {
   HOUSING_FORBIDDEN: 'El modo seleccionado no permite Rack de alojamiento.',
   CANONICAL_RELOCATION_CONFLICT: 'La operación dejaría el grafo físico en un estado inconsistente.',
   legacy_relocation_not_supported: 'El activo usa una ubicación legacy y requiere remediación antes de relocalizarse.',
-  zone_required: 'Debe seleccionar una Zona canónica.',
 };
 
 export function canonicalRelocationError(error: any): { code: string; message: string } {
