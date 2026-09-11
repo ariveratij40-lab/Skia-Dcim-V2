@@ -107,6 +107,7 @@ func ResolveHousing(ctx context.Context, tdb TenantDB, scope PhysicalScope, id s
 	var distributionID, locationID sql.NullString
 	err := tdb.QueryRowContext(ctx, `SELECT r.id,r.id,r.asset_id,r.housing_type,r.mdf_idf_id,a.location_id
 		FROM racks r JOIN assets a ON a.id=r.asset_id AND a.tenant_id=r.tenant_id AND a.branch_id=r.branch_id
+		JOIN asset_types at ON at.id=a.asset_type_id AND at.code='RACK'
 		WHERE r.id=$1 AND r.tenant_id=$2 AND r.branch_id=$3
 		  AND r.housing_type IN ('RACK','CABINET') AND a.status='active'`, id, scope.TenantID, scope.BranchID).
 		Scan(&h.ID, &h.RackID, &h.AssetID, &h.Type, &distributionID, &locationID)
@@ -120,7 +121,8 @@ func ResolveHousing(ctx context.Context, tdb TenantDB, scope PhysicalScope, id s
 	if !distributionID.Valid {
 		return Housing{}, ErrHousingNotFound
 	}
-	if _, err = ResolveDistributionPoint(ctx, tdb, scope, distributionID.String, true); err != nil {
+	parent, err := ResolveDistributionPoint(ctx, tdb, scope, distributionID.String, false)
+	if err != nil || parent.LocationID != h.LocationID {
 		return Housing{}, ErrHousingNotFound
 	}
 	return h, nil

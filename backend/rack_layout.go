@@ -20,8 +20,8 @@ import (
 
 func handleRackLayout(w http.ResponseWriter, r *http.Request) {
 	tdb, dbOK := TenantDBFromContext(r.Context())
-	_, tenantID, _, identityOK := TenantIdentityFromContext(r.Context())
-	if !dbOK || !identityOK || tenantID == "" {
+	_, tenantID, branchID, identityOK := TenantIdentityFromContext(r.Context())
+	if !dbOK || !identityOK || tenantID == "" || branchID == "" {
 		http.Error(w, `{"error":"missing tenant context"}`, http.StatusInternalServerError)
 		return
 	}
@@ -35,24 +35,19 @@ func handleRackLayout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verificar que el rack pertenece al tenant
-	var totalU int
-	err := tdb.QueryRowContext(r.Context(),
-		`SELECT rk.total_u FROM racks rk
-		 JOIN assets a ON a.id = rk.asset_id
-		 WHERE rk.id = $1 AND rk.tenant_id = $2`,
-		rackID, tenantID,
-	).Scan(&totalU)
+	housing, err := ResolveHousing(r.Context(), tdb, PhysicalScope{TenantID: tenantID, BranchID: branchID}, rackID)
 	if err != nil {
-		http.Error(w, `{"error":"rack no encontrado"}`, http.StatusNotFound)
+		writeCanonicalHousingError(w, ErrHousingRackNotFound)
 		return
 	}
+	var totalU int
+	_ = tdb.QueryRowContext(r.Context(), `SELECT total_u FROM racks WHERE id=$1 AND tenant_id=$2 AND branch_id=$3`, rackID, tenantID, branchID).Scan(&totalU)
 
 	switch r.Method {
 	case http.MethodGet:
-		handleGetRackLayout(w, r, tdb, rackID, tenantID)
+		handleGetRackLayout(w, r, tdb, rackID, tenantID, branchID)
 	case http.MethodPost:
-		handlePostRackLayout(w, r, tdb, rackID, tenantID, totalU)
+		handlePostRackLayout(w, r, tdb, housing, tenantID, branchID, totalU)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -60,7 +55,7 @@ func handleRackLayout(w http.ResponseWriter, r *http.Request) {
 
 // ─── GET layout ───────────────────────────────────────────────────────────────
 
-func handleGetRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, rackID, tenantID string) {
+func handleGetRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, rackID, tenantID, branchID string) {
 	type SlotInfo struct {
 		AssetID      string `json:"asset_id"`
 		InternalCode string `json:"internal_code"`
@@ -83,7 +78,7 @@ func handleGetRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, r
 		       COALESCE(sw.rack_unit,1), 1
 		FROM switches sw
 		JOIN assets a ON a.id = sw.asset_id
-		WHERE sw.rack_id = $1 AND sw.tenant_id = $2`, rackID, tenantID)
+		WHERE a.housing_rack_id = $1 AND sw.tenant_id = $2 AND sw.branch_id=$3`, rackID, tenantID, branchID)
 	if swRows != nil {
 		defer swRows.Close()
 		for swRows.Next() {
@@ -100,7 +95,7 @@ func handleGetRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, r
 		       COALESCE(pp.rack_unit,1), 1
 		FROM patch_panels pp
 		JOIN assets a ON a.id = pp.asset_id
-		WHERE pp.rack_id = $1 AND pp.tenant_id = $2`, rackID, tenantID)
+		WHERE a.housing_rack_id = $1 AND pp.tenant_id = $2 AND pp.branch_id=$3`, rackID, tenantID, branchID)
 	if ppRows != nil {
 		defer ppRows.Close()
 		for ppRows.Next() {
@@ -117,7 +112,7 @@ func handleGetRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, r
 		       1, 1
 		FROM pdus p
 		JOIN assets a ON a.id = p.asset_id
-		WHERE p.rack_id = $1 AND p.tenant_id = $2`, rackID, tenantID)
+		WHERE a.housing_rack_id = $1 AND p.tenant_id = $2 AND p.branch_id=$3`, rackID, tenantID, branchID)
 	if pduRows != nil {
 		defer pduRows.Close()
 		for pduRows.Next() {
@@ -155,7 +150,7 @@ type RackLayoutRequest struct {
 	Assignments []RackLayoutAssignment `json:"assignments"`
 }
 
-func handlePostRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, rackID, tenantID string, totalU int) {
+func handlePostRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, housing Housing, tenantID, branchID string, totalU int) {
 	var req RackLayoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"body inválido"}`, http.StatusBadRequest)
@@ -164,12 +159,13 @@ func handlePostRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, 
 
 	// ── Validaciones de integridad ────────────────────────────────────────────
 
-	// 1. Verificar que los activos pertenecen al tenant
+	// 1. Resolver cada activo en el mismo tenant/branch y limitar el layout a
+	// tipos cuyo housing canónico es Rack.
 	for _, a := range req.Assignments {
-		var count int
-		_ = tdb.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM assets WHERE id=$1 AND tenant_id=$2`, a.AssetID, tenantID).Scan(&count)
-		if count == 0 {
-			http.Error(w, fmt.Sprintf(`{"error":"activo %s no pertenece al tenant"}`, a.AssetID), http.StatusForbidden)
+		var typeCode string
+		err := tdb.QueryRowContext(r.Context(), `SELECT at.code FROM assets a JOIN asset_types at ON at.id=a.asset_type_id WHERE a.id=$1 AND a.tenant_id=$2 AND a.branch_id=$3 FOR UPDATE OF a`, a.AssetID, tenantID, branchID).Scan(&typeCode)
+		if err != nil || (typeCode != "SWITCH" && typeCode != "PATCH_PANEL" && typeCode != "PDU" && typeCode != "UPS") {
+			writeCanonicalHousingError(w, ErrIncompatibleHousing)
 			return
 		}
 	}
@@ -188,47 +184,32 @@ func handlePostRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, 
 		return
 	}
 
-	// 3. Verificar que los activos no están ya asignados a OTRO rack
+	// A2B has no canonical "unmounted" state for these types. Refuse a layout
+	// replacement that would silently detach an existing housed asset.
+	rows, err := tdb.QueryContext(r.Context(), `SELECT id FROM assets WHERE housing_rack_id=$1 AND tenant_id=$2 AND branch_id=$3`, housing.RackID, tenantID, branchID)
+	if err != nil {
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+		return
+	}
+	wanted := map[string]bool{}
 	for _, a := range req.Assignments {
-		var existingRack *string
-		// Revisar en switches
-		_ = tdb.QueryRowContext(r.Context(), `SELECT rack_id FROM switches WHERE asset_id=$1 AND rack_id IS NOT NULL AND rack_id != $2 AND tenant_id=$3`, a.AssetID, rackID, tenantID).Scan(&existingRack)
-		if existingRack != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"el activo %s ya está asignado a otro rack"}`, a.AssetID), http.StatusConflict)
-			return
-		}
-		// Revisar en patch_panels
-		_ = tdb.QueryRowContext(r.Context(), `SELECT rack_id FROM patch_panels WHERE asset_id=$1 AND rack_id IS NOT NULL AND rack_id != $2 AND tenant_id=$3`, a.AssetID, rackID, tenantID).Scan(&existingRack)
-		if existingRack != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"el activo %s ya está asignado a otro rack"}`, a.AssetID), http.StatusConflict)
+		wanted[a.AssetID] = true
+	}
+	for rows.Next() {
+		var id string
+		_ = rows.Scan(&id)
+		if !wanted[id] {
+			rows.Close()
+			writeCanonicalHousingError(w, ErrCanonicalRelocationConflict)
 			return
 		}
 	}
-
-	// Limpiar asignaciones anteriores de este rack
-	_, err := tdb.ExecContext(r.Context(), `UPDATE switches SET rack_id=NULL, rack_unit=NULL WHERE rack_id=$1 AND tenant_id=$2`, rackID, tenantID)
-	if err != nil {
-		log.Printf("Error limpiando switches del rack %s: %v", rackID, err)
-		http.Error(w, `{"error":"error limpiando layout anterior"}`, http.StatusInternalServerError)
-		return
-	}
-	_, err = tdb.ExecContext(r.Context(), `UPDATE patch_panels SET rack_id=NULL, rack_unit=NULL WHERE rack_id=$1 AND tenant_id=$2`, rackID, tenantID)
-	if err != nil {
-		log.Printf("Error limpiando patch_panels del rack %s: %v", rackID, err)
-		http.Error(w, `{"error":"error limpiando layout anterior"}`, http.StatusInternalServerError)
-		return
-	}
-	_, err = tdb.ExecContext(r.Context(), `UPDATE pdus SET rack_id=NULL WHERE rack_id=$1 AND tenant_id=$2`, rackID, tenantID)
-	if err != nil {
-		log.Printf("Error limpiando PDUs del rack %s: %v", rackID, err)
-		http.Error(w, `{"error":"error limpiando layout anterior"}`, http.StatusInternalServerError)
-		return
-	}
+	rows.Close()
 
 	// Actualizar used_u en el rack
-	_, err = tdb.ExecContext(r.Context(), `UPDATE racks SET used_u=$1 WHERE id=$2 AND tenant_id=$3`, totalUsed, rackID, tenantID)
+	_, err = tdb.ExecContext(r.Context(), `UPDATE racks SET used_u=$1 WHERE id=$2 AND tenant_id=$3 AND branch_id=$4`, totalUsed, housing.RackID, tenantID, branchID)
 	if err != nil {
-		log.Printf("Error actualizando used_u del rack %s: %v", rackID, err)
+		log.Printf("Error actualizando used_u del rack %s: %v", housing.RackID, err)
 		http.Error(w, `{"error":"error actualizando capacidad del rack"}`, http.StatusInternalServerError)
 		return
 	}
@@ -242,39 +223,37 @@ func handlePostRackLayout(w http.ResponseWriter, r *http.Request, tdb TenantDB, 
 
 		// Determinar el tipo del activo
 		var typeCode string
-		_ = tdb.QueryRowContext(r.Context(), `SELECT at.code FROM assets a JOIN asset_types at ON at.id=a.asset_type_id WHERE a.id=$1 AND a.tenant_id=$2`, a.AssetID, tenantID).Scan(&typeCode)
+		_ = tdb.QueryRowContext(r.Context(), `SELECT at.code FROM assets a JOIN asset_types at ON at.id=a.asset_type_id WHERE a.id=$1 AND a.tenant_id=$2 AND a.branch_id=$3`, a.AssetID, tenantID, branchID).Scan(&typeCode)
+		_, err = tdb.ExecContext(r.Context(), `UPDATE assets SET mount_mode='RACK_MOUNTED',housing_rack_id=$1,location_id=$2,updated_at=NOW() WHERE id=$3 AND tenant_id=$4 AND branch_id=$5`, housing.RackID, housing.LocationID, a.AssetID, tenantID, branchID)
+		if err != nil {
+			writeCanonicalHousingError(w, ErrIncompatibleHousing)
+			return
+		}
 
 		switch typeCode {
 		case "SWITCH":
-			_, err = tdb.ExecContext(r.Context(), `UPDATE switches SET rack_id=$1, rack_unit=$2 WHERE asset_id=$3 AND tenant_id=$4`,
-				rackID, rackUnit, a.AssetID, tenantID)
+			_, err = tdb.ExecContext(r.Context(), `UPDATE switches SET rack_unit=$1 WHERE asset_id=$2 AND tenant_id=$3 AND branch_id=$4`, rackUnit, a.AssetID, tenantID, branchID)
 		case "PATCH_PANEL":
-			_, err = tdb.ExecContext(r.Context(), `UPDATE patch_panels SET rack_id=$1, rack_unit=$2 WHERE asset_id=$3 AND tenant_id=$4`,
-				rackID, rackUnit, a.AssetID, tenantID)
+			_, err = tdb.ExecContext(r.Context(), `UPDATE patch_panels SET rack_unit=$1 WHERE asset_id=$2 AND tenant_id=$3 AND branch_id=$4`, rackUnit, a.AssetID, tenantID, branchID)
 		case "PDU":
-			_, err = tdb.ExecContext(r.Context(), `UPDATE pdus SET rack_id=$1 WHERE asset_id=$2 AND tenant_id=$3`,
-				rackID, a.AssetID, tenantID)
+			// PDU has no canonical positional column beyond assets.housing_rack_id.
 		case "UPS":
-			// UPS no tiene tabla satelite con rack_id — guardar en specs del asset
-			_, err = tdb.ExecContext(r.Context(), `UPDATE assets SET specs=jsonb_set(COALESCE(specs,'{}'), '{rack_id}', $1::jsonb) WHERE id=$2 AND tenant_id=$3`,
-				fmt.Sprintf(`"%s"`, rackID), a.AssetID, tenantID)
+			// UPS canonical housing is already stored on assets.
 		default:
-			// Para otros tipos, guardar en specs del asset
-			_, err = tdb.ExecContext(r.Context(), `UPDATE assets SET specs=jsonb_set(COALESCE(specs,'{}'), '{rack_id}', $1::jsonb) WHERE id=$2 AND tenant_id=$3`,
-				fmt.Sprintf(`"%s"`, rackID), a.AssetID, tenantID)
+			err = ErrIncompatibleHousing
 		}
 
 		if err != nil {
-			log.Printf("Error asignando activo %s al rack %s (U%d): %v", a.AssetID, rackID, rackUnit, err)
+			log.Printf("Error asignando activo %s al rack %s (U%d): %v", a.AssetID, housing.RackID, rackUnit, err)
 			http.Error(w, fmt.Sprintf(`{"error":"error asignando activo %s"}`, a.AssetID), http.StatusInternalServerError)
 			return
 		}
 	}
 
-	log.Printf("[RackLayout] Rack %s actualizado: %d activos, %dU usadas", rackID, len(req.Assignments), totalUsed)
+	log.Printf("[RackLayout] Rack %s actualizado: %d activos, %dU usadas", housing.RackID, len(req.Assignments), totalUsed)
 	jsonResp(w, 200, map[string]interface{}{
 		"success":     true,
-		"rack_id":     rackID,
+		"rack_id":     housing.RackID,
 		"assignments": len(req.Assignments),
 		"used_u":      totalUsed,
 		"free_u":      totalU - totalUsed,

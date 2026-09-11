@@ -431,8 +431,8 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 			JOIN assets a ON a.id = rk.asset_id
 			LEFT JOIN mdf_idf mi ON mi.id = rk.mdf_idf_id
 			LEFT JOIN assets ma ON ma.id = mi.asset_id
-			WHERE rk.tenant_id = $1
-			ORDER BY a.created_at DESC`, tenantID)
+			WHERE rk.tenant_id = $1 AND rk.branch_id = $2
+			ORDER BY a.created_at DESC`, tenantID, branchID)
 		if err != nil {
 			jsonResp(w, 200, []RackRecord{})
 			return
@@ -470,9 +470,10 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 			Observations string `json:"observations"`
 			InstallYear  int    `json:"install_year"`
 			PlacementID  string `json:"placement_id"`
+			MdfIdfID     string `json:"mdf_idf_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad request", http.StatusBadRequest)
+			writeCanonicalHousingError(w, ErrInvalidPayload)
 			return
 		}
 		if req.Status == "" {
@@ -482,9 +483,17 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 			req.TotalU = 42
 		}
 
+		housing, err := ResolveCanonicalHousing(r.Context(), tenantTx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, CanonicalHousingRequest{
+			AssetTypeCode: "RACK", DistributionPointID: req.MdfIdfID, PlacementID: req.PlacementID,
+		})
+		if err != nil {
+			writeCanonicalHousingError(w, err)
+			return
+		}
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "RACK", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
-			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear, PlacementID: req.PlacementID,
+			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
+			PlacementID: housing.LocationID, MountMode: housing.MountMode,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "RACK")
@@ -492,9 +501,9 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 		}
 		rackID := generateID()
 		_, err = tenantTx.Exec(`
-			INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u)
-			VALUES ($1,$2,$3,$4,$5)`,
-			rackID, managed.AssetID, tenantID, branchID, req.TotalU)
+			INSERT INTO racks (id, asset_id, tenant_id, branch_id, total_u, mdf_idf_id)
+			VALUES ($1,$2,$3,$4,$5,$6)`,
+			rackID, managed.AssetID, tenantID, branchID, req.TotalU, housing.DistributionPointID)
 		if err != nil {
 			writeManagedAssetError(w, err, "RACK")
 			return
@@ -607,14 +616,13 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Obtener el mdf_idf.id y datos del asset
-	var mdfIdfID, mdfCode, mdfName, placementID string
+	var mdfIdfID, mdfCode, mdfName string
 	var totalU int
 	err = tenantTx.QueryRow(`
-		SELECT m.id, a.internal_code, COALESCE(a.name, a.internal_code), l.id
+		SELECT m.id, a.internal_code, COALESCE(a.name, a.internal_code)
 		FROM mdf_idf m JOIN assets a ON a.id = m.asset_id
-		JOIN locations l ON l.asset_id=a.id
-		WHERE m.asset_id = $1 AND m.tenant_id = $2`,
-		mdfAssetID, tenantID).Scan(&mdfIdfID, &mdfCode, &mdfName, &placementID)
+		WHERE m.asset_id = $1 AND m.tenant_id = $2 AND m.branch_id=$3`,
+		mdfAssetID, tenantID, branchID).Scan(&mdfIdfID, &mdfCode, &mdfName)
 	if err != nil {
 		http.Error(w, `{"error":"MDF/IDF no encontrado"}`, http.StatusNotFound)
 		return
@@ -636,9 +644,9 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	err = tenantTx.QueryRow(`
 		SELECT rk.id, rk.asset_id, a.internal_code, rk.total_u
 		FROM racks rk JOIN assets a ON a.id = rk.asset_id
-		WHERE rk.mdf_idf_id = $1 AND rk.tenant_id = $2
+		WHERE rk.mdf_idf_id = $1 AND rk.tenant_id = $2 AND rk.branch_id=$3
 		ORDER BY rk.created_at LIMIT 1`,
-		mdfIdfID, tenantID).Scan(&existingRackID, &existingRackAssetID, &existingRackCode, &existingTotalU)
+		mdfIdfID, tenantID, branchID).Scan(&existingRackID, &existingRackAssetID, &existingRackCode, &existingTotalU)
 
 	if err == nil {
 		// Ya existe — devolver el rack existente
@@ -653,8 +661,13 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// No existe — crear el rack automáticamente bajo la misma nomenclatura autoritativa.
+	housing, err := ResolveCanonicalHousing(r.Context(), tenantTx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, CanonicalHousingRequest{AssetTypeCode: "RACK", DistributionPointID: mdfIdfID})
+	if err != nil {
+		writeCanonicalHousingError(w, err)
+		return
+	}
 	managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
-		AssetTypeCode: "RACK", Name: fmt.Sprintf("Rack %s", mdfName), Status: "active", PlacementID: placementID,
+		AssetTypeCode: "RACK", Name: fmt.Sprintf("Rack %s", mdfName), Status: "active", PlacementID: housing.LocationID, MountMode: housing.MountMode,
 	})
 	if err != nil {
 		writeManagedAssetError(w, err, "RACK")
@@ -760,23 +773,24 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			InternalCode string `json:"internal_code"`
-			Name         string `json:"name"`
-			Ubicacion    string `json:"ubicacion"`
-			Tipo         string `json:"tipo"`
-			PortCount    int    `json:"port_count"`
-			UplinkCount  int    `json:"uplink_count"`
-			ManagementIP string `json:"management_ip"`
-			Status       string `json:"status"`
-			Manufacturer string `json:"manufacturer"`
-			Model        string `json:"model"`
-			Serial       string `json:"serial"`
-			Observations string `json:"observations"`
-			InstallYear  int    `json:"install_year"`
-			PlacementID  string `json:"placement_id"`
+			InternalCode  string `json:"internal_code"`
+			Name          string `json:"name"`
+			Ubicacion     string `json:"ubicacion"`
+			Tipo          string `json:"tipo"`
+			PortCount     int    `json:"port_count"`
+			UplinkCount   int    `json:"uplink_count"`
+			ManagementIP  string `json:"management_ip"`
+			Status        string `json:"status"`
+			Manufacturer  string `json:"manufacturer"`
+			Model         string `json:"model"`
+			Serial        string `json:"serial"`
+			Observations  string `json:"observations"`
+			InstallYear   int    `json:"install_year"`
+			PlacementID   string `json:"placement_id"`
+			HousingRackID string `json:"housing_rack_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad request", http.StatusBadRequest)
+			writeCanonicalHousingError(w, ErrInvalidPayload)
 			return
 		}
 		if req.Status == "" {
@@ -786,9 +800,17 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 			req.PortCount = 24
 		}
 
+		housing, err := ResolveCanonicalHousing(r.Context(), tenantTx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, CanonicalHousingRequest{
+			AssetTypeCode: "SWITCH", HousingRackID: req.HousingRackID, PlacementID: req.PlacementID,
+		})
+		if err != nil {
+			writeCanonicalHousingError(w, err)
+			return
+		}
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "SWITCH", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
-			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear, PlacementID: req.PlacementID,
+			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
+			PlacementID: housing.LocationID, MountMode: housing.MountMode, HousingRackID: housing.HousingRackID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "SWITCH")
@@ -916,9 +938,11 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 			Amperage       float64 `json:"amperage"`
 			InstallYear    int     `json:"install_year"`
 			PlacementID    string  `json:"placement_id"`
+			HousingRackID  string  `json:"housing_rack_id"`
+			MountMode      string  `json:"mount_mode"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad request", http.StatusBadRequest)
+			writeCanonicalHousingError(w, ErrInvalidPayload)
 			return
 		}
 		if req.Status == "" {
@@ -931,9 +955,17 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 		if strings.EqualFold(req.DeviceType, "pdu") {
 			category = "PDU"
 		}
+		housing, err := ResolveCanonicalHousing(r.Context(), tenantTx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, CanonicalHousingRequest{
+			AssetTypeCode: category, HousingRackID: req.HousingRackID, MountMode: req.MountMode, PlacementID: req.PlacementID,
+		})
+		if err != nil {
+			writeCanonicalHousingError(w, err)
+			return
+		}
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: category, Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
-			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear, PlacementID: req.PlacementID,
+			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
+			PlacementID: housing.LocationID, MountMode: housing.MountMode, HousingRackID: housing.HousingRackID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, category)
@@ -1034,21 +1066,22 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			InternalCode string `json:"internal_code"`
-			Name         string `json:"name"`
-			Location     string `json:"location"`
-			PanelType    string `json:"panel_type"`
-			PortCount    int    `json:"port_count"`
-			Status       string `json:"status"`
-			Manufacturer string `json:"manufacturer"`
-			Model        string `json:"model"`
-			Serial       string `json:"serial"`
-			Observations string `json:"observations"`
-			InstallYear  int    `json:"install_year"`
-			PlacementID  string `json:"placement_id"`
+			InternalCode  string `json:"internal_code"`
+			Name          string `json:"name"`
+			Location      string `json:"location"`
+			PanelType     string `json:"panel_type"`
+			PortCount     int    `json:"port_count"`
+			Status        string `json:"status"`
+			Manufacturer  string `json:"manufacturer"`
+			Model         string `json:"model"`
+			Serial        string `json:"serial"`
+			Observations  string `json:"observations"`
+			InstallYear   int    `json:"install_year"`
+			PlacementID   string `json:"placement_id"`
+			HousingRackID string `json:"housing_rack_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Bad request", http.StatusBadRequest)
+			writeCanonicalHousingError(w, ErrInvalidPayload)
 			return
 		}
 		if req.Status == "" {
@@ -1058,9 +1091,17 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 			req.PortCount = 24
 		}
 
+		housing, err := ResolveCanonicalHousing(r.Context(), tenantTx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, CanonicalHousingRequest{
+			AssetTypeCode: "PATCH_PANEL", HousingRackID: req.HousingRackID, PlacementID: req.PlacementID,
+		})
+		if err != nil {
+			writeCanonicalHousingError(w, err)
+			return
+		}
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "PATCH_PANEL", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
-			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear, PlacementID: req.PlacementID,
+			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
+			PlacementID: housing.LocationID, MountMode: housing.MountMode, HousingRackID: housing.HousingRackID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "PATCH_PANEL")

@@ -34,7 +34,7 @@ func TestSwitchLifecyclePostgres(t *testing.T) {
 	defer runtimeDB.Close()
 
 	tenantID, branchID, userID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	ruleID, placementID := uuid.NewString(), uuid.NewString()
+	ruleID := uuid.NewString()
 	token := "lifecycle-" + uuid.NewString()
 	setup := []struct {
 		query string
@@ -46,7 +46,6 @@ func TestSwitchLifecyclePostgres(t *testing.T) {
 		{`INSERT INTO user_tenants(user_id,tenant_id) VALUES($1,$2)`, []interface{}{userID, tenantID}},
 		{`INSERT INTO user_branches(user_id,branch_id) VALUES($1,$2)`, []interface{}{userID, branchID}},
 		{`INSERT INTO sessions(id,user_id,tenant_id,branch_id,token,expires_at) VALUES($1,$2,$3,$4,$5,4102444800)`, []interface{}{uuid.NewString(), userID, tenantID, branchID, token}},
-		{`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,'IDF Lifecycle','IDF','IDF01','active')`, []interface{}{placementID, tenantID, branchID}},
 		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,seq_digits,last_seq,active,include_placement) VALUES($1,$2,'SWITCH','SW','-',4,0,true,true)`, []interface{}{ruleID, tenantID}},
 	}
 	for _, statement := range setup {
@@ -54,11 +53,20 @@ func TestSwitchLifecyclePostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	parentTx, err := adminDB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := setupCanonicalParentFixture(t, parentTx, tenantID, branchID, userID)
+	if err = parentTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	placementID, rackID := parent.LocationID, parent.RackID
 	defer adminDB.Exec(`DELETE FROM tenants WHERE id=$1`, tenantID)
 
 	invokeCreate := func(name string) string {
 		t.Helper()
-		request := httptest.NewRequest(http.MethodPost, "/api/infra/switches", bytes.NewBufferString(fmt.Sprintf(`{"name":%q,"placement_id":%q}`, name, placementID)))
+		request := httptest.NewRequest(http.MethodPost, "/api/infra/switches", bytes.NewBufferString(fmt.Sprintf(`{"name":%q,"placement_id":%q,"housing_rack_id":%q}`, name, placementID, rackID)))
 		request.AddCookie(&http.Cookie{Name: "session_token", Value: token})
 		recorder := httptest.NewRecorder()
 		RequireTenantTx(runtimeDB, handleSwitches)(recorder, request)

@@ -36,6 +36,8 @@ type managedAssetInput struct {
 	Observations      string
 	InstallYear       int
 	PlacementID       string
+	MountMode         string
+	HousingRackID     string
 	PhysicalLocation  *ResolvedPhysicalLocation
 	CanonicalZone     *CanonicalZone
 	NamingContextMode string
@@ -195,6 +197,9 @@ func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, i
 	if input.Status == "" {
 		input.Status = "active"
 	}
+	if input.MountMode == "" {
+		input.MountMode = "NONE"
+	}
 	var assetTypeID string
 	if tenantTx == nil {
 		return nil, errors.New("request TenantDB is required")
@@ -225,11 +230,13 @@ func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, i
 		INSERT INTO assets (
 			id, tenant_id, branch_id, asset_type_id,
 			internal_code, nomenclature_id, nomenclature_sequence, name,
-			status, manufacturer, model, serial_number, observations, install_year, created_by, location_id
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),NULLIF($13,''),NULLIF($14,0),$15,NULLIF($16,'')::uuid)`,
+			status, manufacturer, model, serial_number, observations, install_year, created_by, location_id,
+			mount_mode, housing_rack_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),NULLIF($13,''),NULLIF($14,0),$15,NULLIF($16,'')::uuid,$17,NULLIF($18,'')::uuid)`,
 		assetID, tenantID, branchID, assetTypeID,
 		assignment.Code, assignment.ID, assignment.Sequence, strings.TrimSpace(input.Name),
 		input.Status, input.Manufacturer, input.Model, input.SerialNumber, input.Observations, input.InstallYear, userID, input.PlacementID,
+		input.MountMode, input.HousingRackID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert managed asset: %w", err)
