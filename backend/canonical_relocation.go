@@ -14,8 +14,6 @@ var (
 	ErrRelocationUnsupported   = errors.New("asset type does not support canonical relocation")
 )
 
-// CanonicalRelocationRequest contains only destination authority. Tenant and
-// branch are always obtained from the authenticated TenantTx context.
 type CanonicalRelocationRequest struct {
 	AssetID             string  `json:"asset_id"`
 	DistributionPointID string  `json:"distribution_point_id,omitempty"`
@@ -31,10 +29,10 @@ type CanonicalRelocationAsset struct {
 	ID                  string `json:"id"`
 	Code                string `json:"code"`
 	Name                string `json:"name"`
-	AssetType            string `json:"asset_type"`
-	LocationID           string `json:"location_id"`
-	HousingRackID        string `json:"housing_rack_id"`
-	MountMode            string `json:"mount_mode"`
+	AssetType           string `json:"asset_type"`
+	LocationID          string `json:"location_id"`
+	HousingRackID       string `json:"housing_rack_id"`
+	MountMode           string `json:"mount_mode"`
 	DistributionPointID string `json:"distribution_point_id"`
 }
 
@@ -50,23 +48,13 @@ type CanonicalRelocationResult struct {
 }
 
 type canonicalRelocationSnapshot struct {
-	AssetType     string
-	AssetTypeID   string
-	LocationID    string
-	HousingRackID string
-	MountMode     string
+	AssetType, AssetTypeID, LocationID, HousingRackID, MountMode string
 }
 
 type relocationChildSnapshot struct {
-	AssetID       string
-	LocationID    string
-	HousingRackID string
-	MountMode     string
+	AssetID, LocationID, HousingRackID, MountMode string
 }
 
-// Register the dedicated A2D route without changing the legacy generic asset
-// dispatcher. The wrapper resolves db at request time, after main initializes
-// the runtime pool.
 func init() {
 	http.HandleFunc("/api/dcim/relocations", func(w http.ResponseWriter, r *http.Request) {
 		if db == nil {
@@ -117,6 +105,7 @@ func listCanonicalRelocationAssets(w http.ResponseWriter, r *http.Request, tdb T
 		JOIN asset_types at ON at.id=a.asset_type_id
 		LEFT JOIN racks r ON r.asset_id=a.id AND r.tenant_id=a.tenant_id AND r.branch_id=a.branch_id
 		WHERE a.tenant_id=$1 AND a.branch_id=$2
+		  AND a.status <> 'decommissioned'
 		  AND at.code IN ('MDF','IDF','RACK','PATCH_PANEL','SWITCH','PDU','UPS')
 		ORDER BY at.code,a.internal_code`, tenantID, branchID)
 	if err != nil {
@@ -154,7 +143,7 @@ func relocateCanonicalAsset(ctx context.Context, tdb TenantDB, userID, tenantID,
 		SELECT at.code,a.asset_type_id::text,COALESCE(a.location_id::text,''),
 		       COALESCE(a.housing_rack_id::text,''),COALESCE(a.mount_mode,'NONE')
 		FROM assets a JOIN asset_types at ON at.id=a.asset_type_id
-		WHERE a.id=$1 AND a.tenant_id=$2 AND a.branch_id=$3
+		WHERE a.id=$1 AND a.tenant_id=$2 AND a.branch_id=$3 AND a.status <> 'decommissioned'
 		FOR UPDATE OF a`, assetID, tenantID, branchID).
 		Scan(&current.AssetType, &current.AssetTypeID, &current.LocationID, &current.HousingRackID, &current.MountMode)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -183,9 +172,7 @@ func relocateCanonicalAsset(ctx context.Context, tdb TenantDB, userID, tenantID,
 		if strings.TrimSpace(req.DistributionPointID) == "" || strings.TrimSpace(req.HousingRackID) != "" || strings.TrimSpace(req.PlacementID) != "" || strings.TrimSpace(req.MountMode) != "" {
 			return CanonicalRelocationResult{}, ErrInvalidPayload
 		}
-		target, err := ResolveCanonicalHousing(ctx, tdb, scope, CanonicalHousingRequest{
-			AssetTypeCode: "RACK", DistributionPointID: strings.TrimSpace(req.DistributionPointID),
-		})
+		target, err := ResolveCanonicalHousing(ctx, tdb, scope, CanonicalHousingRequest{AssetTypeCode: "RACK", DistributionPointID: strings.TrimSpace(req.DistributionPointID)})
 		if err != nil {
 			return CanonicalRelocationResult{}, err
 		}
@@ -195,9 +182,7 @@ func relocateCanonicalAsset(ctx context.Context, tdb TenantDB, userID, tenantID,
 		if strings.TrimSpace(req.HousingRackID) == "" || strings.TrimSpace(req.DistributionPointID) != "" || strings.TrimSpace(req.PlacementID) != "" || strings.TrimSpace(req.MountMode) != "" {
 			return CanonicalRelocationResult{}, ErrInvalidPayload
 		}
-		target, err := ResolveCanonicalHousing(ctx, tdb, scope, CanonicalHousingRequest{
-			AssetTypeCode: current.AssetType, HousingRackID: strings.TrimSpace(req.HousingRackID),
-		})
+		target, err := ResolveCanonicalHousing(ctx, tdb, scope, CanonicalHousingRequest{AssetTypeCode: current.AssetType, HousingRackID: strings.TrimSpace(req.HousingRackID)})
 		if err != nil {
 			return CanonicalRelocationResult{}, err
 		}
@@ -236,9 +221,7 @@ func relocateCanonicalRack(ctx context.Context, tdb TenantDB, userID, tenantID, 
 	if err != nil {
 		return CanonicalRelocationResult{}, err
 	}
-
-	if _, err = tdb.ExecContext(ctx, `UPDATE racks SET mdf_idf_id=$1 WHERE id=$2 AND tenant_id=$3 AND branch_id=$4`,
-		target.DistributionPointID, rackID, tenantID, branchID); err != nil {
+	if _, err = tdb.ExecContext(ctx, `UPDATE racks SET mdf_idf_id=$1 WHERE id=$2 AND tenant_id=$3 AND branch_id=$4`, target.DistributionPointID, rackID, tenantID, branchID); err != nil {
 		return CanonicalRelocationResult{}, err
 	}
 	if _, err = tdb.ExecContext(ctx, `UPDATE assets SET location_id=$1,mount_mode='NONE',housing_rack_id=NULL,updated_at=NOW()
@@ -266,11 +249,7 @@ func relocateCanonicalRack(ctx context.Context, tdb TenantDB, userID, tenantID, 
 			return CanonicalRelocationResult{}, err
 		}
 	}
-
-	return CanonicalRelocationResult{
-		AssetID: assetID, AssetType: "RACK", LocationID: target.LocationID, MountMode: "NONE",
-		DistributionPointID: target.DistributionPointID, CascadedAssets: len(children), Changed: changed,
-	}, nil
+	return CanonicalRelocationResult{AssetID: assetID, AssetType: "RACK", LocationID: target.LocationID, MountMode: "NONE", DistributionPointID: target.DistributionPointID, CascadedAssets: len(children), Changed: changed}, nil
 }
 
 func relocateCanonicalEquipment(ctx context.Context, tdb TenantDB, userID, tenantID, branchID, assetID string, current canonicalRelocationSnapshot, target CanonicalHousingState) (CanonicalRelocationResult, error) {
@@ -284,10 +263,7 @@ func relocateCanonicalEquipment(ctx context.Context, tdb TenantDB, userID, tenan
 		map[string]string{"location_id": target.LocationID, "housing_rack_id": target.HousingRackID, "mount_mode": target.MountMode}); err != nil {
 		return CanonicalRelocationResult{}, err
 	}
-	return CanonicalRelocationResult{
-		AssetID: assetID, AssetType: current.AssetType, LocationID: target.LocationID,
-		HousingRackID: target.HousingRackID, MountMode: target.MountMode, Changed: changed,
-	}, nil
+	return CanonicalRelocationResult{AssetID: assetID, AssetType: current.AssetType, LocationID: target.LocationID, HousingRackID: target.HousingRackID, MountMode: target.MountMode, Changed: changed}, nil
 }
 
 func loadRelocationChildren(ctx context.Context, tdb TenantDB, tenantID, branchID, rackID string) ([]relocationChildSnapshot, error) {
@@ -331,6 +307,18 @@ func writeCanonicalRelocationError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrRelocationUnsupported):
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "RELOCATION_UNSUPPORTED"})
+	case errors.Is(err, ErrZoneRequired):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "ZONE_REQUIRED"})
+	case errors.Is(err, ErrZoneNotFound):
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "ZONE_NOT_FOUND"})
+	case errors.Is(err, ErrInvalidAssetPlacement):
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "INVALID_ASSET_PLACEMENT"})
+	case errors.Is(err, ErrInvalidPhysicalScope):
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "PHYSICAL_SCOPE_MISMATCH"})
 	case errors.Is(err, ErrAssetTypeMutationDenied), errors.Is(err, ErrLegacyRelocationDenied):
 		writeAssetRelocationError(w, err)
 	default:
