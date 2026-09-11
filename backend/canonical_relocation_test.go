@@ -17,8 +17,8 @@ func TestRelocateCanonicalEquipmentUpdatesAuthorityAndAudit(t *testing.T) {
 	}
 	target := CanonicalHousingState{LocationID: "location-new", HousingRackID: "rack-new", MountMode: "RACK_MOUNTED"}
 
-	mock.ExpectExec(regexp.QuoteMeta("UPDATE assets SET location_id=$1,housing_rack_id=NULLIF($2,'')::uuid,mount_mode=$3,updated_at=NOW()"))
-		.WithArgs("location-new", "rack-new", "RACK_MOUNTED", "asset-1", "tenant-1", "branch-1").
+	mock.ExpectExec(regexp.QuoteMeta("UPDATE assets SET location_id=$1,housing_rack_id=NULLIF($2,'')::uuid,mount_mode=$3,updated_at=NOW()")) .
+		WithArgs("location-new", "rack-new", "RACK_MOUNTED", "asset-1", "tenant-1", "branch-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO asset_logs").
 		WithArgs("tenant-1", "asset-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "Relocalización canónica de equipo", "user-1").
