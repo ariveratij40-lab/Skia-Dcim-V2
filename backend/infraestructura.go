@@ -169,6 +169,8 @@ func nullableUUID(s string) interface{} {
 
 type MdfIdfRecord struct {
 	ID                 string    `json:"id"`
+	MdfIdfID           string    `json:"mdf_idf_id"`
+	LocationID         string    `json:"location_id"`
 	Code               string    `json:"code"`
 	Name               string    `json:"name"`
 	Type               string    `json:"type"`
@@ -256,7 +258,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		rows, err := tenantTx.Query(`
-				SELECT a.id, a.internal_code, COALESCE(a.name, a.internal_code),
+				SELECT a.id, m.id, COALESCE(a.location_id::text,''), a.internal_code, COALESCE(a.name, a.internal_code),
 					COALESCE(m.type,'MDF'),
 					COALESCE(zb.name,b.name,''), COALESCE(zf.name,f.name,''), COALESCE(z.name,ia.name,''),
 					COALESCE(l.zone_id::text,''), COALESCE(l.internal_area_id::text,''),
@@ -287,7 +289,7 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 		var list []MdfIdfRecord
 		for rows.Next() {
 			var rec MdfIdfRecord
-			if err = rows.Scan(&rec.ID, &rec.Code, &rec.Name, &rec.Type,
+			if err = rows.Scan(&rec.ID, &rec.MdfIdfID, &rec.LocationID, &rec.Code, &rec.Name, &rec.Type,
 				&rec.Building, &rec.Floor, &rec.Zone, &rec.ZoneID, &rec.InternalAreaID, &rec.PlacementAuthority, &rec.Address,
 				&rec.Status,
 				&rec.RacksCount, &rec.SwitchesCount, &rec.UpsCount,
@@ -377,6 +379,8 @@ func handleMdfIdf(w http.ResponseWriter, r *http.Request) {
 
 type RackRecord struct {
 	ID            string    `json:"id"`
+	HousingRackID string    `json:"housing_rack_id"`
+	LocationID    string    `json:"location_id"`
 	Code          string    `json:"code"`
 	Brand         string    `json:"brand"`
 	Model         string    `json:"model"`
@@ -417,7 +421,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		rows, err := tenantTx.Query(`
-			SELECT a.id, a.internal_code,
+			SELECT a.id, rk.id, COALESCE(a.location_id::text,''), a.internal_code,
 				COALESCE(a.manufacturer,''), COALESCE(a.model,''),
 				COALESCE(rk.total_u,42),
 				COALESCE(a.status,'active'),
@@ -441,7 +445,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 		var list []RackRecord
 		for rows.Next() {
 			var rec RackRecord
-			_ = rows.Scan(&rec.ID, &rec.Code,
+			_ = rows.Scan(&rec.ID, &rec.HousingRackID, &rec.LocationID, &rec.Code,
 				&rec.Brand, &rec.Model,
 				&rec.HeightU,
 				&rec.Status,

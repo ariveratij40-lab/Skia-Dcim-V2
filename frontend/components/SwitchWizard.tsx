@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Check, Network, Cpu, MapPin, DollarSign, Shield } from 'lucide-react';
 import { CATALOGOS } from '../data/catalogos';
-import { AssetPlacement } from './AssetPlacementSelector';
-import AssetPlacementStep, { placementMatchesActiveBranch } from './AssetPlacementStep';
+import HousingSelector, { HousingOption } from './HousingSelector';
+import NomenclatureCodeField from './NomenclatureCodeField';
+import { canonicalHousingError } from '../lib/canonicalHousing';
 
 export type SwStatus = 'Activo' | 'Inactivo' | 'Baja';
 export type SwTipo = 'Core' | 'Distribución' | 'Acceso' | 'PoE' | 'Industrial' | 'Administrable' | 'No administrable';
@@ -11,7 +12,7 @@ export interface SwitchWizardData {
   code: string; name: string; brand: string; model: string; serie: string;
   tipo: SwTipo; status: SwStatus;
   ubicacion: string; ubicacion_plano: string;
-  placement_id:string;
+  housing_rack_id:string;
   puertos: number; puertos_libres: number; puertos_poe: number;
   capacidad_puerto: string; ip: string; firmware: string;
   fecha_compra: string; expiracion_garantia: string;
@@ -22,7 +23,7 @@ export interface SwitchWizardData {
 
 interface Props {
   onClose: () => void;
-  onSave: (data: SwitchWizardData) => void;
+  onSave: (data: SwitchWizardData) => Promise<void>;
   initial?: Partial<SwitchWizardData>;
 }
 
@@ -45,7 +46,7 @@ const PORT_SPEEDS = ['100M','1G','2.5G','5G','10G','25G','40G','100G'];
 
 const EMPTY: SwitchWizardData = {
   code: '', name: '', brand: '', model: '', serie: '', tipo: 'Acceso', status: 'Activo',
-  ubicacion: '', ubicacion_plano: '', placement_id:'', puertos: 24, puertos_libres: 0, puertos_poe: 0,
+  ubicacion: '', ubicacion_plano: '', housing_rack_id:'', puertos: 24, puertos_libres: 0, puertos_poe: 0,
   capacidad_puerto: '1G', ip: '', firmware: '',
   fecha_compra: '', expiracion_garantia: '',
   no_factura: '', costo_dls: 0, proveedor: '', contrato_sla: '',
@@ -58,15 +59,16 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
   const [form, setForm] = useState<SwitchWizardData>({ ...EMPTY, ...initial });
   const [saving, setSaving] = useState(false);
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
-  const [placement,setPlacement]=useState<AssetPlacement|undefined>();
-  const [placementBranchID,setPlacementBranchID]=useState('');
+  const [housing,setHousing]=useState<HousingOption>();
+  const [branchID,setBranchID]=useState('');
+  const [saveError,setSaveError]=useState('');
 
   const set = (field: keyof SwitchWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.placement_id && nomenclatureAvailable) c.push(1);
+    if (form.housing_rack_id && nomenclatureAvailable) c.push(1);
     if (form.name && form.tipo && form.status) c.push(2);
     if (form.puertos) c.push(3);
     if (form.proveedor) c.push(4);
@@ -74,11 +76,10 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.tipo || !nomenclatureAvailable || !form.placement_id || !await placementMatchesActiveBranch(placementBranchID,form.placement_id)) { setStage(1); return; }
+    if (!form.name || !form.tipo || !nomenclatureAvailable || !form.housing_rack_id) { setStage(1); return; }
     setSaving(true);
-    await new Promise(r => setTimeout(r, 300));
-    onSave(form);
-    setSaving(false);
+    setSaveError('');
+    try { await onSave(form); } catch(error) { const mapped=canonicalHousingError(error); setSaveError(`${mapped.message} (${mapped.code})`); } finally { setSaving(false); }
   };
 
   const inp = (field: keyof SwitchWizardData, placeholder: string, type = 'text') => (
@@ -121,7 +122,7 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
   const renderStage = () => {
     switch (stage) {
       case 1: return (
-        <AssetPlacementStep assetType="SWITCH" placementID={form.placement_id} placement={placement} onBranchChange={setPlacementBranchID} onNomenclatureAvailability={setNomenclatureAvailable} onPlacementChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('ubicacion',p?.name||'');if(p?.type==='WAREHOUSE')set('status','Inactivo')}} />
+        <div style={{display:'grid',gap:16}}><HousingSelector mode="rack" value={form.housing_rack_id} disabled={Boolean(initial)} onBranchChange={id=>{setBranchID(id);set('housing_rack_id','');setHousing(undefined);set('ubicacion','')}} onChange={(id,item)=>{set('housing_rack_id',id);setHousing(item);set('ubicacion',item?.location||'')}}/><NomenclatureCodeField assetType="SWITCH" branchSelected={Boolean(branchID)} placementCode={housing?.parentCode} onAvailability={setNomenclatureAvailable}/></div>
       );
       case 2: return (
         <div>
@@ -136,7 +137,7 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
             ))}</div>
             <div>{fld('Modelo', inp('model', 'Catalyst 9300-48P'))}</div>
             <div style={{ gridColumn: '1/-1' }}>{fld('Tipo', chips(TIPOS, form.tipo, v => set('tipo', v as SwTipo), TIPO_COLORS))}</div>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Estado', placement?.type==='WAREHOUSE' ? <div style={{padding:10,background:'#FFF7ED',color:'#9A3412',borderRadius:8,fontWeight:700}}>Inactivo — activo en Almacén</div> : chips(STATUSES, form.status, v => set('status', v as SwStatus), STATUS_COLORS))}</div>
+            <div style={{ gridColumn: '1/-1' }}>{fld('Estado', chips(STATUSES, form.status, v => set('status', v as SwStatus), STATUS_COLORS))}</div>
           </div>
         </div>
       );
@@ -226,7 +227,7 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
             const isDone = completed.includes(s.id);
             const Icon = s.icon;
             return (
-              <button key={s.id} disabled={s.id>1&&!form.placement_id} onClick={() => (s.id===1||form.placement_id)&&setStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: s.id>1&&!form.placement_id?'not-allowed':'pointer', opacity:s.id>1&&!form.placement_id?0.55:1, background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
+              <button key={s.id} disabled={s.id>1&&!form.housing_rack_id} onClick={() => (s.id===1||form.housing_rack_id)&&setStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: s.id>1&&!form.housing_rack_id?'not-allowed':'pointer', opacity:s.id>1&&!form.housing_rack_id?0.55:1, background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
                 <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isActive ? '#4361EE' : isDone ? '#22C55E' : '#E2E8F0' }}>
                   {isDone && !isActive ? <Check size={14} color="#fff" /> : <Icon size={13} color={isActive ? '#fff' : '#94A3B8'} />}
                 </div>
@@ -244,16 +245,16 @@ export default function SwitchWizard({ onClose, onSave, initial }: Props) {
             <ChevronLeft size={16} /> Anterior
           </button>
           {stage < STAGES.length ? (
-            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))} disabled={stage===1&&(!form.placement_id||!nomenclatureAvailable)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'#CBD5E1':'#4361EE', color: '#fff', cursor: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'not-allowed':'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))} disabled={stage===1&&(!form.housing_rack_id||!nomenclatureAvailable)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: stage===1&&(!form.housing_rack_id||!nomenclatureAvailable)?'#CBD5E1':'#4361EE', color: '#fff', cursor: stage===1&&(!form.housing_rack_id||!nomenclatureAvailable)?'not-allowed':'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.name || !form.tipo || !form.placement_id || !nomenclatureAvailable || saving}
+            <button onClick={handleSave} disabled={!form.name || !form.tipo || !form.housing_rack_id || !nomenclatureAvailable || saving}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.name || !form.tipo || !nomenclatureAvailable) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.name || !form.tipo || !nomenclatureAvailable) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               {saving ? '...' : <><Check size={16} /> Guardar Switch</>}
             </button>
-          )}
+          )}{saveError&&<div style={{color:'#B91C1C',fontSize:12}}>{saveError}</div>}
         </div>
       </div>
     </div>

@@ -3,6 +3,9 @@ import { X, ChevronRight, ChevronLeft, Check, Zap, Battery, MapPin, DollarSign, 
 import { CATALOGOS } from '../data/catalogos';
 import {AssetPlacement} from './AssetPlacementSelector';
 import AssetPlacementStep, { placementMatchesActiveBranch } from './AssetPlacementStep';
+import HousingSelector, { HousingOption } from './HousingSelector';
+import NomenclatureCodeField from './NomenclatureCodeField';
+import { canonicalHousingError, MountMode } from '../lib/canonicalHousing';
 
 export type DeviceType = 'UPS' | 'PDU';
 export type UPSTopology = 'Online' | 'Interactiva' | 'Offline' | 'Modular';
@@ -23,12 +26,12 @@ export interface UpsPduWizardData {
   serial: string; mgmt_ip: string; responsible: string;
   install_date: string; last_maintenance: string; notes: string;
   tags?: string[];
-  placement_id:string;
+  placement_id:string; housing_rack_id:string; mount_mode:MountMode;
 }
 
 interface Props {
   onClose: () => void;
-  onSave: (data: UpsPduWizardData) => void;
+  onSave: (data: UpsPduWizardData) => Promise<void>;
   initial?: Partial<UpsPduWizardData>;
 }
 
@@ -63,7 +66,7 @@ const EMPTY: UpsPduWizardData = {
   status: 'Operativo', manufacturer: '', model: '',
   serial: '', mgmt_ip: '', responsible: '',
   install_date: '', last_maintenance: '', notes: '',
-  tags: [], placement_id:'',
+  tags: [], placement_id:'', housing_rack_id:'', mount_mode:'RACK_MOUNTED',
 };
 
 export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
@@ -73,13 +76,17 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
   const [nomenclatureAvailable, setNomenclatureAvailable] = useState(false);
   const [placement,setPlacement]=useState<AssetPlacement>();
   const [placementBranchID,setPlacementBranchID]=useState('');
+  const [housing,setHousing]=useState<HousingOption>();
+  const [saveError,setSaveError]=useState('');
+  const effectiveMode:MountMode=form.device_type==='PDU'?'RACK_MOUNTED':form.mount_mode;
+  const housingValid=effectiveMode==='RACK_MOUNTED'?Boolean(form.housing_rack_id):Boolean(form.placement_id);
 
   const set = (field: keyof UpsPduWizardData, value: any) =>
     setForm(f => ({ ...f, [field]: value }));
 
   const completedStages = (): number[] => {
     const c: number[] = [];
-    if (form.placement_id && nomenclatureAvailable) c.push(1);
+    if (housingValid && nomenclatureAvailable) c.push(1);
     if (form.name && form.device_type && form.status) c.push(2);
     if (form.device_type === 'UPS' ? form.kva : form.total_outlets) c.push(3);
     if (form.manufacturer) c.push(4);
@@ -87,11 +94,10 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
   };
 
   const handleSave = async () => {
-    if (!form.name || !form.device_type || !nomenclatureAvailable || !form.placement_id || !await placementMatchesActiveBranch(placementBranchID,form.placement_id)) { setStage(1); return; }
+    if (!form.name || !form.device_type || !nomenclatureAvailable || !housingValid) { setStage(1); return; }
+    if (effectiveMode==='ROOM_MOUNTED' && !await placementMatchesActiveBranch(placementBranchID,form.placement_id)) { setStage(1); return; }
     setSaving(true);
-    await new Promise(r => setTimeout(r, 300));
-    onSave(form);
-    setSaving(false);
+    setSaveError(''); try { await onSave({...form,mount_mode:effectiveMode}); } catch(error) { const mapped=canonicalHousingError(error); setSaveError(`${mapped.message} (${mapped.code})`); } finally { setSaving(false); }
   };
 
   const inp = (field: keyof UpsPduWizardData, placeholder: string, type = 'text') => (
@@ -134,12 +140,16 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
   const renderStage = () => {
     switch (stage) {
       case 1: return (
-        <AssetPlacementStep assetType={form.device_type} placementID={form.placement_id} placement={placement} onBranchChange={setPlacementBranchID} onNomenclatureAvailability={setNomenclatureAvailable} onPlacementChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('mdf_idf_name',p?.name||'');if(p?.type==='WAREHOUSE')set('status','Fuera de servicio')}} />
+        <div style={{display:'grid',gap:16}}>
+          {form.device_type==='UPS'&&<div><b>Modo de instalación *</b><div style={{display:'flex',gap:8,marginTop:6}}>{(['RACK_MOUNTED','ROOM_MOUNTED'] as MountMode[]).map(mode=><button type="button" key={mode} onClick={()=>{set('mount_mode',mode);set('housing_rack_id','');set('placement_id','');setHousing(undefined);setPlacement(undefined);setNomenclatureAvailable(false)}} style={{padding:'8px 12px',borderRadius:8,border:'1px solid #CBD5E1',background:effectiveMode===mode?'#4361EE':'#fff',color:effectiveMode===mode?'#fff':'#334155'}}>{mode==='RACK_MOUNTED'?'En Rack':'En Cuarto / Piso'}</button>)}</div></div>}
+          {effectiveMode==='RACK_MOUNTED'?<><HousingSelector mode="rack" value={form.housing_rack_id} disabled={Boolean(initial)} onBranchChange={id=>{setPlacementBranchID(id);set('housing_rack_id','');setHousing(undefined)}} onChange={(id,item)=>{set('housing_rack_id',id);setHousing(item);set('placement_id','');set('rack_name',item?.name||'')}}/><NomenclatureCodeField assetType={form.device_type} branchSelected={Boolean(placementBranchID)} placementCode={housing?.parentCode} onAvailability={setNomenclatureAvailable}/></>:<AssetPlacementStep assetType="UPS" placementID={form.placement_id} placement={placement} onBranchChange={id=>{setPlacementBranchID(id);set('placement_id','');setPlacement(undefined)}} onNomenclatureAvailability={setNomenclatureAvailable} onPlacementChange={(id,p)=>{set('placement_id',id);setPlacement(p);set('housing_rack_id','');set('mdf_idf_name',p?.name||'');if(p?.type==='WAREHOUSE')set('status','Fuera de servicio')}} />}
+          {Boolean(initial)&&<div style={{color:'#92400E',fontSize:13}}>Reubicación gestionada por flujo dedicado.</div>}
+        </div>
       );
       case 2: return (
         <div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div style={{ gridColumn: '1/-1' }}>{fld('Tipo de dispositivo', chips(DEVICE_TYPES, form.device_type, v => {if(v!==form.device_type){set('device_type',v as DeviceType);setNomenclatureAvailable(false);setStage(1)}}, TYPE_COLORS))}</div>
+            <div style={{ gridColumn: '1/-1' }}>{fld('Tipo de dispositivo', chips(DEVICE_TYPES, form.device_type, v => {if(v!==form.device_type){set('device_type',v as DeviceType);set('mount_mode','RACK_MOUNTED');set('housing_rack_id','');set('placement_id','');setNomenclatureAvailable(false);setStage(1)}}, TYPE_COLORS))}</div>
             <div>{fld('Nombre descriptivo', inp('name', 'UPS Principal MDF'))}</div>
             <div>{fld('Fabricante', (
               <select value={form.manufacturer} onChange={e => set('manufacturer', e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #E8EBF4', fontSize: '0.875rem', background: '#FAFBFF', color: '#1E293B' }}>
@@ -253,7 +263,7 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
             const isDone = completed.includes(s.id);
             const Icon = s.icon;
             return (
-              <button key={s.id} disabled={s.id>1&&!form.placement_id} onClick={() => (s.id===1||form.placement_id)&&setStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: s.id>1&&!form.placement_id?'not-allowed':'pointer', opacity:s.id>1&&!form.placement_id?0.55:1, background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
+              <button key={s.id} disabled={s.id>1&&!housingValid} onClick={() => (s.id===1||housingValid)&&setStage(s.id)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, padding: '8px 4px', borderRadius: 10, border: 'none', cursor: s.id>1&&!housingValid?'not-allowed':'pointer', opacity:s.id>1&&!housingValid?0.55:1, background: isActive ? '#EEF2FF' : isDone ? '#F0FDF4' : '#F8FAFF', transition: 'all 150ms' }}>
                 <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isActive ? '#4361EE' : isDone ? '#22C55E' : '#E2E8F0' }}>
                   {isDone && !isActive ? <Check size={14} color="#fff" /> : <Icon size={13} color={isActive ? '#fff' : '#94A3B8'} />}
                 </div>
@@ -271,16 +281,16 @@ export default function UpsPduWizard({ onClose, onSave, initial }: Props) {
             <ChevronLeft size={16} /> Anterior
           </button>
           {stage < STAGES.length ? (
-            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))} disabled={stage===1&&(!form.placement_id||!nomenclatureAvailable)}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'#CBD5E1':'#4361EE', color: '#fff', cursor: stage===1&&(!form.placement_id||!nomenclatureAvailable)?'not-allowed':'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
+            <button onClick={() => setStage(s => Math.min(STAGES.length, s + 1))} disabled={stage===1&&(!housingValid||!nomenclatureAvailable)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 20px', borderRadius: 10, border: 'none', background: stage===1&&(!housingValid||!nomenclatureAvailable)?'#CBD5E1':'#4361EE', color: '#fff', cursor: stage===1&&(!housingValid||!nomenclatureAvailable)?'not-allowed':'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               Siguiente <ChevronRight size={16} />
             </button>
           ) : (
-            <button onClick={handleSave} disabled={!form.name || !form.device_type || !form.placement_id || !nomenclatureAvailable || saving}
+            <button onClick={handleSave} disabled={!form.name || !form.device_type || !housingValid || !nomenclatureAvailable || saving}
               style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 22px', borderRadius: 10, border: 'none', background: (!form.name || !form.device_type || !nomenclatureAvailable) ? '#CBD5E1' : '#22C55E', color: '#fff', cursor: (!form.name || !form.device_type || !nomenclatureAvailable) ? 'not-allowed' : 'pointer', fontSize: '0.875rem', fontWeight: 600 }}>
               {saving ? '...' : <><Check size={16} /> Guardar {form.device_type}</>}
             </button>
-          )}
+          )}{saveError&&<div style={{color:'#B91C1C',fontSize:12}}>{saveError}</div>}
         </div>
       </div>
     </div>
