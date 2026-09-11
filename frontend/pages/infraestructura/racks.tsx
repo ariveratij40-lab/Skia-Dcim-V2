@@ -24,7 +24,8 @@ export type RackStatus = 'Operativo' | 'Atención' | 'Crítico' | 'Planeado' | '
 export type RackPostes = '2 Postes' | '4 Postes' | 'Abierto' | 'Cerrado' | 'Wall-mount' | 'Gabinete' | 'Panzone';
 
 export interface RackRecord {
-	placement_id?: string;
+  mdf_idf_id?: string;
+  housing_rack_id?: string;
   id: string;
   code: string;
   brand: string;
@@ -764,7 +765,7 @@ export default function RacksPage() {
         <RackWizard
           initial={wizardInitial}
           onClose={() => setShowWizard(false)}
-          onSave={(data: RackWizardData) => {
+          onSave={async (data: RackWizardData) => {
             const newRack: RackRecord = {
               id: Date.now().toString(),
               code: data.code,
@@ -779,7 +780,7 @@ export default function RacksPage() {
               photo_url: data.photo_url ?? '',
               ref_image_url: '',
               observations: data.observations ?? '',
-              placement_id: data.placement_id,
+              mdf_idf_id: data.mdf_idf_id,
               org_horizontal: data.org_horizontal ?? false,
               org_vertical: data.org_vertical ?? false,
               pdu: data.pdu ?? false,
@@ -794,7 +795,7 @@ export default function RacksPage() {
               used_u: 0,
             };
             // Persistir en el backend
-            axios.post('/api/infra/racks', {
+            const resp = await axios.post('/api/infra/racks', {
               internal_code: '',
               name: data.name,
               location: data.location,
@@ -803,10 +804,10 @@ export default function RacksPage() {
               manufacturer: data.brand,
               model: data.model,
               observations: data.observations ?? '',
-            }).then(resp => {
-              const saved = resp.data;
-              setRacks(prev => [{ ...newRack, id: saved.id ?? newRack.id, code: saved.internal_code ?? newRack.code }, ...prev]);
-            }).catch(() => undefined);
+              mdf_idf_id: data.mdf_idf_id,
+            });
+            const saved = resp.data;
+            setRacks(prev => [{ ...newRack, id: saved.id, housing_rack_id: saved.rack_id, code: saved.internal_code }, ...prev]);
             setShowWizard(false);
           }}
         />

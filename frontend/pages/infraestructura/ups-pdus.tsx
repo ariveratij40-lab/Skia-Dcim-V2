@@ -1150,7 +1150,7 @@ export default function UpsPdusPage() {
       {showUpsWizard && (
         <UpsPduWizard
           onClose={() => setShowUpsWizard(false)}
-          onSave={(data: UpsPduWizardData) => {
+          onSave={async (data: UpsPduWizardData) => {
             const newDev: PowerDevice = {
               id: Date.now().toString(),
               code: data.code,
@@ -1180,8 +1180,8 @@ export default function UpsPdusPage() {
               notes: data.notes,
               tags: data.tags ?? [],
             };
-            import('axios').then(({ default: axios }) => {
-              axios.post('/api/infra/ups-pdus', {
+            const { default: axios } = await import('axios');
+            const resp = await axios.post('/api/infra/ups-pdus', {
                 internal_code: '',
                 name: data.name,
                 device_type: data.device_type ?? 'UPS',
@@ -1190,14 +1190,17 @@ export default function UpsPdusPage() {
                 model: data.model,
                 serial: data.serial,
                 location: [data.building, data.floor, data.room].filter(Boolean).join(' - '),
-                kva: data.kva ?? 0,
+                capacity_kva: data.kva ?? 0,
                 battery_runtime_min: data.battery_runtime_min ?? 0,
+                outlet_count: data.total_outlets ?? 0,
+                amperage: data.amperage ?? 0,
+                management_ip: data.mgmt_ip ?? '',
                 observations: data.notes ?? '',
-                placement_id: data.placement_id,
-              }).then(resp => {
-                setDevices(prev => [{ ...newDev, id: resp.data.id ?? newDev.id, code: resp.data.internal_code ?? newDev.code }, ...prev]);
-              }).catch(() => undefined);
-            });
+                mount_mode: data.device_type === 'PDU' ? 'RACK_MOUNTED' : data.mount_mode,
+                housing_rack_id: data.device_type === 'PDU' || data.mount_mode === 'RACK_MOUNTED' ? data.housing_rack_id : undefined,
+                placement_id: data.device_type === 'UPS' && data.mount_mode === 'ROOM_MOUNTED' ? data.placement_id : undefined,
+              });
+            setDevices(prev => [{ ...newDev, id: resp.data.id, code: resp.data.internal_code }, ...prev]);
             setShowUpsWizard(false);
           }}
         />

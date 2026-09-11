@@ -18,7 +18,7 @@ export type PPStatus = 'Activo' | 'Inactivo' | 'Baja';
 export type PPType   = 'Angulado' | 'Plano' | 'Blindado' | 'Modular' | 'Keystone' | 'Fibra Óptica';
 
 export interface PatchPanel {
-	placement_id?: string;
+  housing_rack_id?: string;
   id: string;
   code: string;
   brand: string;
@@ -746,7 +746,7 @@ export default function PatchPanelsPage() {
       {showPPWizard && (
         <PatchPanelWizard
           onClose={() => setShowPPWizard(false)}
-          onSave={(data: PatchPanelWizardData) => {
+          onSave={async (data: PatchPanelWizardData) => {
             const newPP: PatchPanel = {
               id: Date.now().toString(),
               code: data.code,
@@ -759,7 +759,7 @@ export default function PatchPanelsPage() {
               floor_plan_ref: data.floor_plan_ref ?? '',
               photo_url: '',
               observations: data.observations ?? '',
-              placement_id: data.placement_id,
+              housing_rack_id: data.housing_rack_id,
               ports_total: data.ports_total ?? 24,
               ports_free: data.ports_free ?? 0,
               rfid_tag: data.rfid_tag ?? '',
@@ -772,7 +772,7 @@ export default function PatchPanelsPage() {
               cost_center: data.cost_center ?? '',
             };
             // Persistir en el backend
-            axios.post('/api/infra/patch-panels', {
+            const resp = await axios.post('/api/infra/patch-panels', {
               internal_code: '',
               name: data.name,
               brand: data.brand,
@@ -781,14 +781,13 @@ export default function PatchPanelsPage() {
               panel_type: data.type ?? 'Cat6',
               status: data.status === 'Activo' ? 'active' : 'inactive',
               location: data.location,
-              ports_total: data.ports_total ?? 24,
-              ports_free: data.ports_free ?? 0,
+              port_count: data.ports_total ?? 24,
               supplier: data.supplier ?? '',
               cost_center: data.cost_center ?? '',
               observations: data.observations ?? '',
-            }).then(resp => {
-              setPPs(prev => [{ ...newPP, id: resp.data.id ?? newPP.id, code: resp.data.internal_code ?? newPP.code }, ...prev]);
-            }).catch(() => undefined);
+              housing_rack_id: data.housing_rack_id,
+            });
+            setPPs(prev => [{ ...newPP, id: resp.data.id, code: resp.data.internal_code }, ...prev]);
             setShowPPWizard(false);
           }}
         />

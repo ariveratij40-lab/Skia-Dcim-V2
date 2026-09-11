@@ -457,7 +457,7 @@ export default function SwitchesPage() {
       {showSwWizard && (
         <SwitchWizard
           onClose={() => setShowSwWizard(false)}
-          onSave={(data: SwitchWizardData) => {
+          onSave={async (data: SwitchWizardData) => {
             const newSw: SWItem = {
               id: Date.now().toString(),
               code: data.code,
@@ -487,25 +487,23 @@ export default function SwitchesPage() {
               anio_instalacion: data.anio_instalacion ?? new Date().getFullYear(),
               centro_costos: data.centro_costos ?? '',
             };
-            import('axios').then(({ default: axios }) => {
-              axios.post('/api/infra/switches', {
+            const { default: axios } = await import('axios');
+            const resp = await axios.post('/api/infra/switches', {
                 internal_code: '',
                 name: data.name,
                 brand: data.brand,
                 model: data.model,
                 serial: data.serie ?? '',
-                switch_type: data.tipo ?? 'Acceso',
+                tipo: data.tipo ?? 'Acceso',
                 status: data.status === 'Activo' ? 'active' : 'inactive',
                 location: data.ubicacion ?? '',
-                ip_address: data.ip ?? '',
-                ports_total: data.puertos ?? 0,
-                ports_free: data.puertos_libres ?? 0,
+                management_ip: data.ip ?? '',
+                port_count: data.puertos ?? 0,
+                uplink_count: 0,
                 observations: data.observaciones ?? '',
-                placement_id: data.placement_id,
-              }).then(resp => {
-                setSwitches(ss => [{ ...newSw, id: resp.data.id ?? newSw.id, code: resp.data.internal_code ?? newSw.code }, ...ss]);
-              }).catch(() => undefined);
-            });
+                housing_rack_id: data.housing_rack_id,
+              });
+            setSwitches(ss => [{ ...newSw, id: resp.data.id, code: resp.data.internal_code }, ...ss]);
             setShowSwWizard(false);
           }}
         />
