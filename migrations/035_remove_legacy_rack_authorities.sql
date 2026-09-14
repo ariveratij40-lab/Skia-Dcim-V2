@@ -12,23 +12,37 @@
 -- racks.id.
 
 -- Abort before any mutation if a satellite legacy authority has repopulated.
+-- Each check is conditional on the legacy column still existing so the artifact
+-- is safe on already-clean bootstrap/test databases as well.
 DO $guard$
 DECLARE
-  switch_values bigint;
-  patch_panel_values bigint;
-  pdu_values bigint;
+  switch_values bigint := 0;
+  patch_panel_values bigint := 0;
+  pdu_values bigint := 0;
 BEGIN
-  SELECT count(*) INTO switch_values
-  FROM public.switches
-  WHERE rack_id IS NOT NULL;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='switches' AND column_name='rack_id'
+  ) THEN
+    EXECUTE 'SELECT count(*) FROM public.switches WHERE rack_id IS NOT NULL'
+      INTO switch_values;
+  END IF;
 
-  SELECT count(*) INTO patch_panel_values
-  FROM public.patch_panels
-  WHERE rack_id IS NOT NULL;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='patch_panels' AND column_name='rack_id'
+  ) THEN
+    EXECUTE 'SELECT count(*) FROM public.patch_panels WHERE rack_id IS NOT NULL'
+      INTO patch_panel_values;
+  END IF;
 
-  SELECT count(*) INTO pdu_values
-  FROM public.pdus
-  WHERE rack_id IS NOT NULL;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='pdus' AND column_name='rack_id'
+  ) THEN
+    EXECUTE 'SELECT count(*) FROM public.pdus WHERE rack_id IS NOT NULL'
+      INTO pdu_values;
+  END IF;
 
   IF switch_values <> 0 OR patch_panel_values <> 0 OR pdu_values <> 0 THEN
     RAISE EXCEPTION
@@ -46,9 +60,7 @@ UPDATE public.assets
 SET specs = specs - 'rack_id'
 WHERE specs ? 'rack_id';
 
--- Remove the deprecated satellite storage authorities. IF EXISTS keeps the
--- artifact safe across already-clean bootstrap/test databases while the guard
--- above protects databases where the columns still exist and contain data.
+-- Remove the deprecated satellite storage authorities.
 ALTER TABLE public.switches
   DROP COLUMN IF EXISTS rack_id;
 
