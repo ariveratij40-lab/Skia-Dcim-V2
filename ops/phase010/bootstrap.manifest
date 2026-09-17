@@ -24,3 +24,4 @@ migrations/031_canonical_mdf_idf_physical_identity.sql
 migrations/032_canonical_physical_hierarchy_provisioning.sql
 migrations/033_canonical_zone_naming_provisioning.sql
 migrations/034_canonical_infrastructure_housing_governance.sql
+migrations/035_remove_legacy_rack_authorities.sql
