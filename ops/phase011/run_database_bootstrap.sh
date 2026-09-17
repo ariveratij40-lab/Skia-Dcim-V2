@@ -1,55 +1,84 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /opt/apps/skia/prod
+prod_root="${SKIA_PROD_ROOT:-/opt/apps/skia/prod}"
+postgres_container="${SKIA_POSTGRES_CONTAINER:-skia_postgres_prod}"
+cd "$prod_root"
 set -a
 . secrets/production.env
 set +a
 
-docker cp runtime/provision_database_roles.sql skia_postgres_prod:/tmp/provision_database_roles.sql
-docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" skia_postgres_prod \
+docker cp runtime/provision_database_roles.sql "$postgres_container":/tmp/provision_database_roles.sql
+docker exec -i -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$postgres_container" \
   psql -X -U skia_bootstrap -d skia_prod -v ON_ERROR_STOP=1 \
   -v migrator_password="$SKIA_MIGRATOR_DB_PASSWORD" \
   -v runtime_password="$SKIA_RUNTIME_DB_PASSWORD" \
   -v onboarding_password="$SKIA_ONBOARDING_DB_PASSWORD" \
   -f /tmp/provision_database_roles.sql >/dev/null
 
-docker cp source/. skia_postgres_prod:/repo
+# Migration 035 runs as the restricted migrator under FORCE RLS. Perform its
+# legacy-value guard with the bootstrap identity so rows cannot be hidden by
+# tenant policies. The checks are conditional for idempotent post-035 runs.
+docker exec -i -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$postgres_container" \
+  psql -X -U skia_bootstrap -d skia_prod -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+DO $guard$
+DECLARE
+  switch_values bigint := 0;
+  patch_panel_values bigint := 0;
+  pdu_values bigint := 0;
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='switches' AND column_name='rack_id') THEN
+    EXECUTE 'SELECT count(*) FROM public.switches WHERE rack_id IS NOT NULL' INTO switch_values;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='patch_panels' AND column_name='rack_id') THEN
+    EXECUTE 'SELECT count(*) FROM public.patch_panels WHERE rack_id IS NOT NULL' INTO patch_panel_values;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='pdus' AND column_name='rack_id') THEN
+    EXECUTE 'SELECT count(*) FROM public.pdus WHERE rack_id IS NOT NULL' INTO pdu_values;
+  END IF;
+  IF switch_values <> 0 OR patch_panel_values <> 0 OR pdu_values <> 0 THEN
+    RAISE EXCEPTION 'Migration 035 blocked by bootstrap precheck: legacy Rack authority repopulated (switches=%, patch_panels=%, pdus=%)', switch_values, patch_panel_values, pdu_values USING ERRCODE='23514';
+  END IF;
+END
+$guard$;
+SQL
+
+docker cp source/. "$postgres_container":/repo
 migrator_dsn="postgresql://skia_migrator:${SKIA_MIGRATOR_DB_PASSWORD}@localhost/skia_prod"
 for run in 1 2; do
-  docker exec -e PHASE010_DATABASE_URL="$migrator_dsn" skia_postgres_prod \
+  docker exec -e PHASE010_DATABASE_URL="$migrator_dsn" "$postgres_container" \
     /repo/ops/phase010/run_clean_bootstrap.sh >/dev/null
   printf 'BOOTSTRAP_INVOCATION_%s=APPROVED\n' "$run"
 done
 
 # Re-run the idempotent role artifact after tables exist, then prove the exact
 # onboarding authority can provision identity while retaining no other grants.
-docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" skia_postgres_prod \
+docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$postgres_container" \
   psql -X -U skia_bootstrap -d skia_prod -v ON_ERROR_STOP=1 \
   -v migrator_password="$SKIA_MIGRATOR_DB_PASSWORD" \
   -v runtime_password="$SKIA_RUNTIME_DB_PASSWORD" \
   -v onboarding_password="$SKIA_ONBOARDING_DB_PASSWORD" \
   -f /tmp/provision_database_roles.sql >/dev/null
-docker cp source/ops/phase011/validate_onboarding_role.sql skia_postgres_prod:/tmp/validate_onboarding_role.sql
-docker cp source/ops/phase011/validate_runtime_auth_role.sql skia_postgres_prod:/tmp/validate_runtime_auth_role.sql
-docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" skia_postgres_prod \
+docker cp source/ops/phase011/validate_onboarding_role.sql "$postgres_container":/tmp/validate_onboarding_role.sql
+docker cp source/ops/phase011/validate_runtime_auth_role.sql "$postgres_container":/tmp/validate_runtime_auth_role.sql
+docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$postgres_container" \
   psql -X -U skia_bootstrap -d skia_prod -f /tmp/validate_onboarding_role.sql
-docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" skia_postgres_prod \
+docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$postgres_container" \
   psql -X -U skia_bootstrap -d skia_prod -f /tmp/validate_runtime_auth_role.sql
 
-schema_hash="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" skia_postgres_prod \
+schema_hash="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" "$postgres_container" \
   pg_dump -U skia_migrator -d skia_prod --schema-only --no-owner --no-privileges |
   sed '/^\\restrict /d;/^\\unrestrict /d' | sha256sum | awk '{print $1}')"
-ledger="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" skia_postgres_prod \
+ledger="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" "$postgres_container" \
   psql -X -U skia_migrator -d skia_prod -Atqc 'SELECT count(*) FROM production_bootstrap_migrations')"
-roles="$(docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" skia_postgres_prod \
+roles="$(docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$postgres_container" \
   psql -X -U skia_bootstrap -d skia_prod -Atqc \
   "SELECT string_agg(rolname||'|super='||rolsuper||'|bypass='||rolbypassrls||'|createdb='||rolcreatedb||'|createrole='||rolcreaterole,',' ORDER BY rolname) FROM pg_roles WHERE rolname IN ('skia_migrator','skia_runtime','skia_onboarding')")"
-fixture_counts="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" skia_postgres_prod \
+fixture_counts="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" "$postgres_container" \
   psql -X -U skia_migrator -d skia_prod -Atqc \
   "SELECT (SELECT count(*) FROM tenants)||'|'||(SELECT count(*) FROM users)||'|'||(SELECT count(*) FROM assets)")"
 
 printf 'SCHEMA_HASH=%s\nLEDGER_COUNT=%s\nROLES=%s\nEMPTY_COUNTS_TENANTS_USERS_ASSETS=%s\n' \
   "$schema_hash" "$ledger" "$roles" "$fixture_counts"
-[[ "$schema_hash" == 396f83aaf0da94d21475410b00197b931da40aa4bc6e569a6cf1e6ed0873b7a0 ]]
-[[ "$ledger" == 26 ]]
+[[ "$schema_hash" == 8712fcae88f98f7c75605772ab88cbeb52d06e022c07a8782b045e33caec0c10 ]]
+[[ "$ledger" == 27 ]]
 [[ "$fixture_counts" == '0|0|0' ]]
