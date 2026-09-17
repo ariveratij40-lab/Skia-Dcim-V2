@@ -2,6 +2,11 @@
 set -euo pipefail
 prod_root="${SKIA_PROD_ROOT:-/opt/apps/skia/prod}"
 postgres_container="${SKIA_POSTGRES_CONTAINER:-skia_postgres_prod}"
+database_contract="${SKIA_DATABASE_CONTRACT:-clean}"
+case "$database_contract" in
+  clean|upgrade) ;;
+  *) echo "BLOCKED: SKIA_DATABASE_CONTRACT must be clean or upgrade" >&2; exit 64 ;;
+esac
 cd "$prod_root"
 set -a
 . secrets/production.env
@@ -42,6 +47,13 @@ END
 $guard$;
 SQL
 
+pre_fixture_counts='0|0|0'
+if [[ "$database_contract" == upgrade ]]; then
+  pre_fixture_counts="$(docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$postgres_container" \
+    psql -X -U skia_bootstrap -d skia_prod -Atqc \
+    "SELECT (SELECT count(*) FROM tenants)||'|'||(SELECT count(*) FROM users)||'|'||(SELECT count(*) FROM assets)")"
+fi
+
 docker cp source/. "$postgres_container":/repo
 migrator_dsn="postgresql://skia_migrator:${SKIA_MIGRATOR_DB_PASSWORD}@localhost/skia_prod"
 for run in 1 2; do
@@ -77,8 +89,19 @@ fixture_counts="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" "$postg
   psql -X -U skia_migrator -d skia_prod -Atqc \
   "SELECT (SELECT count(*) FROM tenants)||'|'||(SELECT count(*) FROM users)||'|'||(SELECT count(*) FROM assets)")"
 
-printf 'SCHEMA_HASH=%s\nLEDGER_COUNT=%s\nROLES=%s\nEMPTY_COUNTS_TENANTS_USERS_ASSETS=%s\n' \
-  "$schema_hash" "$ledger" "$roles" "$fixture_counts"
+printf 'SCHEMA_HASH=%s\nLEDGER_COUNT=%s\nROLES=%s\n' \
+  "$schema_hash" "$ledger" "$roles"
 [[ "$schema_hash" == 8712fcae88f98f7c75605772ab88cbeb52d06e022c07a8782b045e33caec0c10 ]]
 [[ "$ledger" == 27 ]]
-[[ "$fixture_counts" == '0|0|0' ]]
+case "$database_contract" in
+  clean)
+    [[ "$fixture_counts" == '0|0|0' ]]
+    printf 'DATABASE_CONTRACT=clean\nEMPTY_COUNTS_TENANTS_USERS_ASSETS=%s\nEMPTY_DATABASE_GUARD=APPROVED\n' \
+      "$fixture_counts"
+    ;;
+  upgrade)
+    [[ "$fixture_counts" == "$pre_fixture_counts" ]]
+    printf 'DATABASE_CONTRACT=upgrade\nPRE_COUNTS_TENANTS_USERS_ASSETS=%s\nPOST_COUNTS_TENANTS_USERS_ASSETS=%s\nEXISTING_DATA_PRESERVATION=APPROVED\n' \
+      "$pre_fixture_counts" "$fixture_counts"
+    ;;
+esac
