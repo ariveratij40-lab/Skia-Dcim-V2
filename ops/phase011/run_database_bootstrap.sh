@@ -85,8 +85,8 @@ ledger="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" "$postgres_cont
 roles="$(docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$postgres_container" \
   psql -X -U skia_bootstrap -d skia_prod -Atqc \
   "SELECT string_agg(rolname||'|super='||rolsuper||'|bypass='||rolbypassrls||'|createdb='||rolcreatedb||'|createrole='||rolcreaterole,',' ORDER BY rolname) FROM pg_roles WHERE rolname IN ('skia_migrator','skia_runtime','skia_onboarding')")"
-fixture_counts="$(docker exec -e PGPASSWORD="$SKIA_MIGRATOR_DB_PASSWORD" "$postgres_container" \
-  psql -X -U skia_migrator -d skia_prod -Atqc \
+fixture_counts="$(docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$postgres_container" \
+  psql -X -U skia_bootstrap -d skia_prod -Atqc \
   "SELECT (SELECT count(*) FROM tenants)||'|'||(SELECT count(*) FROM users)||'|'||(SELECT count(*) FROM assets)")"
 
 printf 'SCHEMA_HASH=%s\nLEDGER_COUNT=%s\nROLES=%s\n' \

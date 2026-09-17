@@ -11,6 +11,13 @@ selected with `SKIA_DATABASE_CONTRACT`:
   business rows therefore do not block a schema upgrade and cannot silently
   disappear during it.
 
+The upgrade preservation check measures both sides with `skia_bootstrap`.
+This is an administrative observation boundary, not application authority:
+it guarantees equivalent visibility before and after migrations even when
+protected tables use `FORCE ROW LEVEL SECURITY`. The restricted
+`skia_migrator` remains the migration executor and is not granted
+`BYPASSRLS`; no tenant/branch context is fabricated for the comparison.
+
 Both modes run the same canonical manifest twice and retain the exact ledger,
 schema fingerprint, role provisioning, role validators, Migration 035 legacy
 Rack precheck, checksum protection, and idempotency checks. The upgrade mode

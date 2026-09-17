@@ -75,6 +75,17 @@ counts() {
     "SELECT (SELECT count(*) FROM tenants)||'|'||(SELECT count(*) FROM users)||'|'||(SELECT count(*) FROM assets)"
 }
 
+migrator_counts() {
+  docker exec -e PGPASSWORD="$password" "$1" \
+    psql -X -U skia_migrator -d skia_prod -Atqc \
+    "SELECT (SELECT count(*) FROM tenants)||'|'||(SELECT count(*) FROM users)||'|'||(SELECT count(*) FROM assets)"
+}
+
+legacy_column_count() {
+  docker exec "$1" psql -X -U skia_bootstrap -d skia_prod -Atqc \
+    "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name IN ('switches','patch_panels','pdus') AND column_name='rack_id'"
+}
+
 require_equal() {
   local actual="$1" expected="$2" label="$3"
   if [[ "$actual" != "$expected" ]]; then
@@ -144,18 +155,22 @@ activate_rls "$upgrade_container"
 insert_representative_data "$upgrade_container"
 upgrade_pre="$(counts "$upgrade_container")"
 require_equal "$upgrade_pre" '1|1|1' 'existing pre-upgrade counts'
+upgrade_migrator_pre="$(migrator_counts "$upgrade_container")"
+require_equal "$upgrade_migrator_pre" '1|1|0' 'restricted migrator FORCE RLS visibility'
 upgrade_output="$(run_contract "$upgrade_container" "$upgrade_root" upgrade)"
 upgrade_post="$(counts "$upgrade_container")"
 require_equal "$upgrade_post" "$upgrade_pre" 'existing post-upgrade counts'
 grep -q '^EXISTING_DATA_PRESERVATION=APPROVED$' <<<"$upgrade_output"
 grep -q '^SCHEMA_HASH=8712fcae88f98f7c75605772ab88cbeb52d06e022c07a8782b045e33caec0c10$' <<<"$upgrade_output"
 [[ "$(docker exec "$upgrade_container" psql -X -U skia_bootstrap -d skia_prod -Atqc "SELECT count(*) FROM production_bootstrap_migrations WHERE path='migrations/035_remove_legacy_rack_authorities.sql'")" == 1 ]]
+require_equal "$(legacy_column_count "$upgrade_container")" 0 'post-upgrade legacy columns removed'
 
 idempotent_output="$(run_contract "$upgrade_container" "$upgrade_root" upgrade)"
 grep -q '^EXISTING_DATA_PRESERVATION=APPROVED$' <<<"$idempotent_output"
 grep -q '^SCHEMA_HASH=8712fcae88f98f7c75605772ab88cbeb52d06e022c07a8782b045e33caec0c10$' <<<"$idempotent_output"
 [[ "$(counts "$upgrade_container")" == "$upgrade_pre" ]]
 [[ "$(docker exec "$upgrade_container" psql -X -U skia_bootstrap -d skia_prod -Atqc "SELECT count(*) FROM production_bootstrap_migrations WHERE path='migrations/035_remove_legacy_rack_authorities.sql'")" == 1 ]]
+require_equal "$(legacy_column_count "$upgrade_container")" 0 'post-035 rerun legacy columns remain absent'
 
 new_scenario fail
 fail_container="$SCENARIO_CONTAINER"
@@ -176,5 +191,6 @@ require_equal "$(docker exec "$fail_container" psql -X -U skia_bootstrap -d skia
 rm -f /tmp/skia-r1c-fail-output-$$
 
 printf 'POSTGRES_VERSION=16.14\nCLEAN_BOOTSTRAP=PASS\nCLEAN_LEDGER_COUNT=27\nCLEAN_EMPTY_GUARD=PASS\n'
-printf 'EXISTING_UPGRADE=PASS\nEXISTING_PRE_COUNTS=%s\nEXISTING_POST_COUNTS=%s\nEXISTING_MIGRATION_035_COUNT=1\n' "$upgrade_pre" "$upgrade_post"
+printf 'PRE035_FORCE_RLS_UPGRADE=PASS\nPRE035_PRE_COUNTS=%s\nPRE035_RESTRICTED_MIGRATOR_COUNTS=%s\nPRE035_POST_COUNTS=%s\nPRE035_MIGRATION_035_COUNT=1\n' "$upgrade_pre" "$upgrade_migrator_pre" "$upgrade_post"
+printf 'POST035_EXISTING_DATABASE=PASS\nPOST035_PRE_COUNTS=%s\nPOST035_POST_COUNTS=%s\nPOST035_MIGRATION_035_COUNT=1\n' "$upgrade_pre" "$(counts "$upgrade_container")"
 printf 'EXISTING_FINGERPRINT_MATCH=PASS\nIDEMPOTENCY_WITH_DATA=PASS\nFAIL_CLOSED_WITH_DATA=PASS\nFAIL_CLOSED_RUNNER_EXIT=%s\nNEW_REGRESSIONS=NONE\n' "$fail_rc"
