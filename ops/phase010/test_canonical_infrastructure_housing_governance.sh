@@ -154,7 +154,7 @@ set -e
 # A malformed pre-034 graph must roll back the migration completely.
 docker exec "$container" createdb -U postgres -O skia_migrator skia_034_rollback
 provision skia_034_rollback
-docker exec "$container" sh -c "cp -a /repo /repo-pre034 && sed -i '/034_canonical_infrastructure_housing_governance.sql/d' /repo-pre034/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "cp -a /repo /repo-pre034 && sed -i -e '/034_canonical_infrastructure_housing_governance.sql/d' -e '/035_remove_legacy_rack_authorities.sql/d' /repo-pre034/ops/phase010/bootstrap.manifest"
 docker exec -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_034_rollback" "$container" /repo-pre034/ops/phase010/run_clean_bootstrap.sh >/dev/null
 if docker exec "$container" psql -X -U skia_migrator -d skia_034_rollback -v ON_ERROR_STOP=1 -1 \
   -f /repo/migrations/034_canonical_infrastructure_housing_governance.sql \
@@ -166,8 +166,19 @@ hash="$(docker exec "$container" pg_dump -U skia_migrator -d skia_prod --schema-
 rls="$(sql -Atqc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('assets','mdf_idf','racks','patch_panels','switches','pdus','ups','backbone_links','nodes','asset_relationships','locations') AND c.relrowsecurity AND c.relforcerowsecurity")"
 runtime_exec="$(sql -Atqc "SELECT has_function_privilege('skia_runtime','public.assert_canonical_asset_housing(uuid)','EXECUTE') AND NOT EXISTS (SELECT 1 FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid='public.assert_canonical_asset_housing(uuid)'::regprocedure AND a.grantee=0 AND a.privilege_type='EXECUTE')")"
 role_restricted="$(sql -Atqc "SELECT NOT rolsuper AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole FROM pg_roles WHERE rolname='skia_runtime'")"
-[[ "$ledger" == 26 ]]
+[[ "$ledger" == 27 ]]
 [[ "$rls" == 11 ]]
 [[ "$runtime_exec" == t ]]
 [[ "$role_restricted" == t ]]
+legacy_rack_columns="$(sql -Atqc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name='rack_id' AND table_name IN ('switches','patch_panels','pdus')")"
+housing_rack_column="$(sql -Atqc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='assets' AND column_name='housing_rack_id'")"
+racks_id_column="$(sql -Atqc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='racks' AND column_name='id'")"
+rack_unit_columns="$(sql -Atqc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name='rack_unit' AND table_name IN ('switches','patch_panels','ups')")"
+migration_035_count="$(sql -Atqc "SELECT count(*) FROM production_bootstrap_migrations WHERE path='migrations/035_remove_legacy_rack_authorities.sql'")"
+[[ "$legacy_rack_columns" == 0 ]]
+[[ "$housing_rack_column" == 1 ]]
+[[ "$racks_id_column" == 1 ]]
+[[ "$rack_unit_columns" == 2 ]]
+[[ "$migration_035_count" == 1 ]]
 printf 'POSTGRES_VERSION=16.14\nMIGRATION_034_TESTS=PASS\nMIGRATION_034_ROLLBACK=PASS\nFRESH_BOOTSTRAP=PASS\nSECOND_BOOTSTRAP=PASS\nLEDGER_COUNT=%s\nRLS_FORCE_TABLES=%s\nSCHEMA_HASH=%s\n' "$ledger" "$rls" "$hash"
+printf 'MIGRATION_035_EXECUTION_COUNT=%s\nLEGACY_RACK_COLUMNS=%s\nASSETS_HOUSING_RACK_ID=%s\nRACKS_ID=%s\nRACK_UNIT_COLUMNS=%s\n' "$migration_035_count" "$legacy_rack_columns" "$housing_rack_column" "$racks_id_column" "$rack_unit_columns"
