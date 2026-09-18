@@ -166,7 +166,7 @@ hash="$(docker exec "$container" pg_dump -U skia_migrator -d skia_prod --schema-
 rls="$(sql -Atqc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('assets','mdf_idf','racks','patch_panels','switches','pdus','ups','backbone_links','nodes','asset_relationships','locations') AND c.relrowsecurity AND c.relforcerowsecurity")"
 runtime_exec="$(sql -Atqc "SELECT has_function_privilege('skia_runtime','public.assert_canonical_asset_housing(uuid)','EXECUTE') AND NOT EXISTS (SELECT 1 FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid='public.assert_canonical_asset_housing(uuid)'::regprocedure AND a.grantee=0 AND a.privilege_type='EXECUTE')")"
 role_restricted="$(sql -Atqc "SELECT NOT rolsuper AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole FROM pg_roles WHERE rolname='skia_runtime'")"
-[[ "$ledger" == 27 ]]
+[[ "$ledger" == 28 ]]
 [[ "$rls" == 11 ]]
 [[ "$runtime_exec" == t ]]
 [[ "$role_restricted" == t ]]

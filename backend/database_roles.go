@@ -113,7 +113,8 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 		       NOT (SELECT bool_and(c.relrowsecurity AND c.relforcerowsecurity)
 		            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
 		            WHERE n.nspname='public' AND c.relname IN ('assets','asset_logs','asset_relationships')),
-		       NOT has_function_privilege(current_user,'public.read_active_system_naming_presets(text[])','EXECUTE'),
+		       NOT (has_function_privilege(current_user,'public.read_active_system_naming_presets(text[])','EXECUTE')
+		            AND has_function_privilege(current_user,'public.read_active_system_naming_presets_v2(text[])','EXECUTE')),
 		       has_table_privilege(current_user,'public.system_naming_presets','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
 		FROM pg_roles r WHERE r.rolname=current_user`
 	var state runtimeRoleState

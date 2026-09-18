@@ -66,6 +66,10 @@ SELECT 'REVOKE ALL ON FUNCTION public.assert_canonical_asset_housing(UUID) FROM 
 WHERE to_regprocedure('public.assert_canonical_asset_housing(uuid)') IS NOT NULL \gexec
 SELECT 'GRANT EXECUTE ON FUNCTION public.assert_canonical_asset_housing(UUID) TO skia_runtime'
 WHERE to_regprocedure('public.assert_canonical_asset_housing(uuid)') IS NOT NULL \gexec
+SELECT 'REVOKE ALL ON FUNCTION public.read_active_system_naming_presets_v2(TEXT[]) FROM PUBLIC, skia_onboarding'
+WHERE to_regprocedure('public.read_active_system_naming_presets_v2(text[])') IS NOT NULL \gexec
+SELECT 'GRANT EXECUTE ON FUNCTION public.read_active_system_naming_presets_v2(TEXT[]) TO skia_runtime'
+WHERE to_regprocedure('public.read_active_system_naming_presets_v2(text[])') IS NOT NULL \gexec
 
 -- The role artifact runs once before and once after clean bootstrap. Apply table
 -- grants only after every required identity table exists.

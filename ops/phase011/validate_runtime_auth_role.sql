@@ -110,11 +110,16 @@ BEGIN
   IF NOT has_function_privilege('skia_runtime','public.read_active_system_naming_presets(text[])','EXECUTE') THEN
     RAISE EXCEPTION 'skia_runtime secure preset reader EXECUTE is missing';
   END IF;
+  IF EXISTS (SELECT 1 FROM public.production_bootstrap_migrations WHERE path='migrations/036_nomenclature_v2_foundation.sql')
+     AND (NOT has_function_privilege('skia_runtime','public.read_active_system_naming_presets_v2(text[])','EXECUTE')
+          OR has_function_privilege('skia_onboarding','public.read_active_system_naming_presets_v2(text[])','EXECUTE')) THEN
+    RAISE EXCEPTION 'skia_runtime V2 preset reader EXECUTE contract differs';
+  END IF;
   IF EXISTS (
     SELECT 1
     FROM information_schema.routine_privileges
     WHERE grantee='skia_runtime' AND specific_schema='public'
-      AND routine_name NOT IN ('assets_count_in_location_all_branches','read_active_system_naming_presets',
+      AND routine_name NOT IN ('assets_count_in_location_all_branches','read_active_system_naming_presets','read_active_system_naming_presets_v2',
         'validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit',
         'fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit',
         'fail_import_row_after_rollback','create_inventory_import_staging','stage_inventory_import_row',
