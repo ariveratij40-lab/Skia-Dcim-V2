@@ -31,5 +31,5 @@ runtime_url="postgresql://skia_runtime:$password@127.0.0.1:$port/skia_prod?sslmo
   go test -count=1 -run '^(TestCanonicalHousingSpecializedHTTPPostgreSQL16|TestSpecializedHandlerRollbackIsAtomic|TestSwitchLifecyclePostgres)$' ./...)
 
 ledger="$(docker exec "$container" psql -X -U postgres -d skia_prod -Atqc 'SELECT count(*) FROM production_bootstrap_migrations')"
-[[ "$ledger" == 27 ]]
+[[ "$ledger" == 28 ]]
 printf 'POSTGRES_VERSION=16.14\nCANONICAL_HOUSING_WRITE_PATHS=PASS\nTRANSACTIONAL_ZERO_DELTA=PASS\nLEDGER_COUNT=%s\n' "$ledger"

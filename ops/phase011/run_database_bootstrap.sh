@@ -91,8 +91,8 @@ fixture_counts="$(docker exec -e PGPASSWORD="$POSTGRES_BOOTSTRAP_PASSWORD" "$pos
 
 printf 'SCHEMA_HASH=%s\nLEDGER_COUNT=%s\nROLES=%s\n' \
   "$schema_hash" "$ledger" "$roles"
-[[ "$schema_hash" == 8712fcae88f98f7c75605772ab88cbeb52d06e022c07a8782b045e33caec0c10 ]]
-[[ "$ledger" == 27 ]]
+[[ "$schema_hash" == e2e448d243a9c12d067a0fa3bfecb37177a3caedb5f55a2a38ecfe1c37382329 ]]
+[[ "$ledger" == 28 ]]
 case "$database_contract" in
   clean)
     [[ "$fixture_counts" == '0|0|0' ]]
