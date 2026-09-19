@@ -50,7 +50,7 @@ prepare_pre035() {
   provision "$container"
   docker cp "$root/source/." "$container:/repo"
   docker exec "$container" sh -ceu \
-    "cp -a /repo /repo-pre035; sed -i -e '/035_remove_legacy_rack_authorities.sql/d' -e '/036_nomenclature_v2_foundation.sql/d' -e '/037_nomenclature_v2_enforcement_audit_writer.sql/d' /repo-pre035/ops/phase010/bootstrap.manifest"
+    "cp -a /repo /repo-pre035; sed -i -e '/035_remove_legacy_rack_authorities.sql/d' -e '/036_nomenclature_v2_foundation.sql/d' -e '/037_nomenclature_v2_enforcement_audit_writer.sql/d' -e '/038_nomenclature_v2_acceptance_function_contract.sql/d' /repo-pre035/ops/phase010/bootstrap.manifest"
   docker exec -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_prod" \
     "$container" /repo-pre035/ops/phase010/run_clean_bootstrap.sh >/dev/null
 }
@@ -144,8 +144,8 @@ prepare_pre035 "$clean_container" "$clean_root"
 activate_rls "$clean_container"
 clean_output="$(run_contract "$clean_container" "$clean_root" clean)"
 grep -q '^EMPTY_DATABASE_GUARD=APPROVED$' <<<"$clean_output"
-grep -q '^LEDGER_COUNT=29$' <<<"$clean_output"
-grep -q '^SCHEMA_HASH=526264e8a52816a1110df02843fa2e806a1ca8d2634482ad1337757ca9a37ba1$' <<<"$clean_output"
+grep -q '^LEDGER_COUNT=30$' <<<"$clean_output"
+grep -q '^SCHEMA_HASH=c36963ffc829ec1c20cb1e07c3279d2568ba6b5900f4e3697538c899c59cb4f9$' <<<"$clean_output"
 
 new_scenario upgrade
 upgrade_container="$SCENARIO_CONTAINER"
@@ -161,13 +161,13 @@ upgrade_output="$(run_contract "$upgrade_container" "$upgrade_root" upgrade)"
 upgrade_post="$(counts "$upgrade_container")"
 require_equal "$upgrade_post" "$upgrade_pre" 'existing post-upgrade counts'
 grep -q '^EXISTING_DATA_PRESERVATION=APPROVED$' <<<"$upgrade_output"
-grep -q '^SCHEMA_HASH=526264e8a52816a1110df02843fa2e806a1ca8d2634482ad1337757ca9a37ba1$' <<<"$upgrade_output"
+grep -q '^SCHEMA_HASH=c36963ffc829ec1c20cb1e07c3279d2568ba6b5900f4e3697538c899c59cb4f9$' <<<"$upgrade_output"
 [[ "$(docker exec "$upgrade_container" psql -X -U skia_bootstrap -d skia_prod -Atqc "SELECT count(*) FROM production_bootstrap_migrations WHERE path='migrations/035_remove_legacy_rack_authorities.sql'")" == 1 ]]
 require_equal "$(legacy_column_count "$upgrade_container")" 0 'post-upgrade legacy columns removed'
 
 idempotent_output="$(run_contract "$upgrade_container" "$upgrade_root" upgrade)"
 grep -q '^EXISTING_DATA_PRESERVATION=APPROVED$' <<<"$idempotent_output"
-grep -q '^SCHEMA_HASH=526264e8a52816a1110df02843fa2e806a1ca8d2634482ad1337757ca9a37ba1$' <<<"$idempotent_output"
+grep -q '^SCHEMA_HASH=c36963ffc829ec1c20cb1e07c3279d2568ba6b5900f4e3697538c899c59cb4f9$' <<<"$idempotent_output"
 [[ "$(counts "$upgrade_container")" == "$upgrade_pre" ]]
 [[ "$(docker exec "$upgrade_container" psql -X -U skia_bootstrap -d skia_prod -Atqc "SELECT count(*) FROM production_bootstrap_migrations WHERE path='migrations/035_remove_legacy_rack_authorities.sql'")" == 1 ]]
 require_equal "$(legacy_column_count "$upgrade_container")" 0 'post-035 rerun legacy columns remain absent'
@@ -190,7 +190,7 @@ require_equal "$(docker exec "$fail_container" psql -X -U skia_bootstrap -d skia
 require_equal "$(docker exec "$fail_container" psql -X -U skia_bootstrap -d skia_prod -Atqc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name IN ('switches','patch_panels','pdus') AND column_name='rack_id'")" 3 'fail-closed legacy schema preservation'
 rm -f /tmp/skia-r1c-fail-output-$$
 
-printf 'POSTGRES_VERSION=16.14\nCLEAN_BOOTSTRAP=PASS\nCLEAN_LEDGER_COUNT=29\nCLEAN_EMPTY_GUARD=PASS\n'
+printf 'POSTGRES_VERSION=16.14\nCLEAN_BOOTSTRAP=PASS\nCLEAN_LEDGER_COUNT=30\nCLEAN_EMPTY_GUARD=PASS\n'
 printf 'PRE035_FORCE_RLS_UPGRADE=PASS\nPRE035_PRE_COUNTS=%s\nPRE035_RESTRICTED_MIGRATOR_COUNTS=%s\nPRE035_POST_COUNTS=%s\nPRE035_MIGRATION_035_COUNT=1\n' "$upgrade_pre" "$upgrade_migrator_pre" "$upgrade_post"
 printf 'POST035_EXISTING_DATABASE=PASS\nPOST035_PRE_COUNTS=%s\nPOST035_POST_COUNTS=%s\nPOST035_MIGRATION_035_COUNT=1\n' "$upgrade_pre" "$(counts "$upgrade_container")"
 printf 'EXISTING_FINGERPRINT_MATCH=PASS\nIDEMPOTENCY_WITH_DATA=PASS\nFAIL_CLOSED_WITH_DATA=PASS\nFAIL_CLOSED_RUNNER_EXIT=%s\nNEW_REGRESSIONS=NONE\n' "$fail_rc"

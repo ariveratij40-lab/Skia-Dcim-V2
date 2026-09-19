@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
@@ -94,43 +92,4 @@ func PreviewRecommendedCode(p SystemPreset, branchCode, placementCode string, ne
 		return ""
 	}
 	return code
-}
-
-func ApplyRecommendedNomenclature(ctx context.Context, tdb TenantDB, tenantID string, presets []SystemPreset) (ApplyRecommendationsResult, error) {
-	result := ApplyRecommendationsResult{}
-	if tdb == nil || strings.TrimSpace(tenantID) == "" {
-		return result, ErrInvalidPhysicalScope
-	}
-	for _, p := range presets {
-		code := strings.ToUpper(strings.TrimSpace(p.AssetTypeCode))
-		var id, prefix, separator string
-		var digits, lastSeq int
-		var includeBranch, includePlacement bool
-		err := tdb.QueryRowContext(ctx, `SELECT id,prefix,separator,seq_digits,last_seq,include_branch,include_placement
-			FROM naming_rules WHERE tenant_id=$1 AND asset_type_code=$2`, tenantID, code).
-			Scan(&id, &prefix, &separator, &digits, &lastSeq, &includeBranch, &includePlacement)
-		if err == nil {
-			if prefix == p.Prefix && separator == p.Separator && digits == p.SeqDigits && includeBranch == p.IncludeBranch && includePlacement == p.IncludePlacement {
-				result.Unchanged = append(result.Unchanged, code)
-			} else {
-				reason := "CUSTOMIZED_RULE"
-				if lastSeq > 0 {
-					reason = "ISSUED_RULE_IMMUTABLE"
-				}
-				result.Conflicts = append(result.Conflicts, RecommendationConflict{code, reason})
-			}
-			continue
-		}
-		if err != sql.ErrNoRows {
-			return result, fmt.Errorf("inspect tenant naming rule: %w", err)
-		}
-		_, err = tdb.ExecContext(ctx, `INSERT INTO naming_rules
-			(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_placement,seq_digits,last_seq,active)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,0,true)`, uuid.NewString(), tenantID, code, p.Prefix, p.Separator, p.IncludeBranch, p.IncludePlacement, p.SeqDigits)
-		if err != nil {
-			return result, fmt.Errorf("create recommended naming rule: %w", err)
-		}
-		result.Created = append(result.Created, code)
-	}
-	return result, nil
 }

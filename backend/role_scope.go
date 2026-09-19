@@ -104,7 +104,7 @@ func RequireTenantTxScoped(database *sql.DB, next http.HandlerFunc) http.Handler
 			scopeAll = true
 		}
 
-		tx, err := BeginTenantTxWithScope(r.Context(), database, sessCtx.TenantID, sessCtx.BranchID, scopeAll)
+		tx, err := beginAuthenticatedTenantTxWithScope(r.Context(), database, sessCtx.TenantID, sessCtx.BranchID, sessCtx.UserID, scopeAll)
 		if err != nil {
 			log.Printf("RequireTenantTxScoped: no se pudo abrir transacción con contexto de tenant (tenant=%s, scopeAll=%v): %v", sessCtx.TenantID, scopeAll, err)
 			jsonErr(w, "Internal error", http.StatusInternalServerError)

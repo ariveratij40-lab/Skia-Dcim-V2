@@ -160,7 +160,7 @@ set -e
 # A malformed pre-034 graph must roll back the migration completely.
 docker exec "$container" createdb -U postgres -O skia_migrator skia_034_rollback
 provision skia_034_rollback
-docker exec "$container" sh -c "cp -a /repo /repo-pre034 && sed -i -e '/034_canonical_infrastructure_housing_governance.sql/d' -e '/035_remove_legacy_rack_authorities.sql/d' -e '/036_nomenclature_v2_foundation.sql/d' -e '/037_nomenclature_v2_enforcement_audit_writer.sql/d' /repo-pre034/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "cp -a /repo /repo-pre034 && sed -i -e '/034_canonical_infrastructure_housing_governance.sql/d' -e '/035_remove_legacy_rack_authorities.sql/d' -e '/036_nomenclature_v2_foundation.sql/d' -e '/037_nomenclature_v2_enforcement_audit_writer.sql/d' -e '/038_nomenclature_v2_acceptance_function_contract.sql/d' /repo-pre034/ops/phase010/bootstrap.manifest"
 docker exec -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_034_rollback" "$container" /repo-pre034/ops/phase010/run_clean_bootstrap.sh >/dev/null
 if docker exec "$container" psql -X -U skia_migrator -d skia_034_rollback -v ON_ERROR_STOP=1 -1 \
   -f /repo/migrations/034_canonical_infrastructure_housing_governance.sql \
@@ -172,7 +172,7 @@ hash="$(docker exec "$container" pg_dump -U skia_migrator -d skia_prod --schema-
 rls="$(sql -Atqc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('assets','mdf_idf','racks','patch_panels','switches','pdus','ups','backbone_links','nodes','asset_relationships','locations') AND c.relrowsecurity AND c.relforcerowsecurity")"
 runtime_exec="$(sql -Atqc "SELECT has_function_privilege('skia_runtime','public.assert_canonical_asset_housing(uuid)','EXECUTE') AND NOT EXISTS (SELECT 1 FROM pg_proc p CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid='public.assert_canonical_asset_housing(uuid)'::regprocedure AND a.grantee=0 AND a.privilege_type='EXECUTE')")"
 role_restricted="$(sql -Atqc "SELECT NOT rolsuper AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole FROM pg_roles WHERE rolname='skia_runtime'")"
-[[ "$ledger" == 29 ]]
+[[ "$ledger" == 30 ]]
 [[ "$rls" == 11 ]]
 [[ "$runtime_exec" == t ]]
 [[ "$role_restricted" == t ]]
