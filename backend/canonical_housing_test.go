@@ -11,17 +11,17 @@ import (
 
 func expectDistribution(mock sqlmock.Sqlmock, id, tenant, branch, typ, location string) {
 	mock.ExpectQuery("SELECT m.id,m.asset_id,m.type").WithArgs(id, tenant, branch).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "asset_id", "type", "location_id", "zone_id", "internal_area_id", "status"}).
-			AddRow(id, "distribution-asset", typ, location, "zone-1", nil, "active"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "asset_id", "type", "location_id", "placement_code", "zone_id", "internal_area_id", "status"}).
+			AddRow(id, "distribution-asset", typ, location, "MDF01", "zone-1", nil, "active"))
 	mock.ExpectQuery("SELECT z.id,z.tenant_id,z.branch_id").WithArgs("zone-1", tenant, branch).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "branch_id", "code", "name", "status", "building_id", "building_code", "floor_id", "floor_name"}).
-			AddRow("zone-1", tenant, branch, "ZONE1", "Zone 1", "active", nil, nil, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "branch_id", "code", "name", "status", "building_id", "building_code", "floor_id", "floor_code", "floor_name"}).
+			AddRow("zone-1", tenant, branch, "ZONE1", "Zone 1", "active", nil, nil, nil, nil, nil))
 }
 
 func expectHousing(mock sqlmock.Sqlmock, id, tenant, branch, location string) {
 	mock.ExpectQuery("SELECT r.id,r.id,r.asset_id").WithArgs(id, tenant, branch).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "rack_id", "asset_id", "housing_type", "mdf_idf_id", "location_id"}).
-			AddRow(id, id, "rack-asset", "RACK", "distribution-1", location))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "rack_id", "asset_id", "housing_type", "internal_code", "mdf_idf_id", "location_id"}).
+			AddRow(id, id, "rack-asset", "RACK", "RACK-TJ-01", "distribution-1", location))
 	expectDistribution(mock, "distribution-1", tenant, branch, "MDF", location)
 }
 

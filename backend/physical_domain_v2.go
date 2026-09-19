@@ -26,8 +26,8 @@ func (s PhysicalScope) valid() bool {
 }
 
 type CanonicalZone struct {
-	ID, TenantID, BranchID, Code, Name, Status   string
-	BuildingID, BuildingCode, FloorID, FloorName string
+	ID, TenantID, BranchID, Code, Name, Status              string
+	BuildingID, BuildingCode, FloorID, FloorCode, FloorName string
 }
 
 func ResolveCanonicalZone(ctx context.Context, tdb TenantDB, scope PhysicalScope, zoneID string) (CanonicalZone, error) {
@@ -35,9 +35,9 @@ func ResolveCanonicalZone(ctx context.Context, tdb TenantDB, scope PhysicalScope
 		return CanonicalZone{}, ErrInvalidPhysicalScope
 	}
 	var z CanonicalZone
-	var buildingID, buildingCode, floorID, floorName sql.NullString
+	var buildingID, buildingCode, floorID, floorCode, floorName sql.NullString
 	err := tdb.QueryRowContext(ctx, `SELECT z.id,z.tenant_id,z.branch_id,z.code,z.name,z.status,
-		b.id,b.code,f.id,f.name
+		b.id,b.code,f.id,f.code,f.name
 		FROM zones z
 		LEFT JOIN buildings b ON b.id=z.building_id AND b.tenant_id=z.tenant_id AND b.branch_id=z.branch_id
 		LEFT JOIN floors f ON f.id=z.floor_id AND f.tenant_id=z.tenant_id AND f.building_id=z.building_id
@@ -45,7 +45,7 @@ func ResolveCanonicalZone(ctx context.Context, tdb TenantDB, scope PhysicalScope
 		  AND (z.building_id IS NULL OR b.id IS NOT NULL)
 		  AND (z.floor_id IS NULL OR (f.id IS NOT NULL AND z.building_id IS NOT NULL))`,
 		zoneID, scope.TenantID, scope.BranchID).Scan(&z.ID, &z.TenantID, &z.BranchID, &z.Code, &z.Name, &z.Status,
-		&buildingID, &buildingCode, &floorID, &floorName)
+		&buildingID, &buildingCode, &floorID, &floorCode, &floorName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CanonicalZone{}, ErrZoneNotFound
 	}
@@ -53,14 +53,14 @@ func ResolveCanonicalZone(ctx context.Context, tdb TenantDB, scope PhysicalScope
 		return CanonicalZone{}, fmt.Errorf("resolve canonical zone: %w", err)
 	}
 	z.BuildingID, z.BuildingCode = buildingID.String, buildingCode.String
-	z.FloorID, z.FloorName = floorID.String, floorName.String
+	z.FloorID, z.FloorCode, z.FloorName = floorID.String, floorCode.String, floorName.String
 	return z, nil
 }
 
 type DistributionPoint struct {
-	ID, AssetID, Type, LocationID, ZoneID, Status string
-	LegacyInternalAreaID                          string
-	Legacy                                        bool
+	ID, AssetID, Type, LocationID, CanonicalCode, ZoneID, Status string
+	LegacyInternalAreaID                                         string
+	Legacy                                                       bool
 }
 
 func ResolveDistributionPoint(ctx context.Context, tdb TenantDB, scope PhysicalScope, id string, allowLegacy bool) (DistributionPoint, error) {
@@ -69,13 +69,13 @@ func ResolveDistributionPoint(ctx context.Context, tdb TenantDB, scope PhysicalS
 	}
 	var d DistributionPoint
 	var zoneID, areaID sql.NullString
-	err := tdb.QueryRowContext(ctx, `SELECT m.id,m.asset_id,m.type,l.id,l.zone_id,l.internal_area_id,a.status
+	err := tdb.QueryRowContext(ctx, `SELECT m.id,m.asset_id,m.type,l.id,l.placement_code,l.zone_id,l.internal_area_id,a.status
 		FROM mdf_idf m
 		JOIN assets a ON a.id=m.asset_id AND a.tenant_id=m.tenant_id AND a.branch_id=m.branch_id
 		JOIN locations l ON l.id=a.location_id AND l.tenant_id=a.tenant_id AND l.branch_id=a.branch_id
 		WHERE m.id=$1 AND m.tenant_id=$2 AND m.branch_id=$3 AND m.type IN ('MDF','IDF')
 		  AND a.status='active' AND l.status='active'`, id, scope.TenantID, scope.BranchID).
-		Scan(&d.ID, &d.AssetID, &d.Type, &d.LocationID, &zoneID, &areaID, &d.Status)
+		Scan(&d.ID, &d.AssetID, &d.Type, &d.LocationID, &d.CanonicalCode, &zoneID, &areaID, &d.Status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DistributionPoint{}, ErrDistributionNotFound
 	}
@@ -96,7 +96,7 @@ func ResolveDistributionPoint(ctx context.Context, tdb TenantDB, scope PhysicalS
 }
 
 type Housing struct {
-	ID, RackID, AssetID, Type, DistributionID, LocationID string
+	ID, RackID, AssetID, Type, CanonicalCode, DistributionID, LocationID string
 }
 
 func ResolveHousing(ctx context.Context, tdb TenantDB, scope PhysicalScope, id string) (Housing, error) {
@@ -105,12 +105,12 @@ func ResolveHousing(ctx context.Context, tdb TenantDB, scope PhysicalScope, id s
 	}
 	var h Housing
 	var distributionID, locationID sql.NullString
-	err := tdb.QueryRowContext(ctx, `SELECT r.id,r.id,r.asset_id,r.housing_type,r.mdf_idf_id,a.location_id
+	err := tdb.QueryRowContext(ctx, `SELECT r.id,r.id,r.asset_id,r.housing_type,a.internal_code,r.mdf_idf_id,a.location_id
 		FROM racks r JOIN assets a ON a.id=r.asset_id AND a.tenant_id=r.tenant_id AND a.branch_id=r.branch_id
 		JOIN asset_types at ON at.id=a.asset_type_id AND at.code='RACK'
 		WHERE r.id=$1 AND r.tenant_id=$2 AND r.branch_id=$3
 		  AND r.housing_type IN ('RACK','CABINET') AND a.status='active'`, id, scope.TenantID, scope.BranchID).
-		Scan(&h.ID, &h.RackID, &h.AssetID, &h.Type, &distributionID, &locationID)
+		Scan(&h.ID, &h.RackID, &h.AssetID, &h.Type, &h.CanonicalCode, &distributionID, &locationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Housing{}, ErrHousingNotFound
 	}

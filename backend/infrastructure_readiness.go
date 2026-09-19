@@ -71,27 +71,24 @@ func readinessActions(targets ...string) []InfrastructureReadinessAction {
 }
 
 func buildReadinessRuleExample(branchCode string, rule readinessNamingRule) string {
-	parts := []string{rule.Prefix}
-	if rule.IncludeBranch {
-		parts = append(parts, branchCode)
-	}
-	if rule.IncludeSite {
-		parts = append(parts, "[SITIO]")
-	}
-	if rule.IncludeInternalArea {
-		parts = append(parts, "[AREA]")
-	}
+	scope := NomenclatureSequenceBranch
 	if rule.IncludePlacement {
-		parts = append(parts, "[UBICACIÓN]")
+		scope = NomenclatureSequencePlacement
 	}
-	if rule.CustomSegment1 != "" {
-		parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment1, " ", "")))
+	policy := CanonicalNomenclaturePolicy{Prefix: rule.Prefix, Separator: rule.Separator,
+		ContextMode: NomenclatureContextLegacyInternalArea, SequenceScope: scope,
+		SequenceDigits: rule.SeqDigits, IncludeBranch: rule.IncludeBranch,
+		IncludeBuilding: rule.IncludeSite, IncludeInternalArea: rule.IncludeInternalArea,
+		IncludePlacement: rule.IncludePlacement, CustomSegment1: rule.CustomSegment1,
+		CustomSegment2: rule.CustomSegment2}
+	components := CanonicalNomenclatureComponents{Prefix: rule.Prefix, Branch: branchCode,
+		Building: "[SITIO]", InternalArea: "[AREA]", Placement: "[UBICACION]",
+		CustomSegment1: rule.CustomSegment1, CustomSegment2: rule.CustomSegment2}
+	code, err := BuildCanonicalNomenclatureTemplate(policy, components)
+	if err != nil {
+		return ""
 	}
-	if rule.CustomSegment2 != "" {
-		parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment2, " ", "")))
-	}
-	parts = append(parts, strings.Repeat("#", rule.SeqDigits))
-	return strings.Join(parts, rule.Separator)
+	return code
 }
 
 func buildNomenclatureReadiness(branchCode string, rules []readinessNamingRule) InfrastructureReadinessStep {

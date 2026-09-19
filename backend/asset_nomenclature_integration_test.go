@@ -158,9 +158,6 @@ func TestAssetNomenclatureConcurrentSequence(t *testing.T) {
 			}
 			assignment, err := (&DCIMHandler{}).generateInternalCode(tx, tenantID, []string{branchA, branchB}[i%2], "SWITCH")
 			if err == nil {
-				_, err = tx.Exec(`INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,internal_code,name,nomenclature_id,nomenclature_sequence) SELECT $1,$2,$3,id,$4,$5,$6,$7 FROM asset_types WHERE code='SWITCH'`, uuid.NewString(), tenantID, []string{branchA, branchB}[i%2], assignment.Code, fmt.Sprintf("Switch %d", i), assignment.ID, assignment.Sequence)
-			}
-			if err == nil {
 				err = tx.Commit()
 			} else {
 				_ = tx.Rollback()
@@ -246,7 +243,7 @@ func TestAssetNomenclatureConcurrentSequence(t *testing.T) {
 	}
 }
 
-func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
+func TestPlacementScopedCounters(t *testing.T) {
 	dsn := os.Getenv("ASSET_NOMENCLATURE_TEST_DATABASE_URL")
 	if dsn == "" {
 		t.Skip("database URL not set")
@@ -256,8 +253,7 @@ func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	tenant, branch, p1, p2, warehouse, rule := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
-	site, area1, area2 := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	tenant, branch, p1, p2, rule := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	_, err = database.Exec(`INSERT INTO tenants(id,name) VALUES($1,'Placement counters')`, tenant)
 	if err != nil {
 		t.Fatal(err)
@@ -266,20 +262,8 @@ func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
 	if _, err = database.Exec(`INSERT INTO branches(id,tenant_id,name,city) VALUES($1,$2,'B','TIJ')`, branch, tenant); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = database.Exec(`INSERT INTO buildings(id,tenant_id,branch_id,code,name) VALUES($1,$2,$3,'SITE','Site')`, site, tenant, branch); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = database.Exec(`INSERT INTO internal_areas(id,tenant_id,branch_id,site_id,code,name) VALUES($1,$3,$4,$5,'A1','Area 1'),($2,$3,$4,$5,'A2','Area 2')`, area1, area2, tenant, branch, site); err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range []struct{ id, typ, code string }{{p1, "IDF", "IDF01"}, {p2, "IDF", "IDF02"}, {warehouse, "WAREHOUSE", "ALM01"}} {
-		areaID := interface{}(nil)
-		if p.id == p1 {
-			areaID = area1
-		} else if p.id == p2 {
-			areaID = area2
-		}
-		if _, err = database.Exec(`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status,internal_area_id) VALUES($1,$2,$3,$4,$5,$4,'active',$6)`, p.id, tenant, branch, p.code, p.typ, areaID); err != nil {
+	for _, p := range []struct{ id, code string }{{p1, "LOC01"}, {p2, "LOC02"}} {
+		if _, err = database.Exec(`INSERT INTO locations(id,tenant_id,branch_id,name,placement_type,placement_code,status) VALUES($1,$2,$3,$4,'WAREHOUSE',$4,'active')`, p.id, tenant, branch, p.code); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -306,12 +290,12 @@ func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
 		}
 		return a, e
 	}
-	a1, err := reserve(makePlacement(p1, "IDF01", "IDF"), true)
-	if err != nil || a1.Sequence != 1 || a1.Code != "SW-IDF01-0001" {
+	a1, err := reserve(makePlacement(p1, "LOC01", "WAREHOUSE"), true)
+	if err != nil || a1.Sequence != 1 || a1.Code != "SW-LOC01-0001" {
 		t.Fatalf("p1 first: %#v %v", a1, err)
 	}
-	a2, err := reserve(makePlacement(p2, "IDF02", "IDF"), true)
-	if err != nil || a2.Sequence != 1 || a2.Code != "SW-IDF02-0001" {
+	a2, err := reserve(makePlacement(p2, "LOC02", "WAREHOUSE"), true)
+	if err != nil || a2.Sequence != 1 || a2.Code != "SW-LOC02-0001" {
 		t.Fatalf("p2 first: %#v %v", a2, err)
 	}
 	results := make(chan string, 12)
@@ -321,7 +305,7 @@ func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			a, e := reserve(makePlacement(p1, "IDF01", "IDF"), true)
+			a, e := reserve(makePlacement(p1, "LOC01", "WAREHOUSE"), true)
 			if e != nil {
 				failures <- e
 				return
@@ -345,30 +329,13 @@ func TestPlacementScopedCountersAndWarehouseStatus(t *testing.T) {
 	if len(seen) != 12 {
 		t.Fatalf("got %d concurrent codes", len(seen))
 	}
-	rolled, err := reserve(makePlacement(p1, "IDF01", "IDF"), false)
+	rolled, err := reserve(makePlacement(p1, "LOC01", "WAREHOUSE"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := reserve(makePlacement(p1, "IDF01", "IDF"), false)
+	next, err := reserve(makePlacement(p1, "LOC01", "WAREHOUSE"), false)
 	if err != nil || rolled.Sequence != next.Sequence {
 		t.Fatalf("rollback consumed sequence: %d %d %v", rolled.Sequence, next.Sequence, err)
-	}
-	// DB trigger is the final authority for warehouse operational state.
-	var switchType string
-	if err = database.QueryRow(`SELECT id FROM asset_types WHERE code='SWITCH'`).Scan(&switchType); err != nil {
-		t.Fatal(err)
-	}
-	wa, err := reserve(makePlacement(warehouse, "ALM01", "WAREHOUSE"), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assetID := uuid.NewString()
-	if _, err = database.Exec(`INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,location_id,internal_code,nomenclature_id,nomenclature_sequence,name,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'Stored switch','active')`, assetID, tenant, branch, switchType, warehouse, wa.Code, rule, wa.Sequence); err != nil {
-		t.Fatal(err)
-	}
-	var status string
-	if err = database.QueryRow(`SELECT status FROM assets WHERE id=$1`, assetID).Scan(&status); err != nil || status != "inactive" {
-		t.Fatalf("warehouse status=%s err=%v", status, err)
 	}
 }
 

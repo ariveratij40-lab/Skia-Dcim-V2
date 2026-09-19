@@ -58,7 +58,7 @@ func TestBuildNomenclatureReadiness(t *testing.T) {
 		IncludeBranch: true, IncludeSite: true, IncludeInternalArea: true}
 	partial := buildNomenclatureReadiness("PRI", []readinessNamingRule{rule})
 	if partial.Status != "partial" || partial.Required || *partial.ConfiguredCount != 1 || *partial.TotalCount != 2 ||
-		partial.AssetTypes[0].Status != "configured" || *partial.AssetTypes[0].Example != "MDF-PRI-[SITIO]-[AREA]-###" ||
+		partial.AssetTypes[0].Status != "configured" || *partial.AssetTypes[0].Example != "MDF-PRI-[SITIO]-[AREA]-[NEXT]" ||
 		partial.AssetTypes[1].Status != "unavailable" || partial.AssetTypes[1].Example != nil {
 		t.Fatalf("partial nomenclature=%+v", partial)
 	}
@@ -80,10 +80,10 @@ func TestBuildReadinessRuleExampleMatrix(t *testing.T) {
 		rule readinessNamingRule
 		want string
 	}{
-		{"physical hierarchy", readinessNamingRule{Prefix: "MDF", Separator: "-", SeqDigits: 3, IncludeBranch: true, IncludeSite: true, IncludeInternalArea: true}, "MDF-PRI-[SITIO]-[AREA]-###"},
-		{"custom separator and segments", readinessNamingRule{Prefix: "IDF", Separator: "/", SeqDigits: 2, CustomSegment1: "Edge Core", CustomSegment2: "P 02"}, "IDF/EDGECORE/P02/##"},
-		{"placement without physical hierarchy", readinessNamingRule{Prefix: "RACK", Separator: "_", SeqDigits: 4, IncludePlacement: true}, "RACK_[UBICACIÓN]_####"},
-		{"branch only", readinessNamingRule{Prefix: "MDF", Separator: ".", SeqDigits: 1, IncludeBranch: true}, "MDF.PRI.#"},
+		{"physical hierarchy", readinessNamingRule{Prefix: "MDF", Separator: "-", SeqDigits: 3, IncludeBranch: true, IncludeSite: true, IncludeInternalArea: true}, "MDF-PRI-[SITIO]-[AREA]-[NEXT]"},
+		{"custom separator and segments", readinessNamingRule{Prefix: "IDF", Separator: "/", SeqDigits: 2, CustomSegment1: "EDGECORE", CustomSegment2: "P02"}, "IDF/EDGECORE/P02/[NEXT]"},
+		{"placement without physical hierarchy", readinessNamingRule{Prefix: "RACK", Separator: "_", SeqDigits: 4, IncludePlacement: true}, "RACK_[UBICACION]_[NEXT]"},
+		{"branch only", readinessNamingRule{Prefix: "MDF", Separator: ".", SeqDigits: 2, IncludeBranch: true}, "MDF.PRI.[NEXT]"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -34,19 +34,19 @@ func TestSpecializedPostUsesInjectedTenantDB(t *testing.T) {
 	defer func() { db = previousGlobal }()
 
 	tenantMock.ExpectQuery("SELECT r.id,r.id,r.asset_id").WithArgs("rack-1", "tenant-1", "branch-1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "rack_id", "asset_id", "housing_type", "mdf_idf_id", "location_id"}).AddRow("rack-1", "rack-1", "rack-asset-1", "RACK", "mdf-1", "placement-1"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "rack_id", "asset_id", "housing_type", "internal_code", "mdf_idf_id", "location_id"}).AddRow("rack-1", "rack-1", "rack-asset-1", "RACK", "RACK-TJ-01", "mdf-1", "placement-1"))
 	tenantMock.ExpectQuery("SELECT m.id,m.asset_id,m.type").WithArgs("mdf-1", "tenant-1", "branch-1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "asset_id", "type", "location_id", "zone_id", "internal_area_id", "status"}).AddRow("mdf-1", "mdf-asset-1", "MDF", "placement-1", "zone-1", nil, "active"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "asset_id", "type", "location_id", "placement_code", "zone_id", "internal_area_id", "status"}).AddRow("mdf-1", "mdf-asset-1", "MDF", "placement-1", "MDF01", "zone-1", nil, "active"))
 	tenantMock.ExpectQuery("SELECT z.id,z.tenant_id,z.branch_id").WithArgs("zone-1", "tenant-1", "branch-1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "branch_id", "code", "name", "status", "building_id", "building_code", "floor_id", "floor_name"}).
-			AddRow("zone-1", "tenant-1", "branch-1", "ZONE1", "Zone 1", "active", nil, nil, nil, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "tenant_id", "branch_id", "code", "name", "status", "building_id", "building_code", "floor_id", "floor_code", "floor_name"}).
+			AddRow("zone-1", "tenant-1", "branch-1", "ZONE1", "Zone 1", "active", nil, nil, nil, nil, nil))
 	tenantMock.ExpectQuery("SELECT id FROM asset_types").WithArgs("SWITCH").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("asset-type-1"))
 	tenantMock.ExpectQuery("SELECT id,placement_type").WithArgs("placement-1", "tenant-1", "branch-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "placement_type", "branch_id", "placement_code", "name", "status"}).AddRow("placement-1", "IDF", "branch-1", "IDF01", "IDF 01", "active"))
-	tenantMock.ExpectQuery("SELECT id, prefix, separator").WithArgs("tenant-1", "SWITCH").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "include_placement", "include_site", "include_internal_area", "custom_segment_1", "custom_segment_2"}).
-			AddRow("rule-1", "SW", "-", 4, 0, false, true, false, false, "", ""))
+	tenantMock.ExpectQuery("SELECT id,asset_type_code,prefix,separator").WithArgs("tenant-1", "SWITCH").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "asset_type_code", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "include_site", "include_floor", "include_zone", "include_distribution", "include_housing", "include_placement", "include_internal_area", "context_mode", "sequence_scope", "custom_segment_1", "custom_segment_2"}).
+			AddRow("rule-1", "SWITCH", "SW", "-", 4, 0, false, false, false, false, false, false, true, false, NomenclatureContextLegacyInternalArea, NomenclatureSequencePlacement, "", ""))
 	tenantMock.ExpectExec("INSERT INTO nomenclature_counters").WillReturnResult(sqlmock.NewResult(0, 1))
 	tenantMock.ExpectQuery("SELECT last_seq FROM nomenclature_counters").WillReturnRows(sqlmock.NewRows([]string{"last_seq"}).AddRow(0))
 	tenantMock.ExpectExec("UPDATE nomenclature_counters").WillReturnResult(sqlmock.NewResult(0, 1))
