@@ -38,6 +38,8 @@ type managedAssetInput struct {
 	PlacementID       string
 	MountMode         string
 	HousingRackID     string
+	ZoneID            string
+	DistributionID    string
 	PhysicalLocation  *ResolvedPhysicalLocation
 	CanonicalZone     *CanonicalZone
 	NamingContextMode string
@@ -131,7 +133,7 @@ func createMdfIdf(ctx context.Context, tenantTx TenantDB, userID, tenantID, bran
 	managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 		AssetTypeCode: mdfType, Name: input.Name, ManualCode: input.ManualCode,
 		Status: input.Status, Observations: input.Observations, PlacementID: placementID,
-		PhysicalLocation: physicalLocation, CanonicalZone: canonicalZone, NamingContextMode: namingContextMode,
+		ZoneID: zoneID, PhysicalLocation: physicalLocation, CanonicalZone: canonicalZone, NamingContextMode: namingContextMode,
 	})
 	if err != nil {
 		return nil, err
@@ -221,7 +223,12 @@ func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, i
 			input.Status = "inactive"
 		}
 	}
-	assignment, err := (&DCIMHandler{}).generateInternalCodeWithContext(tenantTx, NomenclatureContext{TenantID: tenantID, BranchID: branchID, AssetTypeCode: input.AssetTypeCode, Placement: placement, PhysicalLocation: input.PhysicalLocation, CanonicalZone: input.CanonicalZone, ContextMode: input.NamingContextMode})
+	assignment, err := (&DCIMHandler{}).generateInternalCodeWithContext(tenantTx, NomenclatureContext{
+		TenantID: tenantID, ActorID: userID, BranchID: branchID, AssetTypeCode: input.AssetTypeCode,
+		ZoneID: input.ZoneID, DistributionID: input.DistributionID, HousingRackID: input.HousingRackID,
+		PlacementID: input.PlacementID, Placement: placement, PhysicalLocation: input.PhysicalLocation,
+		CanonicalZone: input.CanonicalZone, ContextMode: input.NamingContextMode,
+	})
 	if err != nil {
 		return nil, err
 	}

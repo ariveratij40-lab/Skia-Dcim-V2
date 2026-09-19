@@ -497,7 +497,7 @@ func handleRacks(w http.ResponseWriter, r *http.Request) {
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "RACK", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
-			PlacementID: housing.LocationID, MountMode: housing.MountMode,
+			PlacementID: housing.LocationID, DistributionID: housing.DistributionPointID, MountMode: housing.MountMode,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "RACK")
@@ -671,7 +671,8 @@ func handleEnsureRack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
-		AssetTypeCode: "RACK", Name: fmt.Sprintf("Rack %s", mdfName), Status: "active", PlacementID: housing.LocationID, MountMode: housing.MountMode,
+		AssetTypeCode: "RACK", Name: fmt.Sprintf("Rack %s", mdfName), Status: "active", PlacementID: housing.LocationID,
+		DistributionID: housing.DistributionPointID, MountMode: housing.MountMode,
 	})
 	if err != nil {
 		writeManagedAssetError(w, err, "RACK")
@@ -814,7 +815,8 @@ func handleSwitches(w http.ResponseWriter, r *http.Request) {
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "SWITCH", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
-			PlacementID: housing.LocationID, MountMode: housing.MountMode, HousingRackID: housing.HousingRackID,
+			PlacementID: housing.LocationID, DistributionID: housing.DistributionPointID,
+			MountMode: housing.MountMode, HousingRackID: housing.HousingRackID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "SWITCH")
@@ -969,7 +971,8 @@ func handleUpsPdus(w http.ResponseWriter, r *http.Request) {
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: category, Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Model: req.Model, Observations: req.Observations, InstallYear: req.InstallYear,
-			PlacementID: housing.LocationID, MountMode: housing.MountMode, HousingRackID: housing.HousingRackID,
+			PlacementID: housing.LocationID, DistributionID: housing.DistributionPointID,
+			MountMode: housing.MountMode, HousingRackID: housing.HousingRackID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, category)
@@ -1105,7 +1108,8 @@ func handlePatchPanels(w http.ResponseWriter, r *http.Request) {
 		managed, err := reserveManagedAsset(tenantTx, tenantID, branchID, userID, managedAssetInput{
 			AssetTypeCode: "PATCH_PANEL", Name: req.Name, ManualCode: req.InternalCode, Status: req.Status,
 			Manufacturer: req.Manufacturer, Model: req.Model, SerialNumber: req.Serial, Observations: req.Observations, InstallYear: req.InstallYear,
-			PlacementID: housing.LocationID, MountMode: housing.MountMode, HousingRackID: housing.HousingRackID,
+			PlacementID: housing.LocationID, DistributionID: housing.DistributionPointID,
+			MountMode: housing.MountMode, HousingRackID: housing.HousingRackID,
 		})
 		if err != nil {
 			writeManagedAssetError(w, err, "PATCH_PANEL")

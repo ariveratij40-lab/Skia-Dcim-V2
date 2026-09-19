@@ -180,11 +180,13 @@ type NomenclatureAssignment struct {
 }
 
 type NomenclatureContext struct {
-	TenantID, BranchID, AssetTypeCode string
-	Placement                         *ResolvedPlacement
-	PhysicalLocation                  *ResolvedPhysicalLocation
-	CanonicalZone                     *CanonicalZone
-	ContextMode                       string
+	TenantID, ActorID, BranchID, AssetTypeCode string
+	Placement                                  *ResolvedPlacement
+	PhysicalLocation                           *ResolvedPhysicalLocation
+	CanonicalZone                              *CanonicalZone
+	ContextMode                                string
+	ZoneID, DistributionID                     string
+	HousingRackID, PlacementID                 string
 }
 
 var ErrNomenclatureRequired = fmt.Errorf("active nomenclature is required")
@@ -583,122 +585,35 @@ func (h *DCIMHandler) generateInternalCode(tx TenantDB, tenantID, branchID, asse
 }
 
 func (h *DCIMHandler) generateInternalCodeWithContext(tx TenantDB, ctx NomenclatureContext) (NomenclatureAssignment, error) {
-	// Obtener la regla de nomenclatura con bloqueo exclusivo (FOR UPDATE)
-	var ruleID string
-	var prefix, separator string
-	var seqDigits, lastSeq int
-	var includeBranch, includePlacement, includeSite, includeInternalArea bool
-	var includeZone bool
-	var customSeg1, customSeg2 sql.NullString
-	query :=
-		`SELECT id, prefix, separator, seq_digits, last_seq, include_branch, include_placement,
-		        include_site, include_internal_area,
-		        COALESCE(custom_segment_1,''), COALESCE(custom_segment_2,'')
-		 FROM naming_rules
-		 WHERE tenant_id = $1 AND asset_type_code = $2 AND active = TRUE`
-	var err error
-	if ctx.ContextMode != "" {
-		query = strings.Replace(query, "COALESCE(custom_segment_1,''), COALESCE(custom_segment_2,'')", "include_zone, COALESCE(custom_segment_1,''), COALESCE(custom_segment_2,'')", 1) + ` AND context_mode=$3 FOR UPDATE`
-		err = tx.QueryRow(query, ctx.TenantID, ctx.AssetTypeCode, ctx.ContextMode).
-			Scan(&ruleID, &prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &includePlacement, &includeSite, &includeInternalArea, &includeZone, &customSeg1, &customSeg2)
-	} else {
-		query += ` FOR UPDATE`
-		err = tx.QueryRow(query, ctx.TenantID, ctx.AssetTypeCode).
-			Scan(&ruleID, &prefix, &separator, &seqDigits, &lastSeq, &includeBranch, &includePlacement, &includeSite, &includeInternalArea, &customSeg1, &customSeg2)
+	requestContext := context.Background()
+	policy, err := loadCanonicalNomenclaturePolicy(requestContext, tx, ctx.TenantID, ctx.AssetTypeCode, ctx.ContextMode, true)
+	if err != nil {
+		return NomenclatureAssignment{}, err
 	}
-
-	if err == sql.ErrNoRows {
-		if ctx.ContextMode == "CANONICAL_ZONE" {
-			return NomenclatureAssignment{}, ErrCanonicalZoneNamingRequired
-		}
-		return NomenclatureAssignment{}, ErrNomenclatureRequired
-	} else if err != nil {
-		return NomenclatureAssignment{}, fmt.Errorf("error leyendo naming_rule: %w", err)
+	input := CanonicalNomenclatureInput{
+		TenantID: ctx.TenantID, ActorID: ctx.ActorID, BranchID: ctx.BranchID, AssetTypeCode: ctx.AssetTypeCode,
+		ZoneID: ctx.ZoneID, DistributionID: ctx.DistributionID, HousingRackID: ctx.HousingRackID,
+		PlacementID: ctx.PlacementID, Policy: policy, Placement: ctx.Placement,
+		PhysicalLocation: ctx.PhysicalLocation, CanonicalZone: ctx.CanonicalZone,
 	}
-
-	newSeq := lastSeq + 1
-	if includePlacement {
-		if ctx.Placement == nil || !ctx.Placement.Active {
-			return NomenclatureAssignment{}, ErrInvalidAssetPlacement
-		}
-		if _, err = tx.Exec(`INSERT INTO nomenclature_counters(nomenclature_id,tenant_id,branch_id,placement_id,last_seq) VALUES($1,$2,$3,$4,0) ON CONFLICT DO NOTHING`, ruleID, ctx.TenantID, ctx.BranchID, ctx.Placement.ID); err != nil {
-			return NomenclatureAssignment{}, fmt.Errorf("create placement counter: %w", err)
-		}
-		if err = tx.QueryRow(`SELECT last_seq FROM nomenclature_counters WHERE nomenclature_id=$1 AND branch_id=$2 AND placement_id=$3 FOR UPDATE`, ruleID, ctx.BranchID, ctx.Placement.ID).Scan(&lastSeq); err != nil {
-			return NomenclatureAssignment{}, fmt.Errorf("lock placement counter: %w", err)
-		}
-		newSeq = lastSeq + 1
-		if _, err = tx.Exec(`UPDATE nomenclature_counters SET last_seq=$1,updated_at=now() WHERE nomenclature_id=$2 AND branch_id=$3 AND placement_id=$4`, newSeq, ruleID, ctx.BranchID, ctx.Placement.ID); err != nil {
-			return NomenclatureAssignment{}, fmt.Errorf("update placement counter: %w", err)
-		}
-	} else {
-		if _, err = tx.Exec(`INSERT INTO nomenclature_branch_counters(nomenclature_id,tenant_id,branch_id,last_seq) VALUES($1,$2,$3,0) ON CONFLICT DO NOTHING`, ruleID, ctx.TenantID, ctx.BranchID); err != nil {
-			return NomenclatureAssignment{}, fmt.Errorf("create branch counter: %w", err)
-		}
-		if err = tx.QueryRow(`SELECT last_seq FROM nomenclature_branch_counters WHERE nomenclature_id=$1 AND branch_id=$2 FOR UPDATE`, ruleID, ctx.BranchID).Scan(&lastSeq); err != nil {
-			return NomenclatureAssignment{}, fmt.Errorf("lock branch counter: %w", err)
-		}
-		newSeq = lastSeq + 1
-		if _, err = tx.Exec(`UPDATE nomenclature_branch_counters SET last_seq=$1,updated_at=now() WHERE nomenclature_id=$2 AND branch_id=$3`, newSeq, ruleID, ctx.BranchID); err != nil {
-			return NomenclatureAssignment{}, fmt.Errorf("update branch counter: %w", err)
-		}
-		if _, err = tx.Exec(`UPDATE naming_rules SET last_seq=GREATEST(last_seq,$1),updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, newSeq, ruleID, ctx.TenantID); err != nil {
-			return NomenclatureAssignment{}, fmt.Errorf("update rule high-water mark: %w", err)
-		}
+	resolved, err := ResolveCanonicalNomenclature(requestContext, tx, input)
+	if err != nil {
+		return NomenclatureAssignment{}, err
 	}
-
-	// El código de sucursal es una fuente canónica, no texto derivado del cliente.
-	branchCode := ""
-	if includeBranch {
-		if err := tx.QueryRow(`SELECT code FROM branches WHERE id = $1 AND tenant_id = $2 AND status='active'`, ctx.BranchID, ctx.TenantID).Scan(&branchCode); err != nil {
-			return NomenclatureAssignment{}, fmt.Errorf("error resolving branch component: %w", err)
-		}
+	// Validate the maximum representable code before mutating a counter. The
+	// exact code is validated again after the locked sequence is reserved.
+	if _, err = BuildCanonicalNomenclature(policy, resolved.Components, pow10(policy.SequenceDigits)-1); err != nil {
+		return NomenclatureAssignment{}, err
 	}
-
-	// Formatear secuencial con padding
-	seqStr := fmt.Sprintf("%0*d", seqDigits, newSeq)
-	// Construir el código
-	parts := []string{prefix}
-	if branchCode != "" {
-		parts = append(parts, branchCode)
+	sequence, err := reserveCanonicalSequence(requestContext, tx, policy, ctx.TenantID, ctx.BranchID, resolved.Components)
+	if err != nil {
+		return NomenclatureAssignment{}, fmt.Errorf("reserve canonical sequence: %w", err)
 	}
-	if includeSite {
-		if ctx.ContextMode == "CANONICAL_ZONE" {
-			if ctx.CanonicalZone == nil || strings.TrimSpace(ctx.CanonicalZone.BuildingCode) == "" {
-				return NomenclatureAssignment{}, ErrZoneNotFound
-			}
-			parts = append(parts, ctx.CanonicalZone.BuildingCode)
-		} else {
-			if ctx.PhysicalLocation == nil || !ctx.PhysicalLocation.Active {
-				return NomenclatureAssignment{}, ErrInvalidPhysicalLocation
-			}
-			parts = append(parts, ctx.PhysicalLocation.SiteCode)
-		}
+	code, err := BuildCanonicalNomenclature(policy, resolved.Components, sequence)
+	if err != nil {
+		return NomenclatureAssignment{}, err
 	}
-	if includeZone {
-		if ctx.ContextMode != "CANONICAL_ZONE" || ctx.CanonicalZone == nil || strings.TrimSpace(ctx.CanonicalZone.Code) == "" {
-			return NomenclatureAssignment{}, ErrZoneNotFound
-		}
-		parts = append(parts, ctx.CanonicalZone.Code)
-	}
-	if includeInternalArea {
-		if ctx.PhysicalLocation == nil || !ctx.PhysicalLocation.Active {
-			return NomenclatureAssignment{}, ErrInvalidPhysicalLocation
-		}
-		parts = append(parts, ctx.PhysicalLocation.AreaCode)
-	}
-	if includePlacement {
-		parts = append(parts, ctx.Placement.CanonicalCode)
-	}
-	// Agregar segmentos genéricos si están configurados
-	if customSeg1.Valid && customSeg1.String != "" {
-		parts = append(parts, strings.ToUpper(strings.ReplaceAll(customSeg1.String, " ", "")))
-	}
-	if customSeg2.Valid && customSeg2.String != "" {
-		parts = append(parts, strings.ToUpper(strings.ReplaceAll(customSeg2.String, " ", "")))
-	}
-	parts = append(parts, seqStr)
-	return NomenclatureAssignment{ID: ruleID, Code: strings.Join(parts, separator), Sequence: newSeq}, nil
+	return NomenclatureAssignment{ID: policy.RuleID, Code: code, Sequence: sequence}, nil
 }
 
 func writeNomenclatureRequired(w http.ResponseWriter, assetTypeCode string) {
@@ -1979,30 +1894,31 @@ type namingRuleMutation struct {
 }
 
 func namingRulePreview(rule namingRuleResponse) string {
-	parts := []string{rule.Prefix}
-	if rule.IncludeBranch {
-		parts = append(parts, "[SUCURSAL]")
+	contextMode := rule.ContextMode
+	if contextMode == "" {
+		contextMode = NomenclatureContextLegacyInternalArea
 	}
-	if rule.IncludeSite {
-		parts = append(parts, "[SITIO]")
-	}
-	if rule.IncludeInternalArea {
-		parts = append(parts, "[AREA]")
-	}
-	if rule.IncludeZone {
-		parts = append(parts, "[ZONA]")
-	}
+	sequenceScope := NomenclatureSequenceBranch
 	if rule.IncludePlacement {
-		parts = append(parts, "[UBICACIÓN]")
+		sequenceScope = NomenclatureSequencePlacement
 	}
-	if rule.CustomSegment1 != "" {
-		parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment1, " ", "")))
+	policy := CanonicalNomenclaturePolicy{
+		RuleID: rule.ID, AssetTypeCode: rule.AssetTypeCode, Prefix: rule.Prefix, Separator: rule.Separator,
+		ContextMode: contextMode, SequenceScope: sequenceScope, SequenceDigits: rule.SeqDigits,
+		IncludeBranch: rule.IncludeBranch, IncludeBuilding: rule.IncludeSite,
+		IncludeZone: rule.IncludeZone, IncludePlacement: rule.IncludePlacement,
+		IncludeInternalArea: rule.IncludeInternalArea,
+		CustomSegment1:      rule.CustomSegment1, CustomSegment2: rule.CustomSegment2,
 	}
-	if rule.CustomSegment2 != "" {
-		parts = append(parts, strings.ToUpper(strings.ReplaceAll(rule.CustomSegment2, " ", "")))
+	components := CanonicalNomenclatureComponents{Prefix: rule.Prefix,
+		Branch: "[SUCURSAL]", Building: "[SITIO]", Zone: "[ZONA]", Placement: "[UBICACION]",
+		InternalArea:   "[AREA]",
+		CustomSegment1: rule.CustomSegment1, CustomSegment2: rule.CustomSegment2}
+	code, err := BuildCanonicalNomenclatureDisplay(policy, components, rule.LastSeq+1)
+	if err != nil {
+		return ""
 	}
-	parts = append(parts, fmt.Sprintf("%0*d", rule.SeqDigits, rule.LastSeq+1))
-	return strings.Join(parts, rule.Separator)
+	return code
 }
 
 func validateNamingRuleMutation(body namingRuleMutation, creating bool) error {

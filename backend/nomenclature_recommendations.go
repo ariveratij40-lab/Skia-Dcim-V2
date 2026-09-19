@@ -78,15 +78,22 @@ func ReadActiveSystemNamingPresets(ctx context.Context, tdb TenantDB, assetTypeC
 }
 
 func PreviewRecommendedCode(p SystemPreset, branchCode, placementCode string, nextSequence int) string {
-	parts := []string{p.Prefix}
-	if p.IncludeBranch {
-		parts = append(parts, branchCode)
-	}
+	scope := NomenclatureSequenceBranch
 	if p.IncludePlacement {
-		parts = append(parts, placementCode)
+		scope = NomenclatureSequencePlacement
 	}
-	parts = append(parts, fmt.Sprintf("%0*d", p.SeqDigits, nextSequence))
-	return strings.Join(parts, p.Separator)
+	policy := CanonicalNomenclaturePolicy{Prefix: p.Prefix, Separator: p.Separator,
+		AssetTypeCode: p.AssetTypeCode, ContextMode: NomenclatureContextLegacyInternalArea,
+		SequenceScope: scope, SequenceDigits: p.SeqDigits,
+		IncludeBranch: p.IncludeBranch, IncludePlacement: p.IncludePlacement}
+	code, err := BuildCanonicalNomenclature(policy, CanonicalNomenclatureComponents{
+		Prefix: p.Prefix, Branch: branchCode, Placement: placementCode,
+		PlacementLocationID: placementCode,
+	}, nextSequence)
+	if err != nil {
+		return ""
+	}
+	return code
 }
 
 func ApplyRecommendedNomenclature(ctx context.Context, tdb TenantDB, tenantID string, presets []SystemPreset) (ApplyRecommendationsResult, error) {
