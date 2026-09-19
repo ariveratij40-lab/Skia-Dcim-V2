@@ -20,7 +20,8 @@ func TestRestrictedRuntimeQueryRequiresCanonicalFloorAndZonePrivileges(t *testin
 		"role_name", "superuser", "createdb", "createrole", "bypassrls", "owns_protected_tables",
 		"inherits_privileged_role", "missing_required_grants", "unexpected_table_grants",
 		"unsafe_protected_grants", "missing_preset_reader", "direct_preset_table_grant",
-	}).AddRow("skia_runtime", false, false, false, false, false, false, false, false, false, false, false))
+		"missing_audit_writer", "direct_audit_table_grant",
+	}).AddRow("skia_runtime", false, false, false, false, false, false, false, false, false, false, false, false, false))
 
 	if err := validateRestrictedRuntimeDB(database); err != nil {
 		t.Fatalf("canonical B3B5C runtime contract should pass: %v", err)
@@ -75,6 +76,8 @@ func TestValidateRuntimeRoleState(t *testing.T) {
 		{RoleName: "skia_runtime", UnsafeProtectedGrants: true},
 		{RoleName: "skia_runtime", MissingPresetReader: true},
 		{RoleName: "skia_runtime", DirectPresetTableGrant: true},
+		{RoleName: "skia_runtime", MissingAuditWriter: true},
+		{RoleName: "skia_runtime", DirectAuditTableGrant: true},
 	}
 	for _, state := range cases {
 		if err := validateRuntimeRoleState(state); err == nil {

@@ -26,3 +26,4 @@ migrations/033_canonical_zone_naming_provisioning.sql
 migrations/034_canonical_infrastructure_housing_governance.sql
 migrations/035_remove_legacy_rack_authorities.sql
 migrations/036_nomenclature_v2_foundation.sql
+migrations/037_nomenclature_v2_enforcement_audit_writer.sql

@@ -115,6 +115,12 @@ BEGIN
           OR has_function_privilege('skia_onboarding','public.read_active_system_naming_presets_v2(text[])','EXECUTE')) THEN
     RAISE EXCEPTION 'skia_runtime V2 preset reader EXECUTE contract differs';
   END IF;
+  IF EXISTS (SELECT 1 FROM public.production_bootstrap_migrations WHERE path='migrations/037_nomenclature_v2_enforcement_audit_writer.sql')
+     AND (NOT has_function_privilege('skia_runtime','public.write_nomenclature_onboarding_audit(uuid,uuid,uuid,public.nomenclature_onboarding_audit_action)','EXECUTE')
+          OR has_function_privilege('skia_onboarding','public.write_nomenclature_onboarding_audit(uuid,uuid,uuid,public.nomenclature_onboarding_audit_action)','EXECUTE')
+          OR has_table_privilege('skia_runtime','public.audit_logs','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')) THEN
+    RAISE EXCEPTION 'skia_runtime nomenclature audit writer contract differs';
+  END IF;
   IF EXISTS (
     SELECT 1
     FROM information_schema.routine_privileges
@@ -123,7 +129,8 @@ BEGIN
         'validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit',
         'fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit',
         'fail_import_row_after_rollback','create_inventory_import_staging','stage_inventory_import_row',
-        'update_inventory_import_progress','finalize_inventory_import_staging','assert_canonical_asset_housing')
+        'update_inventory_import_progress','finalize_inventory_import_staging','assert_canonical_asset_housing',
+        'write_nomenclature_onboarding_audit')
   ) THEN
     RAISE EXCEPTION 'skia_runtime has unexpected routine privileges';
   END IF;

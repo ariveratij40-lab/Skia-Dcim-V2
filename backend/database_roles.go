@@ -52,13 +52,15 @@ type runtimeRoleState struct {
 	UnsafeProtectedGrants  bool
 	MissingPresetReader    bool
 	DirectPresetTableGrant bool
+	MissingAuditWriter     bool
+	DirectAuditTableGrant  bool
 }
 
 func validateRuntimeRoleState(state runtimeRoleState) error {
 	if state.RoleName != "skia_runtime" {
 		return fmt.Errorf("runtime database identity must be skia_runtime, got %q", state.RoleName)
 	}
-	if state.Superuser || state.CreateDB || state.CreateRole || state.BypassRLS || state.OwnsProtectedTables || state.InheritsPrivilegedRole || state.MissingRequiredGrants || state.UnexpectedTableGrants || state.UnsafeProtectedGrants || state.MissingPresetReader || state.DirectPresetTableGrant {
+	if state.Superuser || state.CreateDB || state.CreateRole || state.BypassRLS || state.OwnsProtectedTables || state.InheritsPrivilegedRole || state.MissingRequiredGrants || state.UnexpectedTableGrants || state.UnsafeProtectedGrants || state.MissingPresetReader || state.DirectPresetTableGrant || state.MissingAuditWriter || state.DirectAuditTableGrant {
 		return fmt.Errorf("runtime role %q does not satisfy restricted-role requirements", state.RoleName)
 	}
 	return nil
@@ -115,7 +117,9 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 		            WHERE n.nspname='public' AND c.relname IN ('assets','asset_logs','asset_relationships')),
 		       NOT (has_function_privilege(current_user,'public.read_active_system_naming_presets(text[])','EXECUTE')
 		            AND has_function_privilege(current_user,'public.read_active_system_naming_presets_v2(text[])','EXECUTE')),
-		       has_table_privilege(current_user,'public.system_naming_presets','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+		       has_table_privilege(current_user,'public.system_naming_presets','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'),
+		       NOT has_function_privilege(current_user,'public.write_nomenclature_onboarding_audit(uuid,uuid,uuid,public.nomenclature_onboarding_audit_action)','EXECUTE'),
+		       has_table_privilege(current_user,'public.audit_logs','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
 		FROM pg_roles r WHERE r.rolname=current_user`
 	var state runtimeRoleState
 	if err := database.QueryRow(query).Scan(
@@ -131,6 +135,8 @@ func validateRestrictedRuntimeDB(database *sql.DB) error {
 		&state.UnsafeProtectedGrants,
 		&state.MissingPresetReader,
 		&state.DirectPresetTableGrant,
+		&state.MissingAuditWriter,
+		&state.DirectAuditTableGrant,
 	); err != nil {
 		return fmt.Errorf("cannot inspect runtime role: %w", err)
 	}
