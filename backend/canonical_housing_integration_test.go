@@ -26,7 +26,9 @@ func setupCanonicalParentFixture(t *testing.T, q *sql.Tx, tenantID, branchID, us
 		query string
 		args  []interface{}
 	}{
-		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,seq_digits,last_seq,active) VALUES($1,$2,'MDF','MDF','-',false,3,0,true),($3,$2,'IDF','IDF','-',false,3,0,true),($4,$2,'RACK','RK','-',false,3,0,true)`, []interface{}{mdfRule, tenantID, idfRule, rackRule}},
+		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,seq_digits,last_seq,active) VALUES($1,$2,'MDF','MDF','-',false,3,0,true),($3,$2,'IDF','IDF','-',false,3,0,true)`, []interface{}{mdfRule, tenantID, idfRule}},
+		{`INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_distribution,context_mode,sequence_scope,seq_digits,last_seq,active) VALUES($1,$2,'RACK','RK','-',false,true,'CANONICAL_DISTRIBUTION','DISTRIBUTION',3,0,true)`, []interface{}{rackRule, tenantID}},
+		{`INSERT INTO nomenclature_branch_counters(nomenclature_id,tenant_id,branch_id,last_seq) VALUES($1,$2,$3,1),($4,$2,$3,1)`, []interface{}{mdfRule, tenantID, branchID, idfRule}},
 		{`INSERT INTO buildings(id,tenant_id,branch_id,code,name,status) VALUES($1,$2,$3,'A2B-SITE','A2B Site','active')`, []interface{}{siteID, tenantID, branchID}},
 		{`INSERT INTO floors(id,tenant_id,building_id,name,status) VALUES($1,$2,$3,'A2B Floor','active')`, []interface{}{floorID, tenantID, siteID}},
 		{`INSERT INTO zones(id,tenant_id,branch_id,building_id,floor_id,code,name,status) VALUES($1,$2,$3,$4,$5,'A2B-ZONE','A2B Zone','active')`, []interface{}{zoneID, tenantID, branchID, siteID, floorID}},
@@ -38,9 +40,9 @@ func setupCanonicalParentFixture(t *testing.T, q *sql.Tx, tenantID, branchID, us
 		{`INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,location_id,internal_code,nomenclature_id,nomenclature_sequence,name,status,created_by,mount_mode) SELECT $1,$2,$3,id,$4,'IDF-001',$5,1,'Canonical IDF','active',$6,'NONE' FROM asset_types WHERE code='IDF'`, []interface{}{idfAssetID, tenantID, branchID, idfLocationID, idfRule, userID}},
 		{`INSERT INTO mdf_idf(id,asset_id,tenant_id,branch_id,type) VALUES($1,$2,$3,$4,'IDF')`, []interface{}{idfDistributionID, idfAssetID, tenantID, branchID}},
 		{`UPDATE locations SET asset_id=$1,physical_identity='IDF01',physical_identity_governed=true WHERE id=$2`, []interface{}{idfAssetID, idfLocationID}},
+		{`INSERT INTO nomenclature_counters(nomenclature_id,tenant_id,branch_id,placement_id,last_seq) VALUES($1,$2,$3,$4,1)`, []interface{}{rackRule, tenantID, branchID, locationID}},
 		{`INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,location_id,internal_code,nomenclature_id,nomenclature_sequence,name,status,created_by,mount_mode) SELECT $1,$2,$3,id,$4,'RK-001',$5,1,'Canonical Rack','active',$6,'NONE' FROM asset_types WHERE code='RACK'`, []interface{}{rackAssetID, tenantID, branchID, locationID, rackRule, userID}},
 		{`INSERT INTO racks(id,asset_id,tenant_id,branch_id,total_u,mdf_idf_id) VALUES($1,$2,$3,$4,42,$5)`, []interface{}{rackID, rackAssetID, tenantID, branchID, distributionID}},
-		{`INSERT INTO nomenclature_branch_counters(nomenclature_id,tenant_id,branch_id,last_seq) VALUES($1,$2,$3,1)`, []interface{}{rackRule, tenantID, branchID}},
 	}
 	for _, statement := range statements {
 		if _, err := q.Exec(statement.query, statement.args...); err != nil {
