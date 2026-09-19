@@ -70,6 +70,18 @@ SELECT 'REVOKE ALL ON FUNCTION public.read_active_system_naming_presets_v2(TEXT[
 WHERE to_regprocedure('public.read_active_system_naming_presets_v2(text[])') IS NOT NULL \gexec
 SELECT 'GRANT EXECUTE ON FUNCTION public.read_active_system_naming_presets_v2(TEXT[]) TO skia_runtime'
 WHERE to_regprocedure('public.read_active_system_naming_presets_v2(text[])') IS NOT NULL \gexec
+SELECT 'REVOKE ALL ON FUNCTION public.read_system_naming_preset_v2(TEXT,INTEGER) FROM PUBLIC, skia_onboarding'
+WHERE to_regprocedure('public.read_system_naming_preset_v2(text,integer)') IS NOT NULL \gexec
+SELECT 'GRANT EXECUTE ON FUNCTION public.read_system_naming_preset_v2(TEXT,INTEGER) TO skia_runtime'
+WHERE to_regprocedure('public.read_system_naming_preset_v2(text,integer)') IS NOT NULL \gexec
+SELECT 'REVOKE ALL ON FUNCTION public.nomenclature_acceptance_snapshot_is_valid(JSONB) FROM PUBLIC, skia_onboarding'
+WHERE to_regprocedure('public.nomenclature_acceptance_snapshot_is_valid(jsonb)') IS NOT NULL \gexec
+SELECT 'GRANT EXECUTE ON FUNCTION public.nomenclature_acceptance_snapshot_is_valid(JSONB) TO skia_runtime'
+WHERE to_regprocedure('public.nomenclature_acceptance_snapshot_is_valid(jsonb)') IS NOT NULL \gexec
+SELECT 'REVOKE ALL ON FUNCTION public.naming_rule_is_issued(UUID) FROM PUBLIC, skia_onboarding'
+WHERE to_regprocedure('public.naming_rule_is_issued(uuid)') IS NOT NULL \gexec
+SELECT 'GRANT EXECUTE ON FUNCTION public.naming_rule_is_issued(UUID) TO skia_runtime'
+WHERE to_regprocedure('public.naming_rule_is_issued(uuid)') IS NOT NULL \gexec
 SELECT 'REVOKE ALL ON FUNCTION public.write_nomenclature_onboarding_audit(UUID,UUID,UUID,public.nomenclature_onboarding_audit_action) FROM PUBLIC, skia_onboarding'
 WHERE to_regprocedure('public.write_nomenclature_onboarding_audit(uuid,uuid,uuid,public.nomenclature_onboarding_audit_action)') IS NOT NULL \gexec
 SELECT 'GRANT EXECUTE ON FUNCTION public.write_nomenclature_onboarding_audit(UUID,UUID,UUID,public.nomenclature_onboarding_audit_action) TO skia_runtime'

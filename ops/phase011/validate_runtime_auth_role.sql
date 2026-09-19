@@ -121,11 +121,18 @@ BEGIN
           OR has_table_privilege('skia_runtime','public.audit_logs','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')) THEN
     RAISE EXCEPTION 'skia_runtime nomenclature audit writer contract differs';
   END IF;
+  IF EXISTS (SELECT 1 FROM public.production_bootstrap_migrations WHERE path='migrations/038_nomenclature_v2_acceptance_function_contract.sql')
+     AND (NOT has_function_privilege('skia_runtime','public.read_system_naming_preset_v2(text,integer)','EXECUTE')
+          OR NOT has_function_privilege('skia_runtime','public.nomenclature_acceptance_snapshot_is_valid(jsonb)','EXECUTE')
+          OR NOT has_function_privilege('skia_runtime','public.naming_rule_is_issued(uuid)','EXECUTE')
+          OR has_function_privilege('skia_onboarding','public.read_system_naming_preset_v2(text,integer)','EXECUTE')) THEN
+    RAISE EXCEPTION 'skia_runtime exact V2 preset reader EXECUTE contract differs';
+  END IF;
   IF EXISTS (
     SELECT 1
     FROM information_schema.routine_privileges
     WHERE grantee='skia_runtime' AND specific_schema='public'
-      AND routine_name NOT IN ('assets_count_in_location_all_branches','read_active_system_naming_presets','read_active_system_naming_presets_v2',
+      AND routine_name NOT IN ('assets_count_in_location_all_branches','read_active_system_naming_presets','read_active_system_naming_presets_v2','read_system_naming_preset_v2','nomenclature_acceptance_snapshot_is_valid','naming_rule_is_issued',
         'validate_import_row_for_commit','claim_import_row_for_commit','complete_import_row_commit',
         'fail_import_row_commit','recompute_inventory_import_state','list_import_rows_for_commit',
         'fail_import_row_after_rollback','create_inventory_import_staging','stage_inventory_import_row',

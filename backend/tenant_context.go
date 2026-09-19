@@ -28,6 +28,39 @@ func BeginTenantTx(ctx context.Context, database *sql.DB, tenantID, branchID str
 	return tx, nil
 }
 
+// BeginAuthenticatedTenantTx adds the authenticated actor to the same
+// transaction-local namespace used by tenant RLS. Direct BeginTenantTx callers
+// deliberately remain actor-less; only authenticated request transactions may
+// acquire audit authority.
+func BeginAuthenticatedTenantTx(ctx context.Context, database *sql.DB, tenantID, branchID, userID string) (*sql.Tx, error) {
+	if userID == "" {
+		return nil, errors.New("authenticated actor context is required")
+	}
+	tx, err := BeginTenantTx(ctx, database, tenantID, branchID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.user_id', $1, true)`, userID); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
+func beginAuthenticatedTenantTxWithScope(ctx context.Context, database *sql.DB, tenantID, branchID, userID string, scopeAll bool) (*sql.Tx, error) {
+	tx, err := BeginAuthenticatedTenantTx(ctx, database, tenantID, branchID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if scopeAll {
+		if _, err = tx.ExecContext(ctx, `SELECT set_config('app.branch_scope_all', 'true', true)`); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+	}
+	return tx, nil
+}
+
 // BeginTenantTxWithScope es como BeginTenantTx, pero además puede setear
 // app.branch_scope_all='true' para representar "todas las sucursales del
 // tenant" ante políticas RLS que lo soporten explícitamente (ver

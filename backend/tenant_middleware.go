@@ -53,7 +53,7 @@ func RequireTenantTx(database *sql.DB, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		tx, err := BeginTenantTx(r.Context(), database, sessCtx.TenantID, sessCtx.BranchID)
+		tx, err := BeginAuthenticatedTenantTx(r.Context(), database, sessCtx.TenantID, sessCtx.BranchID, sessCtx.UserID)
 		if err != nil {
 			log.Printf("RequireTenantTx: no se pudo abrir transacción con contexto de tenant (tenant=%s): %v", sessCtx.TenantID, err)
 			jsonErr(w, "Internal error", http.StatusInternalServerError)

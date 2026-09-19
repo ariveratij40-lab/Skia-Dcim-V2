@@ -94,7 +94,7 @@ metadata="$(q skia_prod "SELECT p.prosecdef||'|'||r.rolname||'|'||array_to_strin
 
 # Existing post-035 database upgrade: preserve legacy rules and every counter.
 docker exec "$container" createdb -U postgres -O skia_migrator skia_upgrade
-docker exec "$container" sh -c "cp -a /repo /repo-pre036 && sed -i '/03[67]_.*\.sql/d' /repo-pre036/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "cp -a /repo /repo-pre036 && sed -i '/03[678]_.*\.sql/d' /repo-pre036/ops/phase010/bootstrap.manifest"
 bootstrap skia_upgrade /repo-pre036
 docker exec -i "$container" psql -X -U postgres -d skia_upgrade -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
 INSERT INTO tenants(id,name) VALUES('f2000000-0000-4000-8000-000000000001','Upgrade tenant');
@@ -125,5 +125,5 @@ set -e
 
 ledger="$(q skia_prod 'SELECT count(*) FROM production_bootstrap_migrations')"
 schema_hash="$(docker exec "$container" pg_dump -U skia_migrator -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | sha256sum | awk '{print $1}')"
-[[ "$ledger" == 29 ]]
+[[ "$ledger" == 30 ]]
 printf 'POSTGRES_VERSION=16.14\nMIGRATION_036_TESTS=PASS\nFRESH_BOOTSTRAP=PASS\nSECOND_BOOTSTRAP=PASS\nEXISTING_DB_UPGRADE=PASS\nMIGRATION_ROLLBACK=PASS\nPROVENANCE=PASS\nEXACT_PRESET_FK=PASS\nV1_READER_GUARD=PASS\nV2_READER=PASS\nSECURITY=PASS\nSEQUENCE_PRESERVATION=PASS\nPRESET_IMMUTABILITY=PASS\nPRODUCTION_PRESET_SEED_COUNT=0\nLEDGER_COUNT=%s\nSCHEMA_HASH=%s\n' "$ledger" "$schema_hash"
