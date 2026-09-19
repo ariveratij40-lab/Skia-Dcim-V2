@@ -55,7 +55,7 @@ INSERT INTO naming_rules(
 VALUES(
  'f1300000-0000-4000-8000-000000000001','f1000000-0000-4000-8000-000000000001','MDF','MDF','-',true,true,'CANONICAL_ZONE',
  'BRANCH',3,0,true,'PRESET','f1200000-0000-4000-8000-000000000001',2,
- 'f1100000-0000-4000-8000-000000000001',now(),'{"user_id":"f1100000-0000-4000-8000-000000000001","email":"actor@example.invalid"}',false);
+ 'f1100000-0000-4000-8000-000000000001',now(),'{"schema_version":1,"user_id":"f1100000-0000-4000-8000-000000000001","tenant_id":"f1000000-0000-4000-8000-000000000001","role":"admin","email":"actor@example.invalid","name":"Actor"}',false);
 
 INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,active,source_type)
 VALUES('f1300000-0000-4000-8000-000000000002','f1000000-0000-4000-8000-000000000001','SERVER','SRV',false,'CUSTOM');
@@ -63,7 +63,7 @@ INSERT INTO naming_rules(
  id,tenant_id,asset_type_code,prefix,include_zone,context_mode,sequence_scope,active,
  source_type,source_preset_id,source_preset_version,accepted_at,accepted_by_snapshot,customized_after_acceptance)
 VALUES('f1300000-0000-4000-8000-000000000003','f1000000-0000-4000-8000-000000000001','IDF','IDF',true,'CANONICAL_ZONE','BRANCH',false,
- 'DERIVED_FROM_PRESET','f1200000-0000-4000-8000-000000000002',2,now(),'{"user_id":"deleted-actor"}',true);
+ 'DERIVED_FROM_PRESET','f1200000-0000-4000-8000-000000000002',2,now(),'{"schema_version":1,"user_id":"f1100000-0000-4000-8000-000000000099","tenant_id":"f1000000-0000-4000-8000-000000000001","role":"admin","email":"deleted@example.invalid","name":"Deleted actor"}',true);
 INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,include_distribution,context_mode,sequence_scope,active,source_type)
 VALUES('f1300000-0000-4000-8000-000000000004','f1000000-0000-4000-8000-000000000001','RACK','RK',true,'CANONICAL_DISTRIBUTION','DISTRIBUTION',false,'CUSTOM');
 INSERT INTO naming_rules(id,tenant_id,asset_type_code,prefix,include_housing,context_mode,sequence_scope,active,source_type)
@@ -94,7 +94,7 @@ metadata="$(q skia_prod "SELECT p.prosecdef||'|'||r.rolname||'|'||array_to_strin
 
 # Existing post-035 database upgrade: preserve legacy rules and every counter.
 docker exec "$container" createdb -U postgres -O skia_migrator skia_upgrade
-docker exec "$container" sh -c "cp -a /repo /repo-pre036 && sed -i '/036_nomenclature_v2_foundation.sql/d' /repo-pre036/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "cp -a /repo /repo-pre036 && sed -i '/03[67]_.*\.sql/d' /repo-pre036/ops/phase010/bootstrap.manifest"
 bootstrap skia_upgrade /repo-pre036
 docker exec -i "$container" psql -X -U postgres -d skia_upgrade -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
 INSERT INTO tenants(id,name) VALUES('f2000000-0000-4000-8000-000000000001','Upgrade tenant');
@@ -125,5 +125,5 @@ set -e
 
 ledger="$(q skia_prod 'SELECT count(*) FROM production_bootstrap_migrations')"
 schema_hash="$(docker exec "$container" pg_dump -U skia_migrator -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | sha256sum | awk '{print $1}')"
-[[ "$ledger" == 28 ]]
+[[ "$ledger" == 29 ]]
 printf 'POSTGRES_VERSION=16.14\nMIGRATION_036_TESTS=PASS\nFRESH_BOOTSTRAP=PASS\nSECOND_BOOTSTRAP=PASS\nEXISTING_DB_UPGRADE=PASS\nMIGRATION_ROLLBACK=PASS\nPROVENANCE=PASS\nEXACT_PRESET_FK=PASS\nV1_READER_GUARD=PASS\nV2_READER=PASS\nSECURITY=PASS\nSEQUENCE_PRESERVATION=PASS\nPRESET_IMMUTABILITY=PASS\nPRODUCTION_PRESET_SEED_COUNT=0\nLEDGER_COUNT=%s\nSCHEMA_HASH=%s\n' "$ledger" "$schema_hash"
