@@ -126,15 +126,17 @@ BEGIN
     RAISE EXCEPTION 'invalid placement policy accepted';
   EXCEPTION WHEN check_violation THEN NULL; END;
 
-  INSERT INTO system_naming_presets(asset_type_code,preset_version,prefix) VALUES('SERVER',1,'SRV');
+  -- BACKBONE is outside the ratified initial V2 catalog. Keep this rollback-only
+  -- uniqueness fixture independent of the published SERVER recommendation.
+  INSERT INTO system_naming_presets(asset_type_code,preset_version,prefix) VALUES('BACKBONE',1,'BB');
   BEGIN
-    INSERT INTO system_naming_presets(asset_type_code,preset_version,prefix) VALUES('SERVER',2,'SERVER');
+    INSERT INTO system_naming_presets(asset_type_code,preset_version,prefix) VALUES('BACKBONE',2,'BB');
     RAISE EXCEPTION 'second active preset accepted';
   EXCEPTION WHEN unique_violation THEN NULL; END;
-  UPDATE system_naming_presets SET active=false WHERE asset_type_code='SERVER' AND preset_version=1;
-  INSERT INTO system_naming_presets(asset_type_code,preset_version,prefix) VALUES('SERVER',2,'SERVER');
+  UPDATE system_naming_presets SET active=false WHERE asset_type_code='BACKBONE' AND preset_version=1;
+  INSERT INTO system_naming_presets(asset_type_code,preset_version,prefix) VALUES('BACKBONE',2,'BB');
   BEGIN
-    INSERT INTO system_naming_presets(asset_type_code,preset_version,prefix,active) VALUES('SERVER',2,'X',false);
+    INSERT INTO system_naming_presets(asset_type_code,preset_version,prefix,active) VALUES('BACKBONE',2,'X',false);
     RAISE EXCEPTION 'duplicate preset version accepted';
   EXCEPTION WHEN unique_violation THEN NULL; END;
 END $$;

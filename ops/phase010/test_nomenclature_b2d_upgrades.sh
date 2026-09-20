@@ -9,6 +9,8 @@ for _ in {1..40}; do docker exec "$container" pg_isready -U postgres >/dev/null 
 docker exec "$container" mkdir /repo
 docker cp "$repo_root/ops" "$container:/repo/ops"
 docker cp "$repo_root/migrations" "$container:/repo/migrations"
+# Keep the historical B2d upgrade target at 039; B3a independently tests 040.
+docker exec "$container" sed -i '/040_nomenclature_v2_initial_preset_catalog.sql/d' /repo/ops/phase010/bootstrap.manifest
 q(){ docker exec "$container" psql -X -U postgres -d "$db_name" -Atqc "$1"; }
 provision(){ docker exec "$container" psql -X -U postgres -d "$db_name" -v ON_ERROR_STOP=1 -v migrator_password="$password" -v runtime_password="$password" -v onboarding_password="$password" -f /repo/ops/phase011/provision_database_roles.sql >/dev/null; }
 bootstrap(){ docker exec -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/$db_name" "$container" bash "$1/ops/phase010/run_clean_bootstrap.sh" >/dev/null; }

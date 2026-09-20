@@ -50,7 +50,7 @@ prepare_pre035() {
   provision "$container"
   docker cp "$root/source/." "$container:/repo"
   docker exec "$container" sh -ceu \
-    "cp -a /repo /repo-pre035; sed -i -e '/035_remove_legacy_rack_authorities.sql/d' -e '/036_nomenclature_v2_foundation.sql/d' -e '/037_nomenclature_v2_enforcement_audit_writer.sql/d' -e '/038_nomenclature_v2_acceptance_function_contract.sql/d' -e '/039_nomenclature_operation_binding.sql/d' /repo-pre035/ops/phase010/bootstrap.manifest"
+    "cp -a /repo /repo-pre035; sed -i -e '/035_remove_legacy_rack_authorities.sql/d' -e '/036_nomenclature_v2_foundation.sql/d' -e '/037_nomenclature_v2_enforcement_audit_writer.sql/d' -e '/038_nomenclature_v2_acceptance_function_contract.sql/d' -e '/039_nomenclature_operation_binding.sql/d' -e '/040_nomenclature_v2_initial_preset_catalog.sql/d' /repo-pre035/ops/phase010/bootstrap.manifest"
   docker exec -e PHASE010_DATABASE_URL="postgresql://skia_migrator:$password@localhost/skia_prod" \
     "$container" /repo-pre035/ops/phase010/run_clean_bootstrap.sh >/dev/null
 }
@@ -144,7 +144,7 @@ prepare_pre035 "$clean_container" "$clean_root"
 activate_rls "$clean_container"
 clean_output="$(run_contract "$clean_container" "$clean_root" clean)"
 grep -q '^EMPTY_DATABASE_GUARD=APPROVED$' <<<"$clean_output"
-grep -q '^LEDGER_COUNT=31$' <<<"$clean_output"
+grep -q '^LEDGER_COUNT=32$' <<<"$clean_output"
 grep -q '^SCHEMA_HASH=e5126596354a61f5d88814ac009cac9567dc60b2f8fefe7345b8f6ce6d69e8a6$' <<<"$clean_output"
 
 new_scenario upgrade
@@ -190,7 +190,7 @@ require_equal "$(docker exec "$fail_container" psql -X -U skia_bootstrap -d skia
 require_equal "$(docker exec "$fail_container" psql -X -U skia_bootstrap -d skia_prod -Atqc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name IN ('switches','patch_panels','pdus') AND column_name='rack_id'")" 3 'fail-closed legacy schema preservation'
 rm -f /tmp/skia-r1c-fail-output-$$
 
-printf 'POSTGRES_VERSION=16.14\nCLEAN_BOOTSTRAP=PASS\nCLEAN_LEDGER_COUNT=31\nCLEAN_EMPTY_GUARD=PASS\n'
+printf 'POSTGRES_VERSION=16.14\nCLEAN_BOOTSTRAP=PASS\nCLEAN_LEDGER_COUNT=32\nCLEAN_EMPTY_GUARD=PASS\n'
 printf 'PRE035_FORCE_RLS_UPGRADE=PASS\nPRE035_PRE_COUNTS=%s\nPRE035_RESTRICTED_MIGRATOR_COUNTS=%s\nPRE035_POST_COUNTS=%s\nPRE035_MIGRATION_035_COUNT=1\n' "$upgrade_pre" "$upgrade_migrator_pre" "$upgrade_post"
 printf 'POST035_EXISTING_DATABASE=PASS\nPOST035_PRE_COUNTS=%s\nPOST035_POST_COUNTS=%s\nPOST035_MIGRATION_035_COUNT=1\n' "$upgrade_pre" "$(counts "$upgrade_container")"
 printf 'EXISTING_FINGERPRINT_MATCH=PASS\nIDEMPOTENCY_WITH_DATA=PASS\nFAIL_CLOSED_WITH_DATA=PASS\nFAIL_CLOSED_RUNNER_EXIT=%s\nNEW_REGRESSIONS=NONE\n' "$fail_rc"
