@@ -335,6 +335,32 @@ func TestNomenclatureAcceptanceMatrixPostgreSQL16(t *testing.T) {
 	}
 	defer admin.Exec(`DELETE FROM system_naming_presets WHERE id IN($1,$2)`, p1, p2)
 	fixture := func(t *testing.T) *acceptanceFixture { return newAcceptanceFixture(t, admin, runtime, p1, p2) }
+	t.Run("hf1_customization_retry", func(t *testing.T) {
+		assertHF1CustomizationRetry(t, fixture(t))
+	})
+	t.Run("hf1_concurrent_same_operation", func(t *testing.T) {
+		f := fixture(t)
+		f.accept(101)
+		op := uuid.NewString()
+		invoke := func() (NomenclatureDomainResult, error) { return f.invoke(f.actor, true, 0, op) }
+		results := f.race(invoke, invoke)
+		if results[0] != results[1] || f.audit("NOMENCLATURE_RULE_CUSTOMIZED") != 1 || f.count(`SELECT count(*) FROM naming_rules WHERE tenant_id=$1 AND asset_type_code='SERVER'`, f.tenant) != 2 {
+			t.Fatal("same-operation race created multiple results")
+		}
+		f.lineage()
+	})
+	for _, tc := range []struct {
+		name     string
+		segments [4]string
+	}{
+		{"none", [4]string{}},
+		{"one", [4]string{"E1", "Edificio", "", ""}},
+		{"two", [4]string{"", "", "P02", "Piso"}},
+		{"both", [4]string{"E1", "Edificio", "P02", "Piso"}},
+		{"optional_empty_label", [4]string{"E1", "", "P02", ""}},
+	} {
+		t.Run("hf1_labels_"+tc.name, func(t *testing.T) { assertHF1LabelsAndConflicts(t, fixture(t), tc.segments) })
+	}
 	t.Run("legacy_preserved", func(t *testing.T) {
 		f := fixture(t)
 		id := uuid.NewString()

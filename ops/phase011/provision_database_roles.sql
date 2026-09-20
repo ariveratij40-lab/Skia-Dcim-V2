@@ -87,8 +87,14 @@ WHERE to_regprocedure('public.write_nomenclature_onboarding_audit(uuid,uuid,uuid
 SELECT 'GRANT EXECUTE ON FUNCTION public.write_nomenclature_onboarding_audit(UUID,UUID,UUID,public.nomenclature_onboarding_audit_action) TO skia_runtime'
 WHERE to_regprocedure('public.write_nomenclature_onboarding_audit(uuid,uuid,uuid,public.nomenclature_onboarding_audit_action)') IS NOT NULL \gexec
 
--- The role artifact runs once before and once after clean bootstrap. Apply table
--- grants only after every required identity table exists.
+-- HF1 operation binding has no direct table or sequence grants.
+SELECT 'REVOKE ALL ON FUNCTION public.read_nomenclature_customization_operation(uuid,text), public.write_nomenclature_onboarding_audit(uuid,uuid,uuid,public.nomenclature_onboarding_audit_action,text) FROM PUBLIC, skia_onboarding'
+WHERE to_regprocedure('public.read_nomenclature_customization_operation(uuid,text)') IS NOT NULL \gexec
+SELECT 'GRANT EXECUTE ON FUNCTION public.read_nomenclature_customization_operation(uuid,text), public.write_nomenclature_onboarding_audit(uuid,uuid,uuid,public.nomenclature_onboarding_audit_action,text) TO skia_runtime'
+WHERE to_regprocedure('public.read_nomenclature_customization_operation(uuid,text)') IS NOT NULL \gexec
+
+-- The role artifact runs before/after bootstrap. Apply onboarding table grants
+-- only after every required identity table exists.
 SELECT 'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM skia_onboarding'
 WHERE (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
        WHERE n.nspname='public' AND c.relkind IN ('r','p')

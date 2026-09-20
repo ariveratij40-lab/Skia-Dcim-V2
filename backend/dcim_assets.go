@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 // ==========================================
@@ -2025,12 +2024,6 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"internal error: missing tenant database"}`, http.StatusInternalServerError)
 		return
 	}
-	path := r.URL.Path
-	ruleID := ""
-	pfx := "/api/dcim/catalogs/naming-rules/"
-	if len(path) > len(pfx) {
-		ruleID = path[len(pfx):]
-	}
 	switch r.Method {
 	case http.MethodGet:
 		authErr := requireNamingRuleAdmin(r.Context(), tdb, userID, tenantID)
@@ -2089,147 +2082,10 @@ func (h *DCIMHandler) HandleNamingRules(w http.ResponseWriter, r *http.Request) 
 			catalog = append(catalog, item)
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"asset_types": catalog, "naming_rules": list, "can_manage": canManage})
-	case http.MethodPost:
-		if ruleID != "" {
-			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
-			return
-		}
-		if err := requireNamingRuleAdmin(r.Context(), tdb, userID, tenantID); err != nil {
-			if errors.Is(err, errForbiddenNamingRuleMutation) {
-				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
-			} else {
-				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
-			}
-			return
-		}
-		var body namingRuleMutation
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || validateNamingRuleMutation(body, true) != nil {
-			http.Error(w, `{"error":"invalid_nomenclature"}`, http.StatusUnprocessableEntity)
-			return
-		}
-		if field := unsupportedNomenclatureFeature(body); field != "" {
-			writeUnsupportedNomenclatureFeature(w, field)
-			return
-		}
-		body.AssetTypeCode = strings.ToUpper(strings.TrimSpace(body.AssetTypeCode))
-		var exists bool
-		if err := tdb.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM asset_types WHERE code=$1)`, body.AssetTypeCode).Scan(&exists); err != nil {
-			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
-			return
-		}
-		if !exists {
-			http.Error(w, `{"error":"invalid_asset_type"}`, http.StatusUnprocessableEntity)
-			return
-		}
-		id := uuid.NewString()
-		includePlacement := map[string]bool{"SWITCH": true, "RACK": true, "PATCH_PANEL": true, "UPS": true, "PDU": true, "NODE": true}[body.AssetTypeCode]
-		includePhysical := body.AssetTypeCode == "MDF" || body.AssetTypeCode == "IDF"
-		includeBranch, includeLocation, resetPerLocation, active := true, false, false, true
-		seqDigits := 4
-		if body.IncludeBranch != nil {
-			includeBranch = *body.IncludeBranch
-		}
-		if body.IncludeLocation != nil {
-			includeLocation = *body.IncludeLocation
-		}
-		if body.ResetPerLocation != nil {
-			resetPerLocation = *body.ResetPerLocation
-		}
-		if body.Active != nil {
-			active = *body.Active
-		}
-		if body.SeqDigits != nil {
-			seqDigits = *body.SeqDigits
-		}
-		_, err := tdb.ExecContext(r.Context(), `INSERT INTO naming_rules
-			(id,tenant_id,asset_type_code,prefix,separator,include_branch,include_location,seq_digits,
-			 reset_per_location,last_seq,active,description,custom_segment_1,custom_segment_2,
-			 custom_segment_1_label,custom_segment_2_label,include_placement,include_site,include_internal_area)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,NULLIF($12,''),NULLIF($13,''),$14,$15,$16,$17,$17)`,
-			id, tenantID, body.AssetTypeCode, strings.ToUpper(strings.TrimSpace(body.Prefix)), body.Separator,
-			includeBranch, includeLocation, seqDigits, resetPerLocation, active, body.Description,
-			body.CustomSegment1, body.CustomSegment2, body.CustomSegment1Label, body.CustomSegment2Label, includePlacement, includePhysical)
-		if err != nil {
-			var pqErr *pq.Error
-			if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-				http.Error(w, `{"error":"nomenclature_already_exists"}`, http.StatusConflict)
-			} else {
-				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
-			}
-			return
-		}
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "asset_type_code": body.AssetTypeCode, "last_seq": 0, "status": "created"})
-	case http.MethodPut:
-		if ruleID == "" {
-			http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
-			return
-		}
-		if err := requireNamingRuleAdmin(r.Context(), tdb, userID, tenantID); err != nil {
-			if errors.Is(err, errForbiddenNamingRuleMutation) {
-				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
-			} else {
-				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
-			}
-			return
-		}
-		b, raw, err := decodeNamingRuleMutation(r)
-		if err != nil || validateNamingRuleMutation(b, false) != nil {
-			http.Error(w, `{"error":"invalid body"}`, http.StatusBadRequest)
-			return
-		}
-		if field := unsupportedNomenclatureFeature(b); field != "" {
-			writeUnsupportedNomenclatureFeature(w, field)
-			return
-		}
-		custom1, hasCustom1 := rawField(raw, "custom_segment_1")
-		custom2, hasCustom2 := rawField(raw, "custom_segment_2")
-		label1, hasLabel1 := rawField(raw, "custom_segment_1_label")
-		label2, hasLabel2 := rawField(raw, "custom_segment_2_label")
-		var current namingRuleResponse
-		if err := tdb.QueryRowContext(r.Context(), `SELECT prefix,separator,include_branch,include_location,seq_digits,reset_per_location,last_seq,
-			COALESCE(custom_segment_1,''),COALESCE(custom_segment_2,''),COALESCE(custom_segment_1_label,'Segmento 1'),COALESCE(custom_segment_2_label,'Segmento 2')
-			FROM naming_rules WHERE id=$1 AND tenant_id=$2`, ruleID, tenantID).Scan(&current.Prefix, &current.Separator, &current.IncludeBranch, &current.IncludeLocation, &current.SeqDigits, &current.ResetPerLocation, &current.LastSeq, &current.CustomSegment1, &current.CustomSegment2, &current.CustomSegment1Label, &current.CustomSegment2Label); err != nil {
-			if err == sql.ErrNoRows {
-				http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
-			} else {
-				http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
-			}
-			return
-		}
-		structuralChange := (b.Prefix != "" && b.Prefix != current.Prefix) || (b.Separator != "" && b.Separator != current.Separator) ||
-			(b.IncludeBranch != nil && *b.IncludeBranch != current.IncludeBranch) || (b.IncludeLocation != nil && *b.IncludeLocation != current.IncludeLocation) ||
-			(b.SeqDigits != nil && *b.SeqDigits != current.SeqDigits) || (b.ResetPerLocation != nil && *b.ResetPerLocation != current.ResetPerLocation) ||
-			(hasCustom1 && custom1 != current.CustomSegment1) || (hasCustom2 && custom2 != current.CustomSegment2) ||
-			(hasLabel1 && label1 != current.CustomSegment1Label) || (hasLabel2 && label2 != current.CustomSegment2Label)
-		if current.LastSeq > 0 && structuralChange {
-			http.Error(w, `{"error":"normative_version_required"}`, http.StatusConflict)
-			return
-		}
-		_, err = tdb.ExecContext(r.Context(),
-			`UPDATE naming_rules
-			 SET prefix=CASE WHEN $1!='' THEN $1 ELSE prefix END,
-			     separator=CASE WHEN $2!='' THEN $2 ELSE separator END,
-			     include_branch=COALESCE($3,include_branch),
-			     include_location=COALESCE($4,include_location),
-			     seq_digits=COALESCE($5,seq_digits),
-			     reset_per_location=COALESCE($6,reset_per_location),
-			     custom_segment_1=CASE WHEN $7 THEN NULLIF($8,'') ELSE custom_segment_1 END,
-			     custom_segment_2=CASE WHEN $9 THEN NULLIF($10,'') ELSE custom_segment_2 END,
-			     custom_segment_1_label=CASE WHEN $11 THEN $12 ELSE custom_segment_1_label END,
-			     custom_segment_2_label=CASE WHEN $13 THEN $14 ELSE custom_segment_2_label END,
-			     active=COALESCE($15,active),
-			     description=COALESCE($16,description),
-			     updated_at=now()
-			 WHERE id=$17 AND tenant_id=$18`,
-			b.Prefix, b.Separator, b.IncludeBranch, b.IncludeLocation, b.SeqDigits, b.ResetPerLocation,
-			hasCustom1, custom1, hasCustom2, custom2, hasLabel1, label1, hasLabel2, label2,
-			b.Active, b.Description, ruleID, tenantID)
-		if err != nil {
-			http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"id": ruleID, "status": "updated"})
+	case http.MethodPost, http.MethodPut:
+		// Legacy payloads do not express operation identity or successor intent.
+		// Keep reads compatible, but never guess a governed mutation command.
+		http.Error(w, `{"error":"canonical_nomenclature_mutation_required"}`, http.StatusConflict)
 	default:
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 	}
