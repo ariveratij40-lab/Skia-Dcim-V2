@@ -32,7 +32,7 @@ docker exec "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 \
   -f /repo/ops/phase011/validate_runtime_auth_role.sql >/dev/null
 
 [[ "$(q skia_prod "SELECT count(*) FROM production_bootstrap_migrations WHERE path='migrations/037_nomenclature_v2_enforcement_audit_writer.sql'")" == 1 ]]
-[[ "$(q skia_prod 'SELECT count(*) FROM production_bootstrap_migrations')" == 30 ]]
+[[ "$(q skia_prod 'SELECT count(*) FROM production_bootstrap_migrations')" == 31 ]]
 [[ "$(q skia_prod 'SELECT count(*) FROM system_naming_presets')" == 0 ]]
 
 docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
@@ -121,7 +121,7 @@ security="$(q skia_prod "SELECT p.prosecdef||'|'||r.rolname||'|'||array_to_strin
 # A forced error after applying 037 proves the whole artifact rolls back.
 docker exec "$container" createdb -U postgres -O skia_migrator skia_rollback
 provision skia_rollback
-docker exec "$container" sh -c "cp -a /repo /repo-pre037 && sed -i -e '/037_nomenclature_v2_enforcement_audit_writer.sql/d' -e '/038_nomenclature_v2_acceptance_function_contract.sql/d' /repo-pre037/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "cp -a /repo /repo-pre037 && sed -i -e '/037_nomenclature_v2_enforcement_audit_writer.sql/d' -e '/038_nomenclature_v2_acceptance_function_contract.sql/d' -e '/039_nomenclature_operation_binding.sql/d' /repo-pre037/ops/phase010/bootstrap.manifest"
 bootstrap skia_rollback /repo-pre037
 set +e
 docker exec "$container" psql -X -U skia_migrator -d skia_rollback -v ON_ERROR_STOP=1 -1 \
@@ -133,11 +133,11 @@ set -e
 [[ "$(q skia_rollback "SELECT count(*) FROM pg_type WHERE typname='nomenclature_onboarding_audit_action'")" == 0 ]]
 
 schema_hash="$(docker exec "$container" pg_dump -U skia_migrator -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | sha256sum | awk '{print $1}')"
-[[ "$schema_hash" == c36963ffc829ec1c20cb1e07c3279d2568ba6b5900f4e3697538c899c59cb4f9 ]]
+[[ "$schema_hash" == e5126596354a61f5d88814ac009cac9567dc60b2f8fefe7345b8f6ce6d69e8a6 ]]
 printf '%s\n' \
   'POSTGRES_VERSION=16.14' 'MIGRATION_037_TESTS=PASS' 'FRESH_BOOTSTRAP=PASS' \
   'SECOND_BOOTSTRAP=PASS' 'MIGRATION_037_ROLLBACK=PASS' 'SNAPSHOT_VALIDATION=PASS' \
   'ISSUED_RULE_IMMUTABILITY=PASS' 'CODE_LENGTH_BOUNDARY=PASS' 'AUDIT_SECURITY=PASS' \
   'AUDIT_ACTOR_AUTHORITY=PASS' 'AUDIT_IDEMPOTENCY=PASS' 'AUDIT_ROLLBACK_ATOMICITY=PASS' \
-  'PRODUCTION_PRESET_SEED_COUNT=0' 'V2_CATALOG_ACTIVE=NO' 'LEDGER_COUNT=30' \
+  'PRODUCTION_PRESET_SEED_COUNT=0' 'V2_CATALOG_ACTIVE=NO' 'LEDGER_COUNT=31' \
   "SCHEMA_HASH=$schema_hash"

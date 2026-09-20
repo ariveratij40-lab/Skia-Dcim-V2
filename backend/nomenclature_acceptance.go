@@ -220,6 +220,10 @@ func AcceptNomenclaturePreset(ctx context.Context, tdb TenantDB, tenantID, actor
 	if err != nil {
 		return zero, err
 	}
+	// Match the customization lock order: operation before tenant/type lineage.
+	if _, err = tdb.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('nomenclature-operation:'||$1::uuid::text||':'||$2::uuid::text,0))`, tenantID, in.OperationID); err != nil {
+		return zero, ErrNomenclatureDB
+	}
 	if err = lockNomenclatureAuthority(ctx, tdb, tenantID, code); err != nil {
 		return zero, err
 	}
@@ -314,12 +318,33 @@ func CustomizeNomenclatureRule(ctx context.Context, tdb TenantDB, tenantID, acto
 		return zero, err
 	}
 	in.Policy.AssetTypeCode = code
+	in.Policy.Prefix = strings.ToUpper(strings.TrimSpace(in.Policy.Prefix))
+	in.Policy.CustomSegment1 = strings.ToUpper(strings.TrimSpace(in.Policy.CustomSegment1))
+	in.Policy.CustomSegment2 = strings.ToUpper(strings.TrimSpace(in.Policy.CustomSegment2))
+	in.Policy.LastSequence = 0 // Counter state is never request identity.
 	if validateCanonicalNomenclaturePolicy(in.Policy) != nil {
 		return zero, ErrNomenclatureInvalidPreset
 	}
 	actor, err := resolveNomenclatureActor(ctx, tdb, tenantID, actorID)
 	if err != nil {
 		return zero, err
+	}
+	fingerprint, err := customizationFingerprint(in.Policy)
+	if err != nil {
+		return zero, err
+	}
+	var replay NomenclatureDomainResult
+	var hasParent bool
+	err = tdb.QueryRowContext(ctx, `SELECT rule_id,rule_version,audit_event_id,has_predecessor FROM public.read_nomenclature_customization_operation($1::uuid,$2)`, in.OperationID, fingerprint).Scan(&replay.RuleID, &replay.RuleVersion, &replay.AuditEventID, &hasParent)
+	if err == nil {
+		replay.Status, replay.State = NomenclatureSuccessCreated, AcceptanceCreatable
+		if hasParent {
+			replay.Status = NomenclatureSuccessSuccessor
+		}
+		return replay, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return zero, fmt.Errorf("%w: operation binding: %v", ErrNomenclatureConflict, err)
 	}
 	if err = lockNomenclatureAuthority(ctx, tdb, tenantID, code); err != nil {
 		return zero, err
@@ -342,6 +367,9 @@ func CustomizeNomenclatureRule(ctx context.Context, tdb TenantDB, tenantID, acto
 	var presetVersion *int
 	source := "CUSTOM"
 	var snapshotActor *nomenclatureActor
+	if in.Policy.RuleID != "" && (active == nil || active.ID != in.Policy.RuleID) {
+		return zero, ErrNomenclatureConcurrentStateChange
+	}
 	if active != nil {
 		if active.Issued {
 			return NomenclatureDomainResult{
@@ -364,11 +392,12 @@ func CustomizeNomenclatureRule(ctx context.Context, tdb TenantDB, tenantID, acto
 			return zero, fmt.Errorf("%w: deactivate predecessor", ErrNomenclatureDB)
 		}
 	}
-	id, err := insertNomenclatureRule(ctx, tdb, tenantID, version, parent, in.Policy, [2]string{}, source, presetID, presetVersion, snapshotActor, source == "DERIVED_FROM_PRESET")
+	id, err := insertNomenclatureRule(ctx, tdb, tenantID, version, parent, in.Policy, [2]string{in.Policy.CustomSegment1Label, in.Policy.CustomSegment2Label}, source, presetID, presetVersion, snapshotActor, source == "DERIVED_FROM_PRESET")
 	if err != nil {
 		return zero, err
 	}
-	audit, err := writeNomenclatureAudit(ctx, tdb, in.OperationID, id, presetID, "NOMENCLATURE_RULE_CUSTOMIZED")
+	var audit string
+	err = tdb.QueryRowContext(ctx, `SELECT public.write_nomenclature_onboarding_audit($1::uuid,$2::uuid,$3::uuid,'NOMENCLATURE_RULE_CUSTOMIZED'::public.nomenclature_onboarding_audit_action,$4)`, in.OperationID, id, presetID, fingerprint).Scan(&audit)
 	if err != nil {
 		return zero, err
 	}

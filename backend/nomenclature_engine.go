@@ -43,6 +43,7 @@ type CanonicalNomenclaturePolicy struct {
 	IncludeDistribution, IncludeHousing      bool
 	IncludePlacement, IncludeInternalArea    bool
 	CustomSegment1, CustomSegment2           string
+	CustomSegment1Label, CustomSegment2Label string
 	LastSequence                             int
 }
 

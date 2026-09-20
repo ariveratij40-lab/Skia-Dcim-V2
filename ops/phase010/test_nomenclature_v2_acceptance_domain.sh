@@ -30,7 +30,7 @@ docker exec -i "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 
   -f /repo/ops/phase011/activate_clean_production_rls.sql >/dev/null
 docker exec "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 \
   -f /repo/ops/phase011/validate_runtime_auth_role.sql >/dev/null
-[[ "$(q skia_prod 'SELECT count(*) FROM production_bootstrap_migrations')" == 30 ]]
+[[ "$(q skia_prod 'SELECT count(*) FROM production_bootstrap_migrations')" == 31 ]]
 [[ "$(q skia_prod "SELECT count(*) FROM production_bootstrap_migrations WHERE path='migrations/038_nomenclature_v2_acceptance_function_contract.sql'")" == 1 ]]
 [[ "$(q skia_prod 'SELECT count(*) FROM system_naming_presets')" == 0 ]]
 
@@ -50,7 +50,7 @@ expect_fail skia_onboarding skia_prod "SELECT * FROM read_system_naming_preset_v
 # A deliberately failed transaction leaves neither Migration 038 function nor ledger row.
 docker exec "$container" createdb -U postgres -O skia_migrator rollback_038
 provision rollback_038
-docker exec "$container" sh -c "grep -v '038_nomenclature_v2_acceptance_function_contract.sql' /repo/ops/phase010/bootstrap.manifest >/tmp/pre038.manifest && cp /repo/ops/phase010/bootstrap.manifest /tmp/full.manifest && cp /tmp/pre038.manifest /repo/ops/phase010/bootstrap.manifest"
+docker exec "$container" sh -c "grep -v -e '038_nomenclature_v2_acceptance_function_contract.sql' -e '039_nomenclature_operation_binding.sql' /repo/ops/phase010/bootstrap.manifest >/tmp/pre038.manifest && cp /repo/ops/phase010/bootstrap.manifest /tmp/full.manifest && cp /tmp/pre038.manifest /repo/ops/phase010/bootstrap.manifest"
 bootstrap rollback_038 /repo
 docker exec "$container" cp /tmp/full.manifest /repo/ops/phase010/bootstrap.manifest
 if docker exec "$container" psql -X -U skia_migrator -d rollback_038 -v ON_ERROR_STOP=1 -1 -f /repo/migrations/038_nomenclature_v2_acceptance_function_contract.sql -c 'SELECT 1/0' >/dev/null 2>&1; then exit 1; fi
@@ -62,5 +62,5 @@ if docker exec "$container" psql -X -U skia_migrator -d rollback_038 -v ON_ERROR
   GOCACHE=/tmp/skia-b2c-go-cache go test ./... -v -run 'TestNomenclatureAcceptance.*PostgreSQL16' -count=1)
 
 schema_hash="$(docker exec -e PGPASSWORD="$password" "$container" pg_dump -U skia_migrator -d skia_prod --schema-only --no-owner --no-privileges | sed '/^\\restrict /d;/^\\unrestrict /d' | sha256sum | awk '{print $1}')"
-[[ "$schema_hash" == c36963ffc829ec1c20cb1e07c3279d2568ba6b5900f4e3697538c899c59cb4f9 ]]
-printf 'POSTGRES_VERSION=16.14\nMIGRATION_038_TESTS=PASS\nFRESH_BOOTSTRAP=PASS\nSECOND_BOOTSTRAP=PASS\nMIGRATION_038_TRANSACTIONALITY=PASS\nEXACT_READER=PASS\nRUNTIME_SECURITY=PASS\nACCEPTANCE_CONCURRENCY=PASS\nPRODUCTION_PRESET_SEED_COUNT=0\nLEDGER_COUNT=30\nSCHEMA_HASH=%s\n' "$schema_hash"
+[[ "$schema_hash" == e5126596354a61f5d88814ac009cac9567dc60b2f8fefe7345b8f6ce6d69e8a6 ]]
+printf 'POSTGRES_VERSION=16.14\nMIGRATION_038_TESTS=PASS\nFRESH_BOOTSTRAP=PASS\nSECOND_BOOTSTRAP=PASS\nMIGRATION_038_TRANSACTIONALITY=PASS\nEXACT_READER=PASS\nRUNTIME_SECURITY=PASS\nACCEPTANCE_CONCURRENCY=PASS\nPRODUCTION_PRESET_SEED_COUNT=0\nLEDGER_COUNT=31\nSCHEMA_HASH=%s\n' "$schema_hash"
