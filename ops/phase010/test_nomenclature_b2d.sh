@@ -8,6 +8,8 @@ docker run --name "$container" -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=s
 for _ in {1..40}; do docker exec "$container" pg_isready -U postgres -d skia_prod >/dev/null 2>&1 && break; sleep 1; done
 port="$(docker port "$container" 5432/tcp | awk -F: '{print $NF}')"
 docker cp "$repo_root/." "$container:/repo"
+# Historical B2d owns its preset fixtures; B3a tests actual 040 publication.
+docker exec "$container" sed -i '/040_nomenclature_v2_initial_preset_catalog.sql/d' /repo/ops/phase010/bootstrap.manifest
 provision(){ docker exec "$container" psql -X -U postgres -d skia_prod -v ON_ERROR_STOP=1 -v migrator_password="$password" -v runtime_password="$password" -v onboarding_password="$password" -f /repo/ops/phase011/provision_database_roles.sql >/dev/null; }
 provision
 for pass in 1 2; do

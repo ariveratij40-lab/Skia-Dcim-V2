@@ -10,6 +10,9 @@ trap cleanup EXIT
 docker run --name "$container" -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=skia_prod -d postgres:16.14-alpine >/dev/null
 for _ in {1..40}; do docker exec "$container" pg_isready -U postgres -d skia_prod >/dev/null 2>&1 && break; sleep 1; done
 docker cp "$repo_root/." "$container:/repo"
+# Historical contract tests arrange their own presets. Pin the disposable
+# bootstrap at 039; test_nomenclature_v2_initial_preset_catalog.sh covers 040.
+docker exec "$container" sed -i '/040_nomenclature_v2_initial_preset_catalog.sql/d' /repo/ops/phase010/bootstrap.manifest
 
 provision(){ docker exec -i "$container" psql -X -U postgres -d "$1" -v ON_ERROR_STOP=1 \
   -v migrator_password="$password" -v runtime_password="$password" -v onboarding_password="$password" \

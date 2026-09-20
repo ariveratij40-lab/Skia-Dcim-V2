@@ -17,6 +17,11 @@ import (
 // Ordered operational gate. Stop at the first product failure: later presets
 // and stress must not be reported as passing after a failed basic issuance.
 func TestB2dOrderedPresetOperationalMatrix(t *testing.T) {
+	b2dPresetOperationalMatrix(t, false, nil)
+}
+
+// B3a reuses the certified operational topology but forbids fixture publication.
+func b2dPresetOperationalMatrix(t *testing.T, requireSeed bool, after func(*acceptanceFixture), afterType ...func(*acceptanceFixture, string)) {
 	adminURL, runtimeURL := os.Getenv("NOMENCLATURE_ACCEPTANCE_ADMIN_DATABASE_URL"), os.Getenv("NOMENCLATURE_ACCEPTANCE_RUNTIME_DATABASE_URL")
 	if adminURL == "" || runtimeURL == "" {
 		t.Skip("disposable PostgreSQL required")
@@ -52,6 +57,9 @@ func TestB2dOrderedPresetOperationalMatrix(t *testing.T) {
 		var preset string
 		err = admin.QueryRow(`SELECT id FROM system_naming_presets WHERE asset_type_code=$1 AND preset_version=1`, p.code).Scan(&preset)
 		if err == sql.ErrNoRows {
+			if requireSeed {
+				t.Fatalf("B3a requires migration-seeded preset %s", p.code)
+			}
 			preset = uuid.NewString()
 			f.exec(`INSERT INTO system_naming_presets(id,preset_code,asset_type_code,preset_version,prefix,separator,include_branch,include_zone,include_distribution,include_housing,context_mode,sequence_scope,seq_digits,active) VALUES($1,$2,$3,1,$4,'-',true,$5,$6,$7,$8,$9,$10,true)`, preset, p.code+"_V1", p.code, p.prefix, p.mode == "CANONICAL_ZONE", p.mode == "CANONICAL_DISTRIBUTION", p.mode == "CANONICAL_HOUSING", p.mode, p.scope, p.digits)
 		} else if err != nil {
@@ -77,6 +85,9 @@ func TestB2dOrderedPresetOperationalMatrix(t *testing.T) {
 		}
 		if f.count(`SELECT count(*) FROM naming_rules WHERE id=$1 AND source_type='PRESET'`, accepted.RuleID) != 1 {
 			t.Fatal("provenance missing")
+		}
+		if requireSeed {
+			assertB3aAcceptedMapping(t, f, accepted.RuleID, preset)
 		}
 		if f.count(`SELECT count(*) FROM audit_logs a JOIN naming_rules r ON r.id::text=a.entity_id WHERE r.id=$1 AND a.tenant_id=$2 AND a.user_id=$3 AND a.action='NOMENCLATURE_PRESET_ACCEPTED' AND a.changes->>'operation_id'=$4 AND a.changes->>'rule_id'=r.id::text AND a.changes->>'rule_version'=r.rule_version::text AND a.changes->>'source_type'=r.source_type AND a.changes->>'preset_id'=r.source_preset_id::text AND a.changes->>'preset_version'=r.source_preset_version::text`, accepted.RuleID, f.tenant, f.actor, operation) != 1 {
 			t.Fatal("acceptance audit/provenance binding mismatch")
@@ -109,6 +120,20 @@ func TestB2dOrderedPresetOperationalMatrix(t *testing.T) {
 			if preview.SequenceReserved || counters != f.json(counterQuery, f.tenant) {
 				tx.Rollback()
 				t.Fatal("preview mutated counter")
+			}
+			if requireSeed && n == 1 {
+				expected := map[string]string{
+					"MDF": "MDF-TIJ-Z01-001", "IDF": "IDF-TIJ-Z01-001",
+					"RACK": "RK-TIJ-MDF-TIJ-Z01-001-001", "SWITCH": "SW-TIJ-RK-TIJ-MDF-TIJ-Z01-001-001-0001",
+					"UPS": "UPS-TIJ-Z01-0001", "PDU": "PDU-TIJ-RK-TIJ-MDF-TIJ-Z01-001-001-0001",
+					"PATCH_PANEL": "PP-TIJ-RK-TIJ-MDF-TIJ-Z01-001-001-0001", "NODE": "ND-TIJ-Z01-0001",
+					"FIREWALL": "FW-TIJ-RK-TIJ-MDF-TIJ-Z01-001-001-0001", "SERVER": "SRV-TIJ-RK-TIJ-MDF-TIJ-Z01-001-001-0001",
+					"CCTV": "CAM-TIJ-Z01-0001", "AC_UNIT": "AC-TIJ-Z01-0001",
+				}[p.code]
+				if preview.IllustrativeCode != expected {
+					tx.Rollback()
+					t.Fatalf("seeded %s preview=%s expected=%s", p.code, preview.IllustrativeCode, expected)
+				}
 			}
 			body := map[string]interface{}{"asset_type_id": typeID, "name": fmt.Sprintf("%s matrix %d", p.code, n), "inventory_status": "installed"}
 			switch p.code {
@@ -198,6 +223,12 @@ func TestB2dOrderedPresetOperationalMatrix(t *testing.T) {
 				t.Logf("%s DIRECT_MANAGED_HOUSING=PASS ROLLBACK=PASS", p.code)
 			}
 		}
+		for _, hook := range afterType {
+			hook(f, p.code)
+		}
+	}
+	if after != nil {
+		after(f)
 	}
 }
 

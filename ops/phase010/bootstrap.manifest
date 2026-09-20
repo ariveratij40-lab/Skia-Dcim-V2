@@ -29,3 +29,4 @@ migrations/036_nomenclature_v2_foundation.sql
 migrations/037_nomenclature_v2_enforcement_audit_writer.sql
 migrations/038_nomenclature_v2_acceptance_function_contract.sql
 migrations/039_nomenclature_operation_binding.sql
+migrations/040_nomenclature_v2_initial_preset_catalog.sql
