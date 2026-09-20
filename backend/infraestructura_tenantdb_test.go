@@ -42,6 +42,9 @@ func TestSpecializedPostUsesInjectedTenantDB(t *testing.T) {
 			AddRow("zone-1", "tenant-1", "branch-1", "ZONE1", "Zone 1", "active", nil, nil, nil, nil, nil))
 	tenantMock.ExpectQuery("SELECT id FROM asset_types").WithArgs("SWITCH").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("asset-type-1"))
+	tenantMock.ExpectQuery("SELECT id,asset_type_code,prefix,separator").WithArgs("tenant-1", "SWITCH").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "asset_type_code", "prefix", "separator", "seq_digits", "last_seq", "include_branch", "include_site", "include_floor", "include_zone", "include_distribution", "include_housing", "include_placement", "include_internal_area", "context_mode", "sequence_scope", "custom_segment_1", "custom_segment_2"}).
+			AddRow("rule-1", "SWITCH", "SW", "-", 4, 0, false, false, false, false, false, false, true, false, NomenclatureContextLegacyInternalArea, NomenclatureSequencePlacement, "", ""))
 	tenantMock.ExpectQuery("SELECT id,placement_type").WithArgs("placement-1", "tenant-1", "branch-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "placement_type", "branch_id", "placement_code", "name", "status"}).AddRow("placement-1", "IDF", "branch-1", "IDF01", "IDF 01", "active"))
 	tenantMock.ExpectQuery("SELECT id,asset_type_code,prefix,separator").WithArgs("tenant-1", "SWITCH").

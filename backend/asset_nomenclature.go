@@ -210,6 +210,20 @@ func reserveManagedAsset(tenantTx TenantDB, tenantID, branchID, userID string, i
 		return nil, fmt.Errorf("resolve asset type: %w", err)
 	}
 	var placement *ResolvedPlacement
+	if installableAssetTypes[input.AssetTypeCode] && strings.TrimSpace(input.PlacementID) == "" && strings.TrimSpace(input.HousingRackID) == "" {
+		return nil, ErrInvalidAssetPlacement
+	}
+	policy, policyErr := loadCanonicalNomenclaturePolicy(context.Background(), tenantTx, tenantID, input.AssetTypeCode, input.NamingContextMode, true)
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	housing, housingErr := resolveNomenclatureHousing(context.Background(), tenantTx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, policy, CanonicalHousingRequest{HousingRackID: input.HousingRackID, PlacementID: input.PlacementID, DistributionPointID: input.DistributionID, MountMode: input.MountMode})
+	if housingErr != nil {
+		return nil, housingErr
+	}
+	if housing != nil {
+		input.HousingRackID, input.PlacementID, input.DistributionID, input.MountMode = housing.HousingRackID, housing.LocationID, housing.DistributionPointID, housing.MountMode
+	}
 	if installableAssetTypes[input.AssetTypeCode] {
 		if strings.TrimSpace(input.PlacementID) == "" {
 			return nil, ErrInvalidAssetPlacement
@@ -274,7 +288,7 @@ func writeManagedAssetError(w http.ResponseWriter, err error, assetTypeCode stri
 	case strings.Contains(err.Error(), "uq_locations_mdf_idf_physical_identity"):
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "physical_identity_conflict", "message": "Ya existe un MDF/IDF con esa identidad física en la Zona actual."})
-	case errors.Is(err, ErrInvalidAssetPlacement):
+	case errors.Is(err, ErrInvalidAssetPlacement), errors.Is(err, ErrHousingNotFound):
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_asset_placement", "field": "placement_id", "message": "Seleccione una ubicación activa de la sucursal actual."})
 	case errors.Is(err, ErrInvalidPhysicalLocation):

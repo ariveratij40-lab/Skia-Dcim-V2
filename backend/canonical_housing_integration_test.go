@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -15,13 +16,21 @@ import (
 
 type canonicalParentFixture struct{ LocationID, IDFLocationID, DistributionID, IDFDistributionID, RackID string }
 
-func setupCanonicalParentFixture(t *testing.T, q *sql.Tx, tenantID, branchID, userID string) canonicalParentFixture {
+func setupCanonicalParentFixture(t *testing.T, q *sql.Tx, tenantID, branchID, userID string, reuseTenantRules ...bool) canonicalParentFixture {
 	t.Helper()
 	siteID, floorID, zoneID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	locationID, distributionAssetID, distributionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	idfLocationID, idfAssetID, idfDistributionID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	rackAssetID, rackID := uuid.NewString(), uuid.NewString()
 	mdfRule, idfRule, rackRule := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	reuse := len(reuseTenantRules) > 0 && reuseTenantRules[0]
+	if reuse {
+		for code, target := range map[string]*string{"MDF": &mdfRule, "IDF": &idfRule, "RACK": &rackRule} {
+			if err := q.QueryRow(`SELECT id FROM naming_rules WHERE tenant_id=$1 AND asset_type_code=$2 AND active`, tenantID, code).Scan(target); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	statements := []struct {
 		query string
 		args  []interface{}
@@ -44,7 +53,15 @@ func setupCanonicalParentFixture(t *testing.T, q *sql.Tx, tenantID, branchID, us
 		{`INSERT INTO assets(id,tenant_id,branch_id,asset_type_id,location_id,internal_code,nomenclature_id,nomenclature_sequence,name,status,created_by,mount_mode) SELECT $1,$2,$3,id,$4,'RK-001',$5,1,'Canonical Rack','active',$6,'NONE' FROM asset_types WHERE code='RACK'`, []interface{}{rackAssetID, tenantID, branchID, locationID, rackRule, userID}},
 		{`INSERT INTO racks(id,asset_id,tenant_id,branch_id,total_u,mdf_idf_id) VALUES($1,$2,$3,$4,42,$5)`, []interface{}{rackID, rackAssetID, tenantID, branchID, distributionID}},
 	}
-	for _, statement := range statements {
+	for index, statement := range statements {
+		if reuse && index < 2 {
+			continue
+		}
+		if reuse {
+			for _, prefix := range []string{"MDF", "IDF", "RK"} {
+				statement.query = strings.ReplaceAll(statement.query, "'"+prefix+"-001'", "'"+prefix+"-"+branchID+"-001'")
+			}
+		}
 		if _, err := q.Exec(statement.query, statement.args...); err != nil {
 			t.Fatalf("canonical parent fixture: %v", err)
 		}
