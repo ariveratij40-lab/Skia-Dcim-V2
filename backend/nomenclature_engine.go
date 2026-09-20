@@ -180,6 +180,11 @@ func ResolveCanonicalNomenclature(ctx context.Context, tdb TenantDB, in Canonica
 	if err := validateCanonicalNomenclaturePolicy(p); err != nil {
 		return CanonicalNomenclatureResolution{}, err
 	}
+	var err error
+	in, err = completeCanonicalPhysicalContext(ctx, tdb, in)
+	if err != nil {
+		return CanonicalNomenclatureResolution{}, err
+	}
 	r := CanonicalNomenclatureResolution{Components: CanonicalNomenclatureComponents{
 		Prefix: p.Prefix, CustomSegment1: p.CustomSegment1, CustomSegment2: p.CustomSegment2,
 	}}

@@ -891,22 +891,36 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 
 	// Housing canónico se resuelve dentro de la misma TenantTx. location_id del
 	// cliente es, como máximo, una aserción que debe coincidir con el padre.
-	var canonicalHousing *CanonicalHousingState
-	if assetTypeCode == "RACK" || assetTypeCode == "PATCH_PANEL" || assetTypeCode == "SWITCH" || assetTypeCode == "PDU" || assetTypeCode == "UPS" {
-		placementAssertion := ""
-		if req.LocationID != nil {
-			placementAssertion = strings.TrimSpace(*req.LocationID)
-		}
-		resolved, resolveErr := ResolveCanonicalHousing(r.Context(), tx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, CanonicalHousingRequest{
-			AssetTypeCode: assetTypeCode, DistributionPointID: req.MdfIdfID,
-			HousingRackID: req.HousingRackID, MountMode: req.MountMode, PlacementID: placementAssertion,
-		})
-		if resolveErr != nil {
+	policy, policyErr := loadCanonicalNomenclaturePolicy(r.Context(), tx, tenantID, assetTypeCode, "", true)
+	if policyErr != nil {
+		writeManagedAssetError(w, policyErr, assetTypeCode)
+		return
+	}
+	placementAssertion := ""
+	if req.LocationID != nil {
+		placementAssertion = strings.TrimSpace(*req.LocationID)
+	}
+	housingRequest := CanonicalHousingRequest{
+		AssetTypeCode: assetTypeCode, DistributionPointID: req.MdfIdfID,
+		HousingRackID: req.HousingRackID, MountMode: req.MountMode, PlacementID: placementAssertion,
+	}
+	canonicalHousing, housingErr := resolveNomenclatureHousing(r.Context(), tx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, policy, housingRequest)
+	if housingErr != nil {
+		writeManagedAssetError(w, housingErr, assetTypeCode)
+		return
+	}
+	if canonicalHousing == nil {
+		// Preserve existing physical mounting constraints for non-Housing rules.
+		resolved, resolveErr := ResolveCanonicalHousing(r.Context(), tx, PhysicalScope{TenantID: tenantID, BranchID: branchID}, housingRequest)
+		if resolveErr == nil {
+			canonicalHousing = &resolved
+		} else if resolveErr != ErrInvalidParentType {
 			writeCanonicalHousingError(w, resolveErr)
 			return
 		}
-		canonicalHousing = &resolved
-		req.LocationID = &resolved.LocationID
+	}
+	if canonicalHousing != nil {
+		req.LocationID = &canonicalHousing.LocationID
 	}
 
 	// Los demás tipos instalables resuelven placement dentro de esta misma TenantTx.
@@ -931,16 +945,25 @@ func (h *DCIMHandler) createAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generar internal_code transaccional después de validar placement (INV-ASSET-NOM-009).
-	assignment, err := h.generateInternalCodeWithContext(tx, NomenclatureContext{
-		TenantID: tenantID, BranchID: branchID, AssetTypeCode: assetTypeCode, Placement: placement,
-	})
+	namingContext := NomenclatureContext{
+		TenantID: tenantID, ActorID: userID, BranchID: branchID, AssetTypeCode: assetTypeCode,
+		Placement: placement, ZoneID: req.ZoneID,
+	}
+	if req.LocationID != nil {
+		namingContext.PlacementID = *req.LocationID
+	}
+	if canonicalHousing != nil {
+		namingContext.DistributionID = canonicalHousing.DistributionPointID
+		namingContext.HousingRackID = canonicalHousing.HousingRackID
+	}
+	assignment, err := h.generateInternalCodeWithContext(tx, namingContext)
 	if err != nil {
 		if err == ErrNomenclatureRequired {
 			writeNomenclatureRequired(w, assetTypeCode)
 			return
 		}
 		log.Printf("ERROR generating internal_code: %v", err)
-		http.Error(w, `{"error":"could not generate internal code"}`, http.StatusInternalServerError)
+		writeManagedAssetError(w, err, assetTypeCode)
 		return
 	}
 
