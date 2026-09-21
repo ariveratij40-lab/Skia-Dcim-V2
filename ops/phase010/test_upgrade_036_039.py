@@ -10,6 +10,7 @@ from unittest.mock import patch
 import upgrade_036_039 as u
 import b3b_release as b
 import b3b_recovery as r
+from upgrade_harness_diagnostics import Diagnostics
 
 
 def rejected(call, label):
@@ -27,6 +28,8 @@ def main():
     stage = Path(os.environ['UPGRADE_STAGE'])
     db = b.DB(container, 'skia_prod', 'skia_bootstrap')
     c = u.contract()
+    mode = os.environ.get('UPGRADE_TEST_MODE', 'full')
+    assert mode in ('full', 'regression', 'exact', 'matrix', 'observability')
     source = u.observe(db, c)
     assert source['ledger_count'] == 27
     # Representative historical data; no production values copied.
@@ -96,8 +99,11 @@ def main():
         return target
 
     # Independently cloned canonical live prefixes retain raw serialization.
-    for stop in range(27, 32):
+    results = []
+    for stop in ((28,) if mode in ('exact', 'observability') else range(27, 32)):
         target = clone('prefix_'+str(stop))
+        diagnostics.database = target.database
+        diagnostics.stage = 'START_PREFIX_'+str(stop)
         with u.Session(target) as session:
             for i in range(27, stop):
                 u.apply_one(session, c['migrations'][i])
@@ -108,11 +114,40 @@ def main():
         if stop >= 29:
             assert target.query("SELECT to_jsonb(nomenclature_sequence_scope='BRANCH' AND nomenclature_sequence_scope_location_id IS NULL) FROM assets") == [True]
         print('PREFIX_'+str(stop)+'='+observed['raw'], flush=True)
+        if mode == 'observability':
+            diagnostics.stage = 'CONTROLLED_FAILURE_POST036'
+            rejected(lambda: target.query('SELECT 1/0'), 'OBSERVABILITY_INJECTION')
+            bundle = diagnostics.snapshot('injected-failure')
+            assert bundle['failures'][-1]['exit_code'] != 0
+            assert bundle['failures'][-1]['stderr_classification'] == 'INJECTED_DIVISION_BY_ZERO'
+            assert bundle['container_state']['Running']
+            assert bundle['ledger']['value'] == 28
+            assert bundle['raw_fingerprint']['value'] == c['prefixes']['28']['raw']
+            assert bundle['catalog_count']['value'] == 0
+            assert bundle['structure']['value'] == c['prefixes']['28']['structure']
+            assert bundle['timestamp'] and bundle['stage'] == 'CONTROLLED_FAILURE_POST036'
+            print('FAILURE_EVIDENCE_RETENTION=PASS', flush=True)
+            return
         target_cp = dict(cp, identity=u.identity(target))
+        diagnostics.stage = 'RESUME_FROM_'+str(stop)
         result = u.upgrade(target, evidence(target), preservation, target_cp)
         assert result['ledger_count'] == 31
         assert u.upgrade(target, evidence(target), preservation, target_cp)['ledger_count'] == 31
+        # Independent direct structure invocation, not just parent status.
+        assert b.structure(target)['hash'] == c['prefixes']['31']['structure']
+        counts = target.query("SELECT jsonb_object_agg(id,n) FROM (SELECT "
+            "substring(path from 'migrations/([0-9]+)') id,count(*) n FROM "
+            "production_bootstrap_migrations WHERE path ~ '^migrations/0(3[6-9]|40)_' GROUP BY path) s")[0]
+        assert counts == {'036': 1, '037': 1, '038': 1, '039': 1}
+        assert target.query('SELECT count(*) FROM system_naming_presets') == [0]
+        results.append({'start': stop, 'status': 'PASS', 'ledger': 31,
+                        'counts': counts, '040': 0, 'catalog': 0,
+                        'raw': result['raw'], 'direct_structure': 'PASS'})
         print('RESUME_'+str(stop)+'=PASS', flush=True)
+    diagnostics.write('results.json', results)
+    if mode in ('exact', 'matrix'):
+        return
+    diagnostics.stage = 'NEGATIVE_RUNNER_RECOVERY_MATRIX'
     # Force SQL failure after each migration's SQL and ledger, before COMMIT.
     for i in range(27,31):
         target = clone('failure_'+str(i))
@@ -190,6 +225,9 @@ def main():
     assert checkpoint['recovery_verified']
     (stage/'governed-checkpoint.json').write_text(json.dumps(checkpoint,indent=2))
     print('GOVERNED_CHECKPOINT_ACTION=PASS',flush=True)
+    if mode == 'regression':
+        print('TOOLING_ONLY_REGRESSION=PASS', flush=True)
+        return
     # Exact previously built local Application A image, no production builds.
     image='skia-hf3-api:0c01d79'
     inspect=json.loads(b.run(['docker','image','inspect',image]))[0]
@@ -233,4 +271,13 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    diagnostics = Diagnostics(os.environ['UPGRADE_CONTAINER'], Path(os.environ['UPGRADE_STAGE'])/'diagnostics')
+    try:
+        with diagnostics:
+            main()
+    except BaseException as error:
+        # Do not emit exception text or traceback containing SQL/credentials.
+        diagnostics.snapshot('failure')
+        print('HARNESS_FAILURE_TYPE='+type(error).__name__, flush=True)
+        raise SystemExit(1)
+    diagnostics.snapshot('completed')

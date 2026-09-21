@@ -1,10 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PYTHONDONTWRITEBYTECODE=1
+exec 2> >(python3 "$repo/ops/phase010/upgrade_harness_diagnostics.py" --redact-stream >&2)
 stage=$(mktemp -d /tmp/skia-upgrade-matrix.XXXXXX)
-container=skia-upgrade-matrix-$$
+container=skia-upgrade-matrix-$(basename "$stage" | tr '.' '-')-$$
 password=$(openssl rand -hex 20)
-trap 'docker rm -f "$container-api" "$container" >/dev/null 2>&1 || true' EXIT
+finish(){
+ local rc=$?
+ trap - EXIT
+ if [[ "$rc" != 0 ]]; then
+  # Snapshot before any cleanup; preserve failed DB/container for diagnosis.
+  PYTHONDONTWRITEBYTECODE=1 python3 "$repo/ops/phase010/upgrade_harness_diagnostics.py" \
+   --container "$container" --directory "$stage/diagnostics" --exit-code "$rc" || true
+  printf 'FAILED_CONTAINER_PRESERVED=%s\nEVIDENCE=%s\n' "$container" "$stage"
+ else
+  # Success cleanup only; anonymous PG volume belongs exclusively to this run.
+  docker rm -fv "$container-api" "$container" >/dev/null 2>&1 || true
+ fi
+ exit "$rc"
+}
+trap finish EXIT
+printf 'DISPOSABLE_CONTAINER=%s\nEVIDENCE=%s\n' "$container" "$stage"
 mkdir "$stage/source"
 git -C "$repo" archive 658cfa35becaf75f851a27d44180fef20ea0f2ce | tar -xf - -C "$stage/source"
 docker run -d --name "$container" -e POSTGRES_USER=skia_bootstrap -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=skia_prod postgres:16.14-alpine >/dev/null
