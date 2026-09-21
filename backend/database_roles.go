@@ -7,8 +7,6 @@ import (
 	"os"
 )
 
-const localDevelopmentDSN = "postgres://skia:skia@localhost:5432/skia_db?sslmode=disable"
-
 func databaseDSNsFromEnv() (runtimeDSN, migratorDSN, onboardingDSN string, requireRestricted bool, err error) {
 	runtimeDSN = os.Getenv("DATABASE_URL")
 	migratorDSN = os.Getenv("MIGRATOR_DATABASE_URL")
@@ -19,7 +17,7 @@ func databaseDSNsFromEnv() (runtimeDSN, migratorDSN, onboardingDSN string, requi
 		if requireRestricted {
 			return "", "", "", true, errors.New("DATABASE_URL is required when restricted runtime gate is enabled")
 		}
-		runtimeDSN = localDevelopmentDSN
+		return "", "", "", false, errors.New("DATABASE_URL is required; inject explicit database configuration")
 	}
 	if migratorDSN == "" {
 		if requireRestricted {
