@@ -1,0 +1,151 @@
+{
+  "application_sha": "0c01d79ae714465ab95aac896e4100d0be893185",
+  "migrations": [
+    {
+      "path": "migrations/001_init.sql",
+      "sha256": "7d1bcb14541d8fa1cfc8ff1577f2a0fc8d5cd9473018a285dac399cd2de81f3e"
+    },
+    {
+      "path": "migrations/004_dcim_inventory_schema.sql",
+      "sha256": "c13a0232a3701844f1d1f97949df32172c2c044aae8cd9356c185a250fba27c4"
+    },
+    {
+      "path": "migrations/006_config_admin_schema.sql",
+      "sha256": "3bf448d7636b94270aa05ac13c236af347591ab96d0a5173738a375c16643da1"
+    },
+    {
+      "path": "migrations/017_clean_bootstrap_branch_invariant.sql",
+      "sha256": "0f8657f4cf0d5f50b0b9660d289846ba16a2869820d7ff5884e971b182ceedfd"
+    },
+    {
+      "path": "migrations/010_create_inventory_imports_schema.sql",
+      "sha256": "6650c717d5da30dbee013264c0852d0c7efa287434b09b5775391c96cd61b667"
+    },
+    {
+      "path": "migrations/011_password_reset_tokens.sql",
+      "sha256": "45aad998620ddbb066b8a87da97d0389f96bab9938eaf2d6aa684321d6aa1d31"
+    },
+    {
+      "path": "migrations/013_dcim_assets_phase1_expand.sql",
+      "sha256": "c366cc4ec859b8f73c8450fc022d97ca18991286c929506dc6641e4f64244f67"
+    },
+    {
+      "path": "migrations/015_naming_rules_custom_segments.sql",
+      "sha256": "4b223e33b9eb1076644886d4057d460c3331300a90d0ff431f74439666168b1a"
+    },
+    {
+      "path": "migrations/018_clean_bootstrap_runtime_schema.sql",
+      "sha256": "55c979f7f86fe865947b4b0bf1bf2175e1e9b07d4310ccea3b9ef5c14a0b70b4"
+    },
+    {
+      "path": "migrations/014_dcim_assets_phase1_seed.sql",
+      "sha256": "4d587e220309c221d6cd97b4e00448c52c20ff542616f40784f14a57b5650feb"
+    },
+    {
+      "path": "migrations/019_asset_nomenclature_enforcement.sql",
+      "sha256": "08e74cf5b916df1cb7abd63b6763af20425bba0a0b69f8d5b6a13eae667ff3e1"
+    },
+    {
+      "path": "migrations/020_nomenclature_normative_catalog.sql",
+      "sha256": "38b67db53c83f37ce1fd320eb4089544e9c57d3891dcc0c7b9c2f331cf2a94d5"
+    },
+    {
+      "path": "migrations/021_asset_placement_authority.sql",
+      "sha256": "9ed43846a75bcffe164280547523cc3fe87486a662bf0249e076f0b47ab9cd5f"
+    },
+    {
+      "path": "migrations/022_physical_location_hierarchy.sql",
+      "sha256": "09d4bfc509bfd907b0aa732fcafb9322418d55d1618a079cc4e75ccb2180892c"
+    },
+    {
+      "path": "migrations/023_canonical_physical_model_v2_additive.sql",
+      "sha256": "dd8fc51af7e1bf6f5c1b10a56481b4fb7bbfd4e7fe41482b3b2b07de49757383"
+    },
+    {
+      "path": "migrations/024_system_naming_presets_secure_reader.sql",
+      "sha256": "7960b5d5320083270c93968b40e5fe8a4d025209fbd297cdeaf93043d281fa12"
+    },
+    {
+      "path": "migrations/025_asset_type_placement_policy_provisioning.sql",
+      "sha256": "5fc829dac4947fb659cf331d2aa45cbad569385541300b25b18bf8f96b56b345"
+    },
+    {
+      "path": "migrations/026_zone_naming_context_compatibility.sql",
+      "sha256": "ea6f6d332686b1ccb034d63610dfa1048cfd6981fb2a9bf555583bc1b07a67dc"
+    },
+    {
+      "path": "migrations/027_secure_import_staging_interface.sql",
+      "sha256": "72e973c30bb2267caf6198ad62830bd61ea32cdfc5a61578c8a7f24457566f59"
+    },
+    {
+      "path": "migrations/028_secure_import_commit_coordinator_interface.sql",
+      "sha256": "cf1ab14bb213f85d569a84f174921b1cf436b9273d21800f89db2906bfb4f684"
+    },
+    {
+      "path": "migrations/029_secure_import_staging_write_authority.sql",
+      "sha256": "23ff4e63fa79b8e1b0a5d585ccaa05a9e9a1346896287a2aaf62b2e954bf71ec"
+    },
+    {
+      "path": "migrations/030_secure_import_commit_completion_rls_compatibility.sql",
+      "sha256": "1dd5717e893dfa56057b6fc0f3d3c2d2aa7172160bd67193f47531bd8ad7d4b9"
+    },
+    {
+      "path": "migrations/031_canonical_mdf_idf_physical_identity.sql",
+      "sha256": "6c909709a027c3e7391053fd9538d9d434071b305c0a734b3f998db4b0ab824b"
+    },
+    {
+      "path": "migrations/032_canonical_physical_hierarchy_provisioning.sql",
+      "sha256": "e924722ac3c3852698a57f468e95a0fc2d7a7bef5159725d9e792bedc2f67270"
+    },
+    {
+      "path": "migrations/033_canonical_zone_naming_provisioning.sql",
+      "sha256": "61ccdb2a8671d8e018d1dd98075f9c6cd66eb31f11aafb072c8279a98ef60d76"
+    },
+    {
+      "path": "migrations/034_canonical_infrastructure_housing_governance.sql",
+      "sha256": "782cc847e760daa6065420a607f4ede9ac63a7d2c48c6fec3912355ac10082d2"
+    },
+    {
+      "path": "migrations/035_remove_legacy_rack_authorities.sql",
+      "sha256": "1179eb4f6f0ba130d4e1e70868d5468c16e0682701032b97124890c25a928ef0"
+    },
+    {
+      "path": "migrations/036_nomenclature_v2_foundation.sql",
+      "sha256": "cdd3d456db0f8f1367beeee7bc3fca07640052c69b0a1510881c171f5309c31f"
+    },
+    {
+      "path": "migrations/037_nomenclature_v2_enforcement_audit_writer.sql",
+      "sha256": "a775eecd76bb93c82a0c8f03ada95833bc951ebbf8cf4dddb43141e3881215b6"
+    },
+    {
+      "path": "migrations/038_nomenclature_v2_acceptance_function_contract.sql",
+      "sha256": "bbea3e7d1edd8f8b6a759615f5d1a63a7778e39caa24a7360d3f7e7eab390fc9"
+    },
+    {
+      "path": "migrations/039_nomenclature_operation_binding.sql",
+      "sha256": "0e1ea8fcb607031d7aab050e26a51364150d7da45b9b708e0a341cdd4b79a0ab"
+    }
+  ],
+  "prefixes": {
+    "27": {
+      "raw": "8712fcae88f98f7c75605772ab88cbeb52d06e022c07a8782b045e33caec0c10",
+      "structure": "7d6bfb8e958bc13700c2bbcd11fce71bcaa1489cc1e01accaddba3b87f5805be"
+    },
+    "28": {
+      "raw": "e2e448d243a9c12d067a0fa3bfecb37177a3caedb5f55a2a38ecfe1c37382329",
+      "structure": "89991eaf5b5cb8b8e372c852063da39a858d0504c662d954543e546e5bdafab5"
+    },
+    "29": {
+      "raw": "526264e8a52816a1110df02843fa2e806a1ca8d2634482ad1337757ca9a37ba1",
+      "structure": "1db124ce1c304791c462e09e4895b18692069845e7aaf692df6bce0e8333a972"
+    },
+    "30": {
+      "raw": "c36963ffc829ec1c20cb1e07c3279d2568ba6b5900f4e3697538c899c59cb4f9",
+      "structure": "0e4b5e50e81c5d3509f8df2cca71c271a93e4759660506dcd140288fb72c4b38"
+    },
+    "31": {
+      "raw": "e5126596354a61f5d88814ac009cac9567dc60b2f8fefe7345b8f6ce6d69e8a6",
+      "structure": "06aabac1804fee98db60e8a5ed05faf23ccb73d7bab098f25e3f0f42f927be5f"
+    }
+  }
+}
