@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "runtime_source_sha": "3ee4da51fcd7c5f026fda389158b5e13df6e0c64",
+  "image_id": "sha256:1c3734699870077a46b158ed71461f01e7e9511eb3442ae8ee9092a133d62507",
+  "container_name": "skia_api_prod",
+  "command": ["./skia-api"],
+  "entrypoint": null,
+  "user": "",
+  "workdir": "/app",
+  "network": "skia_prod_internal",
+  "aliases": ["skia_api_prod", "backend"],
+  "internal_port": "8080/tcp",
+  "published_ports": {},
+  "uploads_volume": "skia_prod_uploads",
+  "uploads_destination": "/app/uploads",
+  "restart_policy": "unless-stopped",
+  "healthcheck": {
+    "Test": ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health"],
+    "Interval": 10000000000,
+    "Timeout": 5000000000,
+    "Retries": 12
+  },
+  "public_environment": {
+    "APP_ENV": "production",
+    "PORT": "8080",
+    "UPLOADS_DIR": "/app/uploads",
+    "SKIA_REQUIRE_RESTRICTED_RUNTIME_DB": "true",
+    "FRONTEND_URL": "https://skia.iamet.mx",
+    "APP_BASE_URL": "https://skia.iamet.mx",
+    "GOOGLE_REDIRECT_URL": "https://skia.iamet.mx/api/auth/google/callback"
+  },
+  "secret_authority": "/opt/apps/skia/prod/secrets/production.env",
+  "required_secret_names": ["DATABASE_URL", "MIGRATOR_DATABASE_URL", "ONBOARDING_DATABASE_URL"],
+  "preserve_existing_environment_names": ["JWT_SECRET", "REDIS_HOST", "REDIS_PASSWORD", "REDIS_PORT"],
+  "oauth_prerequisite_names": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
+  "activation_authorized": false
+}
