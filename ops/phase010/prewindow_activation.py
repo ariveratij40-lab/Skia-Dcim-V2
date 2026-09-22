@@ -9,6 +9,9 @@ import re
 
 SPEC = Path(__file__).with_name('prewindow_api_activation.json')
 IMAGE = 'sha256:1c3734699870077a46b158ed71461f01e7e9511eb3442ae8ee9092a133d62507'
+OAUTH_NAMES = ('GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET')
+SYNTHETIC_MODE = 'DISPOSABLE_SYNTHETIC_CONFIGURATION'
+PRODUCTION_MODE = 'RESOLVED_PRODUCTION_SECRET_AUTHORITY'
 PUBLIC = {
     'APP_ENV': 'production', 'PORT': '8080', 'UPLOADS_DIR': '/app/uploads',
     'SKIA_REQUIRE_RESTRICTED_RUNTIME_DB': 'true',
@@ -41,6 +44,56 @@ def validate(spec):
     return True
 
 
+def validate_production_activation(spec, mode, resolved_authorities, provider_evidence=None):
+    """Validate trusted resolver metadata, never credential values.
+
+    This pure check does not resolve secrets, verify Google, grant authorization
+    or execute activation. A future authorized executor must supply fresh metadata
+    from its governed resolver (not caller assertions) and separately enforce the
+    provider/window gates. Tests may mock that resolver without using secrets.
+    """
+    required = expected()
+    required['activation_authorized'] = True
+    if (mode != PRODUCTION_MODE or spec != required
+            or spec.get('activation_authorized') is not True):
+        raise ValueError('PRODUCTION_ACTIVATION_REJECTED')
+    if not isinstance(resolved_authorities, dict):
+        raise ValueError('PRODUCTION_ACTIVATION_REJECTED')
+    # Exact name/source binding; unknown fields (including plaintext values),
+    # synthetic markers, unresolved states and truthy non-booleans are rejected.
+    if set(resolved_authorities) != set(OAUTH_NAMES):
+        raise ValueError('PRODUCTION_ACTIVATION_REJECTED')
+    for name in OAUTH_NAMES:
+        record = resolved_authorities[name]
+        canonical = {'name': name, 'source': required['secret_authority'],
+                     'classification': PRODUCTION_MODE, 'resolved': True,
+                     'synthetic': False}
+        if (not isinstance(record, dict) or record != canonical
+                or record.get('resolved') is not True
+                or record.get('synthetic') is not False):
+            raise ValueError('PRODUCTION_ACTIVATION_REJECTED')
+    # Independently supplied provider evidence, never derived from PUBLIC/spec.
+    # The caller must bind this attestation to the same resolved OAuth client.
+    if provider_evidence != {
+            'authority': 'GOOGLE_PROVIDER', 'callback_status': 'VERIFIED_EXACT',
+            'callback': PUBLIC['GOOGLE_REDIRECT_URL'], 'client_authority_match': True}:
+        raise ValueError('PRODUCTION_ACTIVATION_REJECTED')
+    if provider_evidence.get('client_authority_match') is not True:
+        raise ValueError('PRODUCTION_ACTIVATION_REJECTED')
+    return 'PRODUCTION_METADATA_CONTRACT_VALIDATED_EXTERNAL_GATES_STILL_REQUIRED'
+
+
+def validate_disposable_oauth(spec, mode, environment):
+    """Synthetic rehearsal cannot produce a production-readiness result."""
+    validate(spec)
+    if (mode != SYNTHETIC_MODE or not isinstance(environment, dict)
+            or environment.get('GOOGLE_CLIENT_ID') != 'synthetic-client.apps.googleusercontent.com'
+            or environment.get('GOOGLE_CLIENT_SECRET') != 'synthetic-not-a-provider-secret'
+            or any(environment.get(k) != v for k, v in PUBLIC.items())):
+        raise ValueError('DISPOSABLE_OAUTH_REJECTED')
+    return 'NOT_PRODUCTION_READY'
+
+
 def disposable_plan(spec, prefix, database_password):
     validate(spec)
     if not re.fullmatch(r'skia-prewindow-test-[a-z0-9]{8,32}', prefix):
@@ -53,6 +106,7 @@ def disposable_plan(spec, prefix, database_password):
         env[name] = 'postgresql://' + role + ':' + database_password + '@' + prefix + '-pg/skia_prod?sslmode=disable'
     env['GOOGLE_CLIENT_ID'] = 'synthetic-client.apps.googleusercontent.com'
     env['GOOGLE_CLIENT_SECRET'] = 'synthetic-not-a-provider-secret'
+    validate_disposable_oauth(spec, SYNTHETIC_MODE, env)
     return {
         'name': prefix + '-api', 'Image': spec['image_id'], 'Cmd': spec['command'],
         'Entrypoint': spec['entrypoint'], 'User': spec['user'], 'WorkingDir': spec['workdir'],
