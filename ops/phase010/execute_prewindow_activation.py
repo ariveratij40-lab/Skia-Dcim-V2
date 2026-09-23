@@ -165,7 +165,49 @@ def capture(c):
             'health': c['Config'].get('Healthcheck'), 'command': c['Config']['Cmd'],
             'workdir': c['Config']['WorkingDir'],
             'ports': c['HostConfig'].get('PortBindings'),
+            'exposed_ports': c['Config'].get('ExposedPorts'),
+            'effective_ports': c['NetworkSettings'].get('Ports'),
             'started': c['State']['StartedAt']}
+
+
+def classify_current_ports(c, t, component, authority, now):
+    persisted = c['HostConfig'].get('PortBindings') or {}
+    effective = c['NetworkSettings'].get('Ports', {})
+    require(not any(effective.values()), 'CURRENT_EFFECTIVE_PUBLICATION')
+    if c['Image'] == t[component + '_image']:
+        require(not persisted, 'CANDIDATE_PERSISTED_PUBLICATION')
+        return 'CANDIDATE_NO_PUBLICATION'
+    if not persisted:
+        return 'CURRENT_NO_PUBLICATION'
+    internal, historical = ('8080/tcp', '18081') if component == 'api' else ('3000/tcp', '13001')
+    require(persisted == {internal: [{'HostIp': '127.0.0.1', 'HostPort': historical}]},
+            'UNEXPECTED_CURRENT_PERSISTED_BINDING')
+    require(effective == {internal: None}, 'CURRENT_EFFECTIVE_PORTS_UNKNOWN')
+    route = 'http://' + t[component] + ':' + internal.split('/')[0]
+    require(isinstance(authority, dict) and authority.get('container_id') == c['Id']
+            and authority.get('nginx_upstream') == route
+            and re.fullmatch('[a-f0-9]{64}', authority.get('nginx_config_sha256', ''))
+            and type(authority.get('listening_socket_count')) is int
+            and authority['listening_socket_count'] == 0
+            and type(authority.get('observed_at')) is int
+            and 0 <= now - authority['observed_at'] <= 300,
+            'LEGACY_BINDING_AUTHORITY_REQUIRED')
+    return 'LEGACY_PERSISTED_ONLY_EXPECTED_REMOVAL'
+
+
+def validate_session_authority(token, authority, auth, production, now):
+    require(isinstance(token, str) and token and not re.search(r'[\s;\r\n]', token), 'SESSION_REQUIRED')
+    if production:
+        require(re.fullmatch(r'[A-Za-z0-9_-]{43}', token)
+                and not re.search('synthetic|sentinel|placeholder', token, re.I), 'SESSION_TOKEN_FORMAT')
+    require(isinstance(authority, dict), 'SESSION_AUTHORITY_REQUIRED')
+    for k in ('user_id', 'tenant_id', 'branch_id'):
+        require(re.fullmatch(r'[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}', authority.get(k, '')),
+                'SESSION_CONTEXT_REQUIRED')
+    require(authority.get('source') == ('NORMAL_AUTHENTICATION' if production else 'DISPOSABLE_FIXTURE'),
+            'SESSION_SOURCE')
+    require(type(authority.get('expires_at')) is int and
+            authority['expires_at'] > max(now, auth['expires_at']) + 300, 'SESSION_EXPIRY')
 
 
 def validate_authority(a, evidence_raw, t, now):
@@ -244,12 +286,15 @@ process.stdin.on('data',x=>input+=x);process.stdin.on('end',async()=>{
 try {const p=JSON.parse(input);
 function get(host,port,path,token){return new Promise((ok,no)=>{
 const r=http.get({host,port,path,headers:token?{Cookie:'session_token='+token}:{}},s=>{
-s.resume();s.on('end',()=>ok(s.statusCode));});r.setTimeout(10000,()=>r.destroy());r.on('error',no);});}
-if(await get(p.host,8080,'/api/health')!==200)throw 0;
-for(const path of p.reads){if(await get(p.host,8080,path)!==401)throw 0;
-if(await get(p.host,8080,path,p.session)!==200)throw 0;}
+s.on('error',no);let data='';s.on('data',x=>{if(path==='/api/auth/me'){data+=x;if(data.length>65536)r.destroy();}});
+s.on('end',()=>ok({status:s.statusCode,data}));});r.setTimeout(10000,()=>r.destroy());r.on('error',no);});}
+if((await get(p.host,8080,'/api/health')).status!==200)throw 0;
+for(const path of p.reads){if((await get(p.host,8080,path)).status!==401)throw 0;
+const response=await get(p.host,8080,path,p.session);if(response.status!==200)throw 0;
+if(path==='/api/auth/me'){const u=JSON.parse(response.data).user;
+if(u.id!==p.identity.user_id || u.tenant_id!==p.identity.tenant_id || u.branch_id!==p.identity.branch_id)throw 0;}}
 if(p.web){for(const path of ['/login','/infraestructura/racks','/infraestructura/catalogs/nomenclaturas'])
-if(await get('localhost',3000,path)!==200)throw 0;
+if((await get('localhost',3000,path)).status!==200)throw 0;
 let files=[];function walk(p){for(const n of fs.readdirSync(p)){const x=p+'/'+n;
 fs.statSync(x).isDirectory()?walk(x):files.push(x);}}walk('/app/.next/static');
 let good=false;for(const f of files){const s=fs.readFileSync(f,'utf8');
@@ -281,8 +326,8 @@ class Executor:
         current = {c: self.docker.inspect('container', t[c]) for c in ('api', 'web')}
         require({c: x['Id'] for c, x in current.items()} == a.get('current_containers'), 'CURRENT_CONTAINERS')
         for c, x in current.items():
-            require(set(x['NetworkSettings']['Networks']) == {t['network']}
-                    and not x['HostConfig'].get('PortBindings'), 'CURRENT_TOPOLOGY')
+            require(set(x['NetworkSettings']['Networks']) == {t['network']}, 'CURRENT_TOPOLOGY')
+            classify_current_ports(x, t, c, a.get('current_port_authority', {}).get(c), int(time.time()))
             expected = body(t, c, {})
             require(x['Config']['Cmd'] == expected['Cmd'] and x['Config']['WorkingDir'] == '/app'
                     and x['Config'].get('Healthcheck') == t[c + '_health'], 'CURRENT_CAPTURE_CONTRACT')
@@ -302,8 +347,8 @@ class Executor:
         old_env = dict(x.split('=', 1) for x in current['api']['Config']['Env'])
         for name in contract.expected()['preserve_existing_environment_names']:
             require(name not in old_env or self.secrets.get(name) == old_env[name], 'RUNTIME_ENV_PRESERVATION')
-        require(self.session and '\n' not in self.session and '\r' not in self.session,
-                'SESSION_REQUIRED')
+        validate_session_authority(self.session, a.get('session_authority'), a,
+                                   t['environment'] == 'production', int(time.time()))
         return current
 
     def wait_health(self, component):
@@ -320,7 +365,8 @@ class Executor:
 
     def probe(self, web=False):
         # Node code is fixed and non-secret; all runtime secret input is stdin.
-        data = json.dumps({'host': 'backend', 'session': self.session, 'reads': READS, 'web': web})
+        data = json.dumps({'host': 'backend', 'session': self.session, 'reads': READS, 'web': web,
+                           'identity': self.auth['session_authority']})
         output = self.docker.run(['exec', '-i', self.t['web'], 'node', '-e', PROBE], data.encode())
         require(output == b'PROBE_PASS', 'POST_ACTIVATION_PROBE_FAILED')
 
@@ -333,6 +379,9 @@ class Executor:
             os.fsync(fd)
         try:
             record('CAPTURE', {c: capture(x) for c, x in current.items()})
+            record('CURRENT_PORT_CLASSIFICATION', {c: classify_current_ports(
+                x, self.t, c, self.auth.get('current_port_authority', {}).get(c), int(time.time()))
+                for c, x in current.items()})
             for component in ('api', 'web'):
                 require(time.time() < self.auth['expires_at'], 'AUTHORIZATION_EXPIRED_DURING_EXECUTION')
                 old = current[component]

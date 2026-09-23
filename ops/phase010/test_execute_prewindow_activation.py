@@ -77,6 +77,10 @@ def authorization(t, d):
          'window': 'fixture', 'operator': 'test', 'db_evidence_sha256': e.digest(evidence),
          'daemon_id': d.daemon(), 'network_id': 'network-id',
          'volume_identity': d.inspect('volume', t['volume']),
+         'session_authority': {'user_id': 'f2000000-0000-4000-8000-000000000002',
+                               'tenant_id': 'f2000000-0000-4000-8000-000000000001',
+                               'branch_id': 'f2100000-0000-4000-8000-000000000001',
+                               'source': 'DISPOSABLE_FIXTURE', 'expires_at': now + 7200},
          'current_containers': {c: x['Id'] for c, x in d.containers.items()}}
     return a, evidence
 
@@ -251,6 +255,38 @@ class ExecutorTests(unittest.TestCase):
         self.assertNotIn(sentinel, repr(calls[0][0]))
         self.assertIn(sentinel.encode(), calls[0][1]['input'])
         self.assertNotIn(sentinel, stdout.getvalue())
+
+    def test_current_legacy_port_classification(self):
+        for component, internal, host in [('api','8080/tcp','18081'),('web','3000/tcp','13001')]:
+            c = container(self.t, component)
+            c['HostConfig']['PortBindings'] = {internal: [{'HostIp': '127.0.0.1','HostPort': host}]}
+            c['NetworkSettings']['Ports'] = {internal: None}
+            now = int(time.time())
+            a = {'container_id': c['Id'], 'nginx_upstream': 'http://' + self.t[component] + ':' + internal.split('/')[0],
+                 'nginx_config_sha256': 'a'*64, 'listening_socket_count': 0, 'observed_at': now}
+            self.assertEqual(e.classify_current_ports(c,self.t,component,a,now),'LEGACY_PERSISTED_ONLY_EXPECTED_REMOVAL')
+            for bad in (None, {}, {**a, 'nginx_upstream':'http://localhost:'+host}, {**a,'listening_socket_count':1}):
+                with self.assertRaises(e.Rejected): e.classify_current_ports(c,self.t,component,bad,now)
+            for location in ('HostConfig','NetworkSettings'):
+                bad = copy.deepcopy(c)
+                if location == 'HostConfig': bad[location]['PortBindings'][internal][0]['HostPort']='9999'
+                else: bad[location]['Ports'][internal]=[{'HostIp':'127.0.0.1','HostPort':host}]
+                with self.assertRaises(e.Rejected): e.classify_current_ports(bad,self.t,component,a,now)
+            c['Image']=self.t[component+'_image']
+            with self.assertRaises(e.Rejected): e.classify_current_ports(c,self.t,component,a,now)
+            c['HostConfig']['PortBindings']={}
+            c['NetworkSettings']['Ports'][internal]=[{'HostIp':'127.0.0.1','HostPort':host}]
+            with self.assertRaises(e.Rejected): e.identity(c,self.t,component)
+
+    def test_session_authority_negative_matrix(self):
+        now=int(time.time()); a=self.a['session_authority']
+        for token in ('', 'token with spaces', 'synthetic-session'):
+            with self.assertRaises(e.Rejected): e.validate_session_authority(token,a,self.a,True,now)
+        for key,value in [('user_id',''),('tenant_id',''),('branch_id',''),('expires_at',now-1),('source','FABRICATED')]:
+            with self.assertRaises(e.Rejected):
+                e.validate_session_authority('valid-fixture',{**a,key:value},self.a,False,now)
+        with patch('sys.argv',['executor','--session-token','sentinel']),contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit): e.main()
 
 
 if __name__ == '__main__':

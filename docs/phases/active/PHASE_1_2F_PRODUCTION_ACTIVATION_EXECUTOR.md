@@ -52,3 +52,19 @@ Required acceptance: success topology/identity/health/read/routing matrix; negat
 authority, DB, image, secret, port, network, volume and health matrix; failure
 injection and reentry; secret sentinel hygiene; unchanged runner/manifest/images.
 Publication only after all local and actual-image disposable checks pass.
+
+## Authorized topology/session HF (base a80fe545)
+
+Classify current persisted bindings separately from effective publication. Only
+the exact historical loopback 18081/API and 13001/WEB bindings may be accepted for
+old images, with null effective ports, independently observed absent listeners and
+fresh protected Nginx Docker-DNS evidence bound to current container IDs. Unknown
+bindings/effective publication fail. Candidate validation remains unchanged: no
+persisted or effective publication. Capture classification and expected removal.
+
+Require a normal-authentication session and expected user/tenant/branch identity,
+with expiry beyond the authorized window plus 300 seconds. Compare /auth/me
+identity and require every representative read to pass; never accept any tenant
+merely because HTTP200 was returned. Session acquisition is a human-only normal
+login procedure, not SQL insertion. No real session is created in this HF gate.
+No production mutation, topology repair, isolation, checkpoint or migration.
