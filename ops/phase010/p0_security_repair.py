@@ -1,4 +1,4 @@
-"""Exact post035 ownership repair prototype; production execution disabled."""
+"""Exact post035 repair; disposable CLI or separately guarded production entry."""
 import argparse
 import json
 import re
@@ -45,6 +45,12 @@ def repair(db, *, inject_failure_after=None):
     b.require(re.fullmatch(r'skia-p0-[a-f0-9]{12}-[ab]', db.container)
               and db.database == 'skia_prod' and db.user == 'skia_bootstrap',
               'DISPOSABLE_TARGET_ONLY')
+    _repair(db, inject_failure_after=inject_failure_after)
+
+
+def _repair(db, *, inject_failure_after=None, before_mutation=None,
+            precommit=None, expected_baseline=None):
+    # Private shared transaction. Public entry points enforce target authority.
     b.require(db.fingerprint() == RAW, 'RAW_SOURCE')
     with u.Session(db) as session:
         session.execute('BEGIN; SET LOCAL lock_timeout=\'5s\';')
@@ -54,6 +60,10 @@ def repair(db, *, inject_failure_after=None):
             tx = TransactionDB(session)
             ledger = verify_source(tx)
             before = u.baseline(tx, project=False)
+            if expected_baseline is not None:
+                b.require(before == expected_baseline, 'PRE_BASELINE_DELTA')
+            if before_mutation:
+                before_mutation(tx)
             for i, signature in enumerate(ROUTINES, 1):
                 session.execute('ALTER FUNCTION ' + signature + ' OWNER TO skia_migrator; '
                                 'SET LOCAL ROLE skia_migrator; '
@@ -69,8 +79,10 @@ def repair(db, *, inject_failure_after=None):
             b.require(tx.query('SELECT jsonb_agg(jsonb_build_array(path,sha256) ORDER BY path) '
                                'FROM public.production_bootstrap_migrations;')[0] == ledger, 'LEDGER_DELTA')
             b.require(tx.query('SELECT count(*) FROM public.system_naming_presets;') == [0], 'CATALOG_DELTA')
+            if precommit:
+                precommit(tx)
             session.execute('COMMIT;')
-        except Exception:
+        except BaseException:
             session.execute('ROLLBACK;')
             raise
     b.require(db.fingerprint() == RAW, 'FINAL_RAW')
