@@ -105,8 +105,11 @@ INSERT INTO user_roles(user_id,tenant_id,role_id) SELECT 'f2000000-0000-4000-800
     d.run(sql,fixture.encode())
     inspected=d.inspect('container',pg)
     aliases=inspected['NetworkSettings']['Networks'][prefix]['Aliases']
-    env=model.generate({component:password for _,component in model.MAPPING.values()},host='skia_postgres_prod',aliases=aliases,environment='disposable')
-    env.update(GOOGLE_CLIENT_ID='synthetic-client.apps.googleusercontent.com',GOOGLE_CLIENT_SECRET=secrets.token_hex(24))
+    components={component:password for _,component in model.MAPPING.values()}
+    components.update(GOOGLE_CLIENT_ID=secrets.token_hex(24)+'.apps.googleusercontent.com',GOOGLE_CLIENT_SECRET=secrets.token_hex(24))
+    raw='\n'.join(k+'='+v for k,v in components.items()).encode()
+    env=e.parse_secrets(raw,True,'skia_postgres_prod',aliases=aliases)
+    print('B_MODEL_B_PRODUCTION_ASSEMBLY=PASS',flush=True)
     before=u.baseline(db,project=False)
     activation_guard(db,d,t,contract)
     for component in ('api','web'):
