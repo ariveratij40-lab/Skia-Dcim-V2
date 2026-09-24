@@ -1,0 +1,10 @@
+{
+  "environment": "production",
+  "container": "skia_postgres_prod",
+  "container_id": "a0e7ef76dfb6d0198fb33d20a5e969d9a24850e6c1862f0aa30e3b7b0f0c1786",
+  "image": "sha256:890480b08124ce7f79960a9bb16fe39729aa302bd384bfd7c408fee6c8f7adb7",
+  "networks": {"skia_prod_internal": "264f1f0df1b30cbbf8b2351bb59576dd12c27b833761b534727e1cd5b8239fdf"},
+  "daemon": "79f6dd33-a9c7-42cd-82f3-408e98459232",
+  "machine_id": "5e12e058b2ee4763ba0fd999d53e0a67",
+  "database_identity": {"oid": "23185", "owner": "skia_migrator", "cluster": "7676874133164564514", "version": "16.14", "database": "skia_prod"}
+}
