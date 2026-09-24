@@ -181,21 +181,58 @@ class ExecutorTests(unittest.TestCase):
         env = {k: 'opaque-value' for k in e.contract.OAUTH_NAMES}
         for k, role in zip(e.contract.expected()['required_secret_names'],
                            ('skia_runtime', 'skia_migrator', 'skia_onboarding')):
-            env[k] = 'postgresql://' + role + ':opaque@skia_postgres_prod/skia_prod'
+            env[e.model.MAPPING[k][1]] = 'opaque-password'
         def raw(v):
             return '\n'.join(k + '=' + x for k, x in v.items()).encode()
-        self.assertEqual(e.parse_secrets(raw(env), True, 'skia_postgres_prod'), env)
+        def parse(v):
+            return e.parse_secrets(v, True, 'skia_postgres_prod', aliases=['postgres','skia_postgres_prod'])
+        self.assertEqual(set(parse(raw(env))), set(e.model.MAPPING) | set(e.contract.OAUTH_NAMES))
         for name in env:
             for value in ('', 'synthetic-sentinel'):
                 bad = dict(env); bad[name] = value
                 with self.assertRaises(e.Rejected) as error:
-                    e.parse_secrets(raw(bad), True, 'skia_postgres_prod')
+                    parse(raw(bad))
                 self.assertNotIn(value or 'opaque-value', str(error.exception))
             bad = dict(env); del bad[name]
             with self.assertRaises(e.Rejected):
-                e.parse_secrets(raw(bad), True, 'skia_postgres_prod')
+                parse(raw(bad))
         with self.assertRaises(e.Rejected):
-            e.parse_secrets(raw(env) + b'\nGOOGLE_CLIENT_ID=sentinel', True, 'skia_postgres_prod')
+            parse(raw(env) + b'\nGOOGLE_CLIENT_ID=sentinel')
+
+    def test_model_b_read_only_preflight(self):
+        env={v[1]:'opaque-password' for v in e.model.MAPPING.values()}
+        env.update({k:'opaque-value' for k in e.contract.OAUTH_NAMES})
+        raw='\n'.join(k+'='+v for k,v in env.items()).encode()
+        d=FakeDocker(e.topology())
+        pg={'NetworkSettings':{'Networks':{'skia_prod_internal':{
+            'NetworkID':'network-id','Aliases':['postgres','skia_postgres_prod']}}}}
+        original=d.inspect
+        with patch.object(d,'inspect',side_effect=lambda kind,name: pg if kind=='container' else original(kind,name)):
+            result=e.production_configuration_preflight(d,raw)
+            self.assertIs(result['ACTIVATION_AUTHORIZED'],False)
+            self.assertNotIn('opaque',json.dumps(result))
+            self.assertEqual(d.actions,[])
+            pg['NetworkSettings']['Networks']['skia_prod_internal']['Aliases']=['postgres']
+            with self.assertRaises(e.Rejected):e.production_configuration_preflight(d,raw)
+
+    def test_model_b_does_not_authorize_activation(self):
+        components={v[1]:'opaque-password' for v in e.model.MAPPING.values()}
+        components.update({k:'opaque-value' for k in e.contract.OAUTH_NAMES})
+        raw='\n'.join(k+'='+v for k,v in components.items()).encode()
+        secrets=e.parse_secrets(raw,True,'skia_postgres_prod',aliases=['postgres','skia_postgres_prod'])
+        for case in ('post035','no-evidence','no-authorization','not-isolated','expired','wrong-image'):
+            with self.subTest(case=case):
+                d=FakeDocker(self.t);a,ev=authorization(self.t,d)
+                if case=='post035':
+                    data=json.loads(ev);data['fingerprint']='post035';ev=json.dumps(data).encode();a['db_evidence_sha256']=e.digest(ev)
+                elif case=='no-evidence':ev=b'{}';a['db_evidence_sha256']=e.digest(ev)
+                elif case=='no-authorization':a['activation_authorized']=False
+                elif case=='not-isolated':d.containers['api']['State']['Running']=True
+                elif case=='expired':a['expires_at']=0
+                else:a['api_image']='sha256:'+'0'*64
+                with self.assertRaises(e.Rejected):
+                    e.Executor(d,self.t,a,ev,secrets,'sentinel-session',self.journal).preflight()
+                self.assertEqual(d.actions,[])
 
     def test_original_spec_stays_unauthorized(self):
         self.assertIs(e.strict_json(e.contract.SPEC.read_bytes())['activation_authorized'], False)

@@ -18,6 +18,7 @@ import time
 from urllib.parse import urlsplit
 
 import prewindow_activation as contract
+import p0_config_model as model
 
 WEB = 'sha256:6cf014e5f31625b60d8e0a810a7f0374fd6236096b31fbcb8144322a6b916e03'
 POST039 = 'e5126596354a61f5d88814ac009cac9567dc60b2f8fefe7345b8f6ce6d69e8a6'
@@ -42,7 +43,7 @@ def digest(data):
 
 def package_digest():
     paths = ['execute_prewindow_activation.py', 'prewindow_activation.py',
-             'prewindow_api_activation.json', 'upgrade_036_039.json']
+             'prewindow_api_activation.json', 'upgrade_036_039.json', 'p0_config_model.py']
     return digest(json.dumps({p: digest((HERE / p).read_bytes()) for p in paths},
                              sort_keys=True).encode())
 
@@ -101,7 +102,7 @@ def topology(prefix=None):
             'ports': {}, 'order': ['API', 'API_HEALTH_AND_READS', 'WEB', 'WEB_HEALTH_AND_ROUTING']}
 
 
-def parse_secrets(raw, production, db_host):
+def parse_secrets(raw, production, db_host, *, aliases=None):
     result = {}
     for line in raw.decode().splitlines():
         if not line.strip() or line.lstrip().startswith('#'):
@@ -112,6 +113,13 @@ def parse_secrets(raw, production, db_host):
         require(value and value == value.strip() and not any(c in value for c in '\x00\r\n'),
                 'EMPTY_OR_INVALID_SECRET')
         result[name] = value
+    if production:
+        try:
+            derived = model.generate(result, host=db_host, aliases=aliases,
+                                     environment='production')
+        except ValueError:
+            raise Rejected('MODEL_B_COMPONENT_AUTHORITY_REJECTED') from None
+        result.update(derived)
     required = contract.expected()['required_secret_names'] + list(contract.OAUTH_NAMES)
     require(all(result.get(n) for n in required), 'MISSING_SECRET')
     if production:
@@ -124,7 +132,34 @@ def parse_secrets(raw, production, db_host):
                 and u.path == '/skia_prod' and u.username == role and u.password,
                 'DATABASE_IDENTITY')
     allowed = set(required + contract.expected()['preserve_existing_environment_names'])
-    return {k: v for k, v in result.items() if k in allowed}
+    return model.RuntimeSecrets({k: v for k, v in result.items() if k in allowed})
+
+
+def production_database_aliases(docker):
+    """Read-only topology authority, not caller-supplied candidate host input."""
+    network = contract.expected()['network']
+    n = docker.inspect('network', network)
+    require(n.get('Name') == network and n.get('Driver') == 'bridge' and n.get('Internal') is True,
+            'MODEL_B_NETWORK_AUTHORITY')
+    pg = docker.inspect('container', 'skia_postgres_prod')
+    endpoint = pg.get('NetworkSettings', {}).get('Networks', {}).get(network, {})
+    aliases = endpoint.get('Aliases') or []
+    require(endpoint.get('NetworkID') == n.get('Id') and n.get('Id')
+            and {'postgres', 'skia_postgres_prod'} <= set(aliases), 'MODEL_B_DATABASE_ALIASES')
+    return aliases
+
+
+def production_configuration_preflight(docker, raw):
+    """P0-capable metadata only. Does not authorize or perform activation."""
+    secrets = parse_secrets(raw, True, 'skia_postgres_prod',
+                            aliases=production_database_aliases(docker))
+    candidate = body(topology(), 'api', secrets)
+    require(candidate['Image'] == contract.IMAGE, 'MODEL_B_CANDIDATE_IDENTITY')
+    del candidate, secrets
+    return {'MODEL_B_PRODUCTION_PREFLIGHT': 'PASS_METADATA_ONLY',
+            'MODEL_B_ROLE_MAPPING': 'EXACT_DISTINCT_3',
+            'CANDIDATE_ENVIRONMENT_CONSTRUCTIBLE': True,
+            'ACTIVATION_AUTHORIZED': False, 'MUTATION': False}
 
 
 class Docker:
@@ -413,6 +448,7 @@ def main():
     mode.add_argument('--plan', action='store_true')
     mode.add_argument('--verify', action='store_true')
     mode.add_argument('--execute', action='store_true')
+    mode.add_argument('--preflight-config', action='store_true')
     p.add_argument('--authorization')
     p.add_argument('--database-evidence')
     p.add_argument('--session-file')
@@ -421,6 +457,11 @@ def main():
     p.add_argument('--disposable-secret-file')
     args = p.parse_args()
     t = topology(args.disposable_prefix)
+    if args.preflight_config:
+        require(not args.disposable_prefix and os.geteuid() == 0, 'PRODUCTION_READ_ONLY_PREFLIGHT_REQUIRED')
+        raw = protected_read(contract.expected()['secret_authority'], True, secret_authority=True)
+        print(json.dumps(production_configuration_preflight(Docker(), raw), sort_keys=True))
+        return
     if not args.verify and not args.execute:
         print(json.dumps({'mode': 'PLAN_ONLY', 'topology': t, 'package_sha256': package_digest()}, sort_keys=True))
         return
@@ -433,7 +474,8 @@ def main():
     secret_path = contract.expected()['secret_authority'] if production else args.disposable_secret_file
     require(secret_path is not None, 'SECRET_AUTHORITY_REQUIRED')
     secrets = parse_secrets(protected_read(secret_path, production, secret_authority=production), production,
-                            'skia_postgres_prod' if production else args.disposable_prefix + '-pg')
+                            'skia_postgres_prod' if production else args.disposable_prefix + '-pg',
+                            aliases=production_database_aliases(Docker()) if production else None)
     if production:
         resolved = {n: {'name': n, 'source': secret_path, 'classification': contract.PRODUCTION_MODE,
                         'resolved': True, 'synthetic': False} for n in contract.OAUTH_NAMES}
