@@ -156,6 +156,10 @@ INSERT INTO sessions(user_id,tenant_id,branch_id,token,expires_at) VALUES('f2000
             'package_sha256': e.package_digest(), 'api_image': e.contract.IMAGE, 'web_image': e.WEB,
             'topology': t, 'issued_at': now, 'expires_at': now + 900, 'window': 'rehearsal',
             'operator': 'fixture', 'db_evidence_sha256': e.digest(eraw), 'daemon_id': d.daemon(),
+            'session_authority': {'user_id':'f2000000-0000-4000-8000-000000000002',
+                                  'tenant_id':'f2000000-0000-4000-8000-000000000001',
+                                  'branch_id':'f2100000-0000-4000-8000-000000000001',
+                                  'source':'DISPOSABLE_FIXTURE', 'expires_at':now+3600},
             'network_id': d.inspect('network', prefix)['Id'],
             'volume_identity': {k: vol.get(k) for k in ('Name', 'Driver', 'CreatedAt', 'Options', 'Labels')},
             'current_containers': {c: d.inspect('container', t[c])['Id'] for c in ('api', 'web')}}
@@ -167,6 +171,22 @@ INSERT INTO sessions(user_id,tenant_id,branch_id,token,expires_at) VALUES('f2000
             '--disposable-secret-file', str(secret_file), '--journal', str(stage / 'activation-rehearsal.jsonl')]
     print(run([*argv, '--verify']).decode().strip(), flush=True)
     print(run([*argv, '--execute']).decode().strip(), flush=True)
+    # Actual HTTP probe must reject identity mismatch and unavailable sessions.
+    for fault in ('user_id', 'tenant_id', 'branch_id', 'missing', 'invalid'):
+        identity = dict(auth['session_authority'])
+        token = 'synthetic-executor-session'
+        if fault in identity:
+            identity[fault] = '00000000-0000-4000-8000-000000000099'
+        else:
+            token = '' if fault == 'missing' else 'synthetic-invalid-session'
+        try:
+            d.run(['exec', '-i', t['web'], 'node', '-e', e.PROBE],
+                  json.dumps({'host':'backend', 'session':token, 'reads':e.READS,
+                              'web':False, 'identity':identity}).encode())
+        except e.Rejected:
+            continue
+        raise e.Rejected('SESSION_NEGATIVE_NOT_REJECTED')
+    print('ACTUAL_HTTP_SESSION_NEGATIVES=PASS', flush=True)
     e.require(d.run(['exec', t['api'], 'cat', '/app/uploads/sentinel']) == b'uploads-preserved', 'UPLOADS_LOST')
     print('UPLOADS_PRESERVED=PASS', flush=True)
     e.require(data_hash() == before_data, 'DATABASE_DATA_DELTA')
