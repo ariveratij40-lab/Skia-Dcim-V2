@@ -1,0 +1,89 @@
+{
+  "observation_utc": "2026-09-25T05:00:14.845061+00:00",
+  "scope": "READ_ONLY_SNAPSHOT_NOT_WINDOW_AUTHORIZATION",
+  "surfaces": [
+    "bootstrap",
+    "containers",
+    "cron",
+    "db_clients",
+    "host_processes",
+    "imports_workers",
+    "maintenance_deployment",
+    "migration_runner",
+    "operator_admin",
+    "services",
+    "shared_nginx",
+    "timers",
+    "user_crontabs"
+  ],
+  "unreadable_surfaces": [],
+  "unknown_authorities": [],
+  "unknown_scheduled_mutators": [],
+  "unknown_nginx_mutators": [],
+  "actions": {
+    "api_pools_and_inprocess_workers": "CLOSE_DRAIN_STOP_API_NO_RECONNECT",
+    "operator_root_docker_access": "EXCLUSIVE_OPERATOR_NO_MANUAL_CLIENTS",
+    "bootstrap_psql_authority": "NO_PARALLEL_BOOTSTRAP_OR_PSQL",
+    "bounded_migration_runner": "SOLE_SEPARATELY_AUTHORIZED_RUNNER",
+    "maintenance_deployment_packages": "NO_PARALLEL_MAINTENANCE_DEPLOYMENT",
+    "shared_nginx_administrators": "NO_PARALLEL_VHOST_EDIT_OR_RELOAD",
+    "bajanet_certificate_cron": "AVOID_SCHEDULE_AND_VERIFY_NO_ACTIVE_JOB",
+    "system_package_maintenance": "NO_PACKAGE_JOB_OR_SERVICE_RESTART_IN_WINDOW"
+  },
+  "quiescence_sql": "SELECT count(*)\nFROM pg_stat_activity\nWHERE datname = current_database()\n  AND backend_type = 'client backend'\n  AND pid <> pg_backend_pid();",
+  "container_identities": [
+    "082826ff7cf40fd8e0ff9b0ab4389b1a4dad9e9087975afac1218b385bed42e5",
+    "0f9abc3f0fccf524eec158b8766598fb18c7b223dc694d0fdd6e048e84f16a3c",
+    "1267ba070769a7e249454fa4bb9ca53b42d021a347ee5ad2e0a1a984f04bf885",
+    "17e466c2a6a2ded4b0202b8be5dae3e4ed9c8cf853f491328ebba5efbcb5b5df",
+    "17f6759f318b811b57b1e8782f1e6c17c08c50d96f552d5a5a6c686a867a6cfc",
+    "29cbda5ba1f070a45a5cc10eaa59db1f91fbfb5265fd779d88f837095fa3f6f8",
+    "39ba49c4c724dce3863e1f37ea92afd8b4229fe1fde2a33d955a851c97fd486f",
+    "3b227a21059bb78b0559da44f61b8bfc1beebc23bd316edea5a8261dd0e0e568",
+    "3c07889cfd36b43722191135c9e113661710bb6166cc66fa73a2287a68abf73c",
+    "4ec140258681a3a4210ee4333d5e410a7a26f7b056a69fbd3f490d77c4b4bb91",
+    "57f7c3925bd8821542da186f4167dbfddc89c6a64bd68c1d3ad0c525a53b936e",
+    "5941df2749594cbe0cdf6c4582471a3d4cf5cdfae1a719c6541c376c8a940827",
+    "674d41e14175c130124b67346c714bd884a0ff8056378f6e0c55d9a058b7d4f2",
+    "67f79d773fe97784edbac03a3fe0f3d00c22d75cd5c9ff18cdee89be96227ff1",
+    "80afc1d8b28ad09496db0a8c3ca93ad286ce7ff7199b0ed92155a7fbd1c05f4d",
+    "8210ba4ee195f44067bba48fffe37e2425b79cc37ef48365a4ed0e9e515963b9",
+    "8df4fabcbe556d19f6f4a66a594b576e2031e3be361b847998d690e88852e612",
+    "908693b543f435dd2a2065f41e08c0dc53f034251c61f8f4359e95e95c146786",
+    "90f23cbd39db065a62d15c85399e9cd0c32b5b7ad63caceadf2e31edeae94338",
+    "9643a878d1c7daf7531f06353150fa2d859719f8451425b3889c4581c19fd633",
+    "97add7872e20294f57948b6c9813967f3baed53a52ecafd61aa5b2019aa3f287",
+    "9e413f5c3698001e795d5d4aea3d72b38dad0569a58019a3baa41e810c6aa5be",
+    "a0e7ef76dfb6d0198fb33d20a5e969d9a24850e6c1862f0aa30e3b7b0f0c1786",
+    "aedd4307dd8c1b1cd55608a5a2f79865bb1f2ffcf00ea3a81e5af57d2636f0db",
+    "b9738218c3acd7b758975bb3ad998ff44d9651a0b1bfe60fe22dd68c1308dbab",
+    "bd88277389d7f81310d9d941ef4bef97055c39538a8840ec3c2cb108ae56c624",
+    "c41475e130b1df3dd4971b47b2ad68419dfa8a3b15e3812afde8bb9340c1ab8a",
+    "c452d2ef0f42ca3c3062b429761e672ba9a164593a5bbb9398bc9ca11e304103",
+    "ce530df6e456d90929e4c2a90f9c2dfbf6d25e4b5bbb141459067eef01b76d94",
+    "d0add46a7e2c7a9ff5c913c0e1463d272f1c4271de566d04cbf43e4958f01359",
+    "d9ed5389331dcf119c2d216244399286c4bb99228be5db37f1b6517aa3cebfa1",
+    "dca8ae0971776c3ce1c11be7305018e93a9184d8f7e6f3363fc4e1e05e42676a",
+    "dfca644fe8a530ee9fa23f49e6126c73c84e066ea3562bd6e7002e8ea66b7867"
+  ],
+  "db_clients": [
+    {
+      "container_id": "5941df2749594cbe0cdf6c4582471a3d4cf5cdfae1a719c6541c376c8a940827",
+      "role": "skia_migrator",
+      "authority": "api_pools_and_inprocess_workers",
+      "count": 1
+    },
+    {
+      "container_id": "5941df2749594cbe0cdf6c4582471a3d4cf5cdfae1a719c6541c376c8a940827",
+      "role": "skia_onboarding",
+      "authority": "api_pools_and_inprocess_workers",
+      "count": 1
+    },
+    {
+      "container_id": "5941df2749594cbe0cdf6c4582471a3d4cf5cdfae1a719c6541c376c8a940827",
+      "role": "skia_runtime",
+      "authority": "api_pools_and_inprocess_workers",
+      "count": 2
+    }
+  ]
+}

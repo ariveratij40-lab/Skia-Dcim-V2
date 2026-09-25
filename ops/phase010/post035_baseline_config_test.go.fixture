@@ -1,0 +1,68 @@
+package main
+
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+func baselineConfig(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"DATABASE_URL", "MIGRATOR_DATABASE_URL", "ONBOARDING_DATABASE_URL", "SKIA_REQUIRE_RESTRICTED_RUNTIME_DB"} {
+		t.Setenv(key, "")
+	}
+}
+
+func TestPost035ExternalConfiguration(t *testing.T) {
+	for _, key := range []string{"DATABASE_URL", "MIGRATOR_DATABASE_URL", "ONBOARDING_DATABASE_URL"} {
+		for _, kind := range []string{"missing", "empty", "whitespace", "malformed"} {
+			t.Run(key+"/"+kind, func(t *testing.T) {
+				baselineConfig(t)
+				t.Setenv("SKIA_REQUIRE_RESTRICTED_RUNTIME_DB", "true")
+				for i, name := range []string{"DATABASE_URL", "MIGRATOR_DATABASE_URL", "ONBOARDING_DATABASE_URL"} {
+					t.Setenv(name, "host=disposable.invalid dbname=fixture user=role"+string(rune('a'+i))+" sslmode=disable")
+				}
+				switch kind {
+				case "missing":
+					os.Unsetenv(key)
+				case "empty":
+					t.Setenv(key, "")
+				case "whitespace":
+					t.Setenv(key, "   ")
+				case "malformed":
+					t.Setenv(key, "INVALID_SYNTHETIC_CONFIG")
+				}
+				r, m, o, _, err := databaseDSNsFromEnv()
+				if err == nil || r != "" || m != "" || o != "" {
+					t.Fatal("invalid config accepted")
+				}
+				if strings.Contains(err.Error(), "INVALID_SYNTHETIC_CONFIG") {
+					t.Fatal("input leaked")
+				}
+			})
+		}
+	}
+}
+
+func TestPost035OptionalInheritanceAndRestrictedConfig(t *testing.T) {
+	baselineConfig(t)
+	if _, _, _, _, err := databaseDSNsFromEnv(); err == nil {
+		t.Fatal("historical fallback remains")
+	}
+	const external = "host=disposable.invalid dbname=fixture user=runtime sslmode=disable"
+	t.Setenv("DATABASE_URL", external)
+	r, m, o, restricted, err := databaseDSNsFromEnv()
+	if err != nil || restricted || r != external || m != r || o != r {
+		t.Fatal("legitimate external inheritance changed")
+	}
+	t.Setenv("SKIA_REQUIRE_RESTRICTED_RUNTIME_DB", "true")
+	t.Setenv("MIGRATOR_DATABASE_URL", "host=disposable.invalid dbname=fixture user=migrator sslmode=disable")
+	t.Setenv("ONBOARDING_DATABASE_URL", "host=disposable.invalid dbname=fixture user=onboarding sslmode=disable")
+	if _, _, _, restricted, err := databaseDSNsFromEnv(); err != nil || !restricted {
+		t.Fatal("valid external config rejected")
+	}
+	t.Setenv("ONBOARDING_DATABASE_URL", external)
+	if _, _, _, _, err := databaseDSNsFromEnv(); err == nil {
+		t.Fatal("shared identity accepted in restricted mode")
+	}
+}
