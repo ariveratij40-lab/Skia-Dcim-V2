@@ -11,6 +11,7 @@ import secrets
 import subprocess
 import tempfile
 import time
+import ipaddress
 
 import admission_control as a
 import prepared_nginx_authority as p
@@ -27,7 +28,22 @@ from nginx_admission_service import Service
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--fresh-disposable',action='store_true',required=True)
-    parser.parse_args()
+    parser.add_argument('--operational-closure', action='store_true')
+    parser.add_argument('--descriptor-closure', action='store_true')
+    parser.add_argument('--subnet')
+    parser.add_argument('--baseline-evidence', type=Path)
+    args=parser.parse_args()
+    closure = args.operational_closure or args.descriptor_closure
+    baseline_image = None
+    if args.operational_closure:
+        import post035_baseline_image
+        a.require(args.baseline_evidence is not None, 'AUDITED_BASELINE_REQUIRED')
+        baseline_image = post035_baseline_image.verified_image(args.baseline_evidence, u.ROOT)
+    if closure:
+        from operational_custody import Custody, ExecutionAuthority, CANONICAL_MAIN, canonical, digest
+        import operational_checkpoint as checkpoint
+        import operational_descriptor as descriptor
+        a.require(bool(args.subnet), 'EXPLICIT_DISPOSABLE_SUBNET_REQUIRED')
     prefix='skia-activation-test-'+secrets.token_hex(6)
     root=Path(tempfile.mkdtemp(prefix=prefix+'-')).resolve();uid=os.getuid()
     print('FRESH_FIXTURE='+prefix+'; EVIDENCE='+str(root),flush=True)
@@ -38,14 +54,26 @@ def main():
     for image in (e.contract.IMAGE,e.WEB,n.NGINX,'postgres:16.14-alpine'):
         d.inspect('image',image)
     source=root/'source';source.mkdir()
-    archive=fixture.run(['git','-C',str(u.ROOT),'archive','7bc42600cb87494dccca50cba26f17352331ca9a'])
+    baseline_sha = ('658cfa35becaf75f851a27d44180fef20ea0f2ce' if args.operational_closure
+                    else '7bc42600cb87494dccca50cba26f17352331ca9a')
+    archive=fixture.run(['git','-C',str(u.ROOT),'archive',baseline_sha])
     fixture.run(['tar','-xf','-','-C',str(source)],archive)
     a.require(not list((source/'migrations').glob('040*')),'040_FORBIDDEN')
-    d.run(['network','create','--internal',prefix]);d.run(['volume','create',t['volume']])
+    network_args=['network','create','--internal']
+    if args.subnet:
+        wanted=ipaddress.ip_network(args.subnet)
+        a.require(wanted.is_private and wanted.version==4,'PRIVATE_SUBNET_REQUIRED')
+        for net in d.run(['network','ls','--format','{{.ID}}']).decode().splitlines():
+            for config in d.inspect('network',net).get('IPAM',{}).get('Config') or []:
+                if config.get('Subnet'):
+                    existing=ipaddress.ip_network(config['Subnet'])
+                    a.require(existing.version!=4 or not wanted.overlaps(existing),'SUBNET_OVERLAP')
+        network_args+=['--subnet',args.subnet]
+    d.run(network_args+[prefix]);d.run(['volume','create',t['volume']])
     password=secrets.token_hex(20);pg=prefix+'-pg'
     pgid=d.create(pg,{'Image':'postgres:16.14-alpine',
         'Env':['POSTGRES_USER=skia_bootstrap','POSTGRES_DB=skia_prod','POSTGRES_PASSWORD='+password],
-        'HostConfig':{'NetworkMode':prefix},'NetworkingConfig':{'EndpointsConfig':{prefix:{'Aliases':[pg]}}}})
+        'HostConfig':{'NetworkMode':prefix},'NetworkingConfig':{'EndpointsConfig':{prefix:{'Aliases':[pg,'postgres','skia_postgres_prod']}}}})
     d.run(['start',pgid])
     for _ in range(90):
         try:
@@ -67,8 +95,9 @@ def main():
         b'\\set execution_approval PHASE011_CLEAN_RLS_BOOTSTRAP_APPROVED\n'
         b'\\i /fixture/ops/phase011/activate_clean_production_rls.sql\n')
     db=b.DB(pg,'skia_prod','skia_bootstrap');observation=u.observe(db,u.contract())
-    a.require(observation['ledger_count']==31 and observation['raw']==e.POST039,'FRESH_POST039')
-    print('FRESH_BOOTSTRAP=PASS; SECOND_BOOTSTRAP=PASS; LEDGER=31; CATALOG=0; MIGRATION_040=0',flush=True)
+    expected_ledger=27 if args.operational_closure else 31
+    a.require(observation['ledger_count']==expected_ledger,'FRESH_CANONICAL_PREFIX')
+    print('FRESH_BOOTSTRAP=PASS; SECOND_BOOTSTRAP=PASS; LEDGER='+str(expected_ledger)+'; CATALOG=0; MIGRATION_040=0',flush=True)
     d.run(sql,b"""
 INSERT INTO tenants(id,name) VALUES('f2000000-0000-4000-8000-000000000001','Disposable');
 INSERT INTO users(id,email,name,password_hash) VALUES('f2000000-0000-4000-8000-000000000002','fixture@example.invalid','Fixture','synthetic');
@@ -78,18 +107,50 @@ INSERT INTO user_branches(user_id,branch_id) VALUES('f2000000-0000-4000-8000-000
 INSERT INTO user_roles(user_id,tenant_id,role_id) SELECT 'f2000000-0000-4000-8000-000000000002','f2000000-0000-4000-8000-000000000001',id FROM roles WHERE name='admin';
 INSERT INTO sessions(user_id,tenant_id,branch_id,token,expires_at) VALUES('f2000000-0000-4000-8000-000000000002','f2000000-0000-4000-8000-000000000001','f2100000-0000-4000-8000-000000000001','synthetic-executor-session',extract(epoch from now())::bigint+7200);
 """)
-    env={'GOOGLE_CLIENT_ID':'synthetic-client.apps.googleusercontent.com','GOOGLE_CLIENT_SECRET':'synthetic-fixture-secret'}
-    for name,role in zip(e.contract.expected()['required_secret_names'],('skia_runtime','skia_migrator','skia_onboarding')):
-        env[name]='postgresql://'+role+':'+password+'@'+pg+'/skia_prod?sslmode=disable'
+    import p0_config_model as model
+    redis_password=secrets.token_hex(24)
+    redis=d.create(prefix+'-redis',{'Image':'redis:7-alpine',
+        'Env':['FIXTURE_REDIS_PASSWORD='+redis_password], 'Entrypoint':['sh','-c'],
+        'Cmd':['umask 077; printf "requirepass %s\\n" "$FIXTURE_REDIS_PASSWORD" > /run/redis.conf; exec redis-server /run/redis.conf'],
+        'ExposedPorts':{'6379/tcp':{}},
+        'HostConfig':{'NetworkMode':prefix,'PortBindings':{},'Tmpfs':{'/run':'rw,noexec,nosuid,size=1m'}},
+        'NetworkingConfig':{'EndpointsConfig':{prefix:{'Aliases':['redis','skia_redis_prod']}}}})
+    d.run(['start',redis])
+    components={component:password for _,component in model.MAPPING.values()}
+    env={**model.generate(components,host='skia_postgres_prod',
+        aliases=d.inspect('container',pg)['NetworkSettings']['Networks'][prefix]['Aliases'],environment='disposable'),
+        'GOOGLE_CLIENT_ID':'synthetic-client.apps.googleusercontent.com','GOOGLE_CLIENT_SECRET':'synthetic-fixture-secret',
+        'REDIS_PASSWORD':redis_password,'JWT_SECRET':secrets.token_hex(32)}
+    env=e.assemble_runtime_environment(d,t,env)
     p.exclusive(root/'fixture.env','\n'.join(k+'='+v for k,v in env.items()).encode())
+    business_before=u.baseline(db,project=False)
     for component in ('api','web'):
         body=e.body(t,component,env)
+        if component=='api' and args.operational_closure:
+            body['Image']=baseline_image
         if component=='web':body['Image']='sha256:3fae38986f33404f205d13e49839c4d5d0e84ca18d4125ab3c6a21be43fdad14'
         cid=d.create(t[component],body);d.run(['start',cid])
         for _ in range(90):
             if d.inspect('container',cid)['State'].get('Health',{}).get('Status')=='healthy':break
             time.sleep(1)
         else:raise a.Rejected('BASELINE_HEALTH')
+    if args.operational_closure:
+        baseline_reads=['/api/auth/me','/api/dcim/sites','/api/infra/mdf-idf',
+                        '/api/infra/racks','/api/dcim/assets']
+        identity=dict(user_id='f2000000-0000-4000-8000-000000000002',
+                      tenant_id='f2000000-0000-4000-8000-000000000001',
+                      branch_id='f2100000-0000-4000-8000-000000000001')
+        d.run(['exec','-i',t['web'],'node','-e',e.PROBE],a.canonical(dict(host='backend',
+            session='synthetic-executor-session',reads=baseline_reads,web=False,identity=identity)))
+        import re
+        log_result=subprocess.run(['docker','logs',t['api']],capture_output=True)
+        a.require(log_result.returncode==0,'BASELINE_LOG_READ')
+        logs=log_result.stdout+log_result.stderr
+        a.require(not re.search(rb'does not exist|SQLSTATE|HTTP 500|missing (?:column|relation|routine)',logs,re.I),
+                  'POST035_SCHEMA_LOG_ERROR')
+        a.require(u.baseline(db,project=False)==business_before,'POST035_BUSINESS_MUTATION')
+        a.require(u.observe(db,u.contract())['ledger_count']==27,'POST035_CHANGED')
+        print('POST035_BASELINE_API_STARTUP=PASS; HEALTH=PASS; SCHEMA=PASS; READ_SMOKE=PASS; BUSINESS_DELTA=0',flush=True)
     sites=root/'sites-enabled';sites.mkdir(mode=0o700)
     base=(e.HERE/'fixtures/skia_nginx_observed.conf.fixture').read_bytes()
     target=sites/'20-skia-staging.conf';p.exclusive(target,base)
@@ -113,6 +174,17 @@ INSERT INTO sessions(user_id,tenant_id,branch_id,token,expires_at) VALUES('f2000
             a.canonical(dict(scheme=scheme,host=host,path=path,target=nginx))))
         return response['status'],response['headers']
     gate=reopen.Gate(output,root/'RELEASE.env',db,d,t,uid,uid)
+    if closure:
+        custody=Custody(output,uid,os.getgid());desc_custody=Custody(root,uid,os.getgid())
+        gate=descriptor.VerifiedReopenGate(custody,desc_custody,gate)
+        authority=dict(purpose='LOCKSTEP_WINDOW',authorized=True,window_id=window,
+            environment='disposable',database='skia_prod',canonical_main_sha=CANONICAL_MAIN,
+            operator='fixture',issued_at=int(time.time()),expires_at=int(time.time())+3600,
+            nonce=secrets.token_hex(16),database_identity=u.identity(db))
+        custody.create('window.json',canonical(authority))
+        initial_baseline=u.baseline(db)
+        custody.create('pre035-u0.json',canonical(dict(identity=u.identity(db),baseline=initial_baseline)))
+        p.exclusive(root/'RELEASE.env',b'API_SOURCE_SHA=old\nWEB_SOURCE_SHA=old\n')
     service=Service(d,nginx,reopen=gate,transport=transport)
     adapter=Adapter(target,staging,evidence,root/'lock',service,uid)
     adapter.verify('OPEN',window);print('FINAL_E2E_OPEN_BASELINE=PASS',flush=True)
@@ -126,11 +198,24 @@ INSERT INTO sessions(user_id,tenant_id,branch_id,token,expires_at) VALUES('f2000
             issued_at=now,expires_at=now+900,identity=service.identity(),manifest_sha256=a.sha(a.canonical(manifest)))))
         return adapter.transition(operation,window,auth)
     closed=transition('CLOSED');print('FINAL_E2E_ADMISSION_CLOSE=PASS',flush=True)
-    # Retire only this harness's baseline API after admission closes; install a
-    # stopped old image to exercise actual API replacement, never start it.
-    baseline_api=d.inspect('container',t['api'])['Id'];d.run(['stop',baseline_api]);d.run(['rm',baseline_api])
-    old=e.body(t,'api',{});old['Image']='sha256:35e62b53527a2562b8db49902b2baba08d366564098a2f3b1b8b05f17ea7d5d9'
-    d.create(t['api'],old)
+    # Keep the actual stopped baseline identity for the executor transition.
+    baseline_api=d.inspect('container',t['api'])['Id'];d.run(['stop',baseline_api])
+    if args.operational_closure:
+        now=int(time.time());observed=u.observe(db,u.contract())
+        quiescence=dict(identity=observed['identity'],observed_at=now,requested=True,verified=True,
+            old_api_writers_active=False,in_flight_drained=True,
+            external_isolation_reference='disposable-closed-and-old-api-stopped')
+        grant={**authority,'purpose':'LOCKSTEP_CHECKPOINT','nonce':secrets.token_hex(16),
+               'window_sha256':digest(canonical(authority))}
+        custody.create('checkpoint.authorization',canonical(grant))
+        cp=checkpoint.create(db,quiescence,custody,('restore_one','restore_two'))
+        a.require(cp['recovery_verified'] and len(cp['restore_evidence'])==2,'TWO_RECOVERIES')
+        a.require(u.baseline(db)==initial_baseline,'U0_RECHECK')
+        print('OPERATIONAL_CHECKPOINT_AND_TWO_RECOVERIES=PASS',flush=True)
+        cp['path']=str(output/'checkpoint.dump')
+        checkpoint.validate(cp,grant,ExecutionAuthority(custody).expected,custody)
+        u.upgrade(db,quiescence,initial_baseline,cp)
+        print('CONTROL_PLANE_DB_PROGRESSION=PASS_27_28_29_30_31',flush=True)
     now=int(time.time());observed=u.observe(db,u.contract())
     u0=dict(window=window,observed_at=now,daemon_id=d.daemon(),identity=observed['identity'],baseline=observed['baseline'])
     isolation=dict(window=window,observed_at=now,daemon_id=d.daemon(),identity=observed['identity'],
@@ -148,11 +233,27 @@ INSERT INTO sessions(user_id,tenant_id,branch_id,token,expires_at) VALUES('f2000
         current_containers={c:d.inspect('container',t[c])['Id'] for c in ('api','web')})
     post.publish(output/'activation.authorization',auth);post.publish(output/'session-metadata.json',metadata)
     p.exclusive(output/'session',b'synthetic-executor-session')
-    executor=e.Executor(d,t,auth,eraw,env,'synthetic-executor-session',output/'activation.journal')
+    journal_name='activation-'+window+'.jsonl' if closure else 'activation.journal'
+    executor=e.Executor(d,t,auth,eraw,env,'synthetic-executor-session',output/journal_name)
     executor.preflight();print('FINAL_E2E_ACTIVATION_AUTHORIZATION=PASS',flush=True)
     executor.execute();print('FINAL_E2E_API_WEB_ACTIVATION=PASS',flush=True)
     post.publish(output/'runtime.json',reopen.runtime(d,t,window,'synthetic-executor-session',metadata))
-    p.exclusive(root/'RELEASE.env',('API_SOURCE_SHA='+reopen.SOURCE+'\nWEB_SOURCE_SHA='+reopen.SOURCE+'\n').encode())
+    if closure:
+        now=int(time.time())
+        grant={**authority,'purpose':'RELEASE_DESCRIPTOR_UPDATE','nonce':secrets.token_hex(16),
+            'issued_at':now,'expires_at':now+900,'window_sha256':digest(canonical(authority)),
+            'operation':'UPDATE_RELEASE_DESCRIPTOR','post039_sha256':digest(eraw),
+            'activation_sha256':digest((output/'activation.authorization').read_bytes()),
+            'activation_journal_sha256':digest((output/journal_name).read_bytes()),
+            'integrated_runtime_sha256':digest((output/'runtime.json').read_bytes()),
+            'api_container_id':d.inspect('container',t['api'])['Id'],
+            'web_container_id':d.inspect('container',t['web'])['Id'],
+            'previous_descriptor_sha256':digest((root/'RELEASE.env').read_bytes())}
+        custody.create('descriptor.authorization',canonical(grant))
+        descriptor.update(custody,desc_custody,custody,db,d,t,adapter)
+        print('DESCRIPTOR_DISPOSABLE_REHEARSAL=PASS',flush=True)
+    else:
+        p.exclusive(root/'RELEASE.env',('API_SOURCE_SHA='+reopen.SOURCE+'\nWEB_SOURCE_SHA='+reopen.SOURCE+'\n').encode())
     post.publish(output/'reopen.json',reopen.assemble_bundle(output,root/'RELEASE.env',owner=uid,descriptor_owner=uid))
     transition('OPEN');adapter.verify('OPEN',window)
     a.require(target.read_bytes()==base and (sites/'99-unrelated.conf').read_bytes()==unrelated,'NGINX_PRESERVATION')
@@ -164,5 +265,9 @@ INSERT INTO sessions(user_id,tenant_id,branch_id,token,expires_at) VALUES('f2000
 if __name__=='__main__':
     try:main()
     except Exception as error:
+        import traceback
+        # Frame locations only: exceptions/subprocess output may carry fixture secrets.
+        print('FAILURE_TYPE='+type(error).__name__+'; FRAMES='+','.join(
+            frame.name+':'+str(frame.lineno) for frame in traceback.extract_tb(error.__traceback__)))
         code=str(error) if isinstance(error,(a.Rejected,e.Rejected)) else 'INTERNAL_FAILURE'
         print('FINAL_E2E=STOPPED; CODE='+code+'; FIXTURE_PRESERVED=YES');raise SystemExit(1)
