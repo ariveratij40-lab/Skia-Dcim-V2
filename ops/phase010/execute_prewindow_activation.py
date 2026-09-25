@@ -153,6 +153,12 @@ def production_configuration_preflight(docker, raw):
     """P0-capable metadata only. Does not authorize or perform activation."""
     secrets = parse_secrets(raw, True, 'skia_postgres_prod',
                             aliases=production_database_aliases(docker))
+    secrets = assemble_runtime_environment(docker, topology(), secrets)
+    current = docker.inspect('container', topology()['api'])
+    previous = dict(x.split('=', 1) for x in current['Config']['Env'])
+    require(all(k not in previous or secrets.get(k) == previous[k]
+                for k in contract.expected()['preserve_existing_environment_names']),
+            'RUNTIME_ENV_PRESERVATION')
     candidate = body(topology(), 'api', secrets)
     require(candidate['Image'] == contract.IMAGE, 'MODEL_B_CANDIDATE_IDENTITY')
     del candidate, secrets
@@ -160,6 +166,37 @@ def production_configuration_preflight(docker, raw):
             'MODEL_B_ROLE_MAPPING': 'EXACT_DISTINCT_3',
             'CANDIDATE_ENVIRONMENT_CONSTRUCTIBLE': True,
             'ACTIVATION_AUTHORIZED': False, 'MUTATION': False}
+
+
+REDIS_TOPOLOGY_ENV = {'REDIS_HOST': 'redis', 'REDIS_PORT': '6379'}
+
+
+def validate_runtime_environment(values):
+    require(all(values.get(k) == v for k, v in REDIS_TOPOLOGY_ENV.items()),
+            'REDIS_TOPOLOGY_CONFIGURATION')
+    password = values.get('REDIS_PASSWORD')
+    require(isinstance(password, str) and bool(password) and password == password.strip()
+            and not any(ord(c) < 32 or ord(c) == 127 for c in password),
+            'REDIS_AUTHORITY_REQUIRED')
+
+
+def assemble_runtime_environment(docker, t, secrets):
+    """Only governed nonsecret Redis topology; never copy current-container Env."""
+    name = 'skia_redis_prod' if t['environment'] == 'production' else t['network'] + '-redis'
+    network = docker.inspect('network', t['network'])
+    redis = docker.inspect('container', name)
+    endpoint = redis.get('NetworkSettings', {}).get('Networks', {}).get(t['network'], {})
+    require(network.get('Internal') is True and network.get('Driver') == 'bridge'
+            and network.get('Id') and endpoint.get('NetworkID') == network['Id']
+            and {'redis', 'skia_redis_prod'} <= set(endpoint.get('Aliases') or []),
+            'REDIS_NETWORK_AUTHORITY')
+    require('6379/tcp' in (redis.get('Config', {}).get('ExposedPorts') or {})
+            and not redis.get('HostConfig', {}).get('PortBindings'), 'REDIS_PORT_AUTHORITY')
+    require(all(k not in secrets or secrets[k] == v for k, v in REDIS_TOPOLOGY_ENV.items()),
+            'REDIS_TOPOLOGY_CONFLICT')
+    assembled = model.RuntimeSecrets({**secrets, **REDIS_TOPOLOGY_ENV})
+    validate_runtime_environment(assembled)
+    return assembled
 
 
 class Docker:
@@ -477,6 +514,7 @@ def main():
                             'skia_postgres_prod' if production else args.disposable_prefix + '-pg',
                             aliases=production_database_aliases(Docker()) if production else None)
     if production:
+        secrets = assemble_runtime_environment(Docker(), t, secrets)
         resolved = {n: {'name': n, 'source': secret_path, 'classification': contract.PRODUCTION_MODE,
                         'resolved': True, 'synthetic': False} for n in contract.OAUTH_NAMES}
         spec = contract.expected()

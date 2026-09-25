@@ -202,12 +202,20 @@ class ExecutorTests(unittest.TestCase):
     def test_model_b_read_only_preflight(self):
         env={v[1]:'opaque-password' for v in e.model.MAPPING.values()}
         env.update({k:'opaque-value' for k in e.contract.OAUTH_NAMES})
+        env['REDIS_PASSWORD']='opaque-redis'
         raw='\n'.join(k+'='+v for k,v in env.items()).encode()
         d=FakeDocker(e.topology())
         pg={'NetworkSettings':{'Networks':{'skia_prod_internal':{
             'NetworkID':'network-id','Aliases':['postgres','skia_postgres_prod']}}}}
         original=d.inspect
-        with patch.object(d,'inspect',side_effect=lambda kind,name: pg if kind=='container' else original(kind,name)):
+        redis={'NetworkSettings':{'Networks':{'skia_prod_internal':{
+            'NetworkID':'network-id','Aliases':['redis','skia_redis_prod']}}},
+            'Config':{'ExposedPorts':{'6379/tcp':{}}},'HostConfig':{'PortBindings':{}}}
+        def inspect(kind,name):
+            if name=='skia_postgres_prod':return pg
+            if name=='skia_redis_prod':return redis
+            return original(kind,name)
+        with patch.object(d,'inspect',side_effect=inspect):
             result=e.production_configuration_preflight(d,raw)
             self.assertIs(result['ACTIVATION_AUTHORIZED'],False)
             self.assertNotIn('opaque',json.dumps(result))

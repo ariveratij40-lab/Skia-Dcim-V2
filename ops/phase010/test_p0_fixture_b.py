@@ -54,6 +54,16 @@ def main(subnet):
     d = e.Docker(); t = e.topology(prefix)
     d.run(['network', 'create', '--internal', '--subnet', subnet, prefix])
     d.run(['volume', 'create', t['volume']])
+    redis_password = secrets.token_hex(24)
+    redis = d.create(prefix+'-redis', {
+        'Image': 'redis:7-alpine',
+        'Env': ['FIXTURE_REDIS_PASSWORD='+redis_password],
+        'Entrypoint': ['sh', '-c'],
+        'Cmd': ['umask 077; printf "requirepass %s\\n" "$FIXTURE_REDIS_PASSWORD" > /run/redis.conf; exec redis-server /run/redis.conf'],
+        'ExposedPorts': {'6379/tcp': {}},
+        'HostConfig': {'NetworkMode': prefix, 'PortBindings': {}, 'Tmpfs': {'/run': 'rw,noexec,nosuid,size=1m'}},
+        'NetworkingConfig': {'EndpointsConfig': {prefix: {'Aliases': ['redis', 'skia_redis_prod']}}}})
+    d.run(['start', redis])
     password = secrets.token_hex(24)
     cid = d.create(pg, {'Image': 'postgres:16.14-alpine',
         'Env': ['POSTGRES_USER=skia_bootstrap', 'POSTGRES_DB=skia_prod', 'POSTGRES_PASSWORD='+password],
@@ -107,8 +117,10 @@ INSERT INTO user_roles(user_id,tenant_id,role_id) SELECT 'f2000000-0000-4000-800
     aliases=inspected['NetworkSettings']['Networks'][prefix]['Aliases']
     components={component:password for _,component in model.MAPPING.values()}
     components.update(GOOGLE_CLIENT_ID=secrets.token_hex(24)+'.apps.googleusercontent.com',GOOGLE_CLIENT_SECRET=secrets.token_hex(24))
+    components.update(REDIS_PASSWORD=redis_password, JWT_SECRET=secrets.token_hex(32))
     raw='\n'.join(k+'='+v for k,v in components.items()).encode()
     env=e.parse_secrets(raw,True,'skia_postgres_prod',aliases=aliases)
+    env=e.assemble_runtime_environment(d,t,env)
     print('B_MODEL_B_PRODUCTION_ASSEMBLY=PASS',flush=True)
     before=u.baseline(db,project=False)
     activation_guard(db,d,t,contract)
@@ -138,8 +150,31 @@ INSERT INTO user_roles(user_id,tenant_id,role_id) SELECT 'f2000000-0000-4000-800
     b.require(candidate['Image']==e.contract.IMAGE, 'EXACT_API_IMAGE')
     runtime_env=dict(item.split('=',1) for item in candidate['Config']['Env'])
     model.validate(runtime_env)
+    e.validate_runtime_environment(runtime_env)
+    b.require(runtime_env['REDIS_PASSWORD']==redis_password, 'REDIS_PASSWORD_PRESERVATION')
+    redis_probe = r"""
+const net=require('net');let input='';process.stdin.on('data',d=>input+=d);
+process.stdin.on('end',async()=>{
+ const p=JSON.parse(input);
+ function command(parts){return '*'+parts.length+'\r\n'+parts.map(x=>'$'+Buffer.byteLength(x)+'\r\n'+x+'\r\n').join('')}
+ function probe(password,valid){return new Promise((resolve,reject)=>{
+  let data='';const s=net.connect(6379,'redis',()=>s.write(command(['AUTH',password])+command(['PING'])));
+  s.setTimeout(5000,()=>{s.destroy();reject(new Error('timeout'))});
+  s.on('error',reject);s.on('data',d=>{data+=d;
+   if(valid&&data.includes('+OK\r\n+PONG\r\n')){s.destroy();resolve()}
+   if(!valid&&data.includes('-WRONGPASS')&&data.includes('-NOAUTH')){s.destroy();resolve()}
+  });
+ })}
+ try{await probe(p.password,true);await probe(p.invalid,false);process.exit(0)}catch(e){process.exit(1)}
+});
+"""
+    d.run(['exec','-i',t['web'],'node','-e',redis_probe],
+          json.dumps({'password':redis_password,'invalid':secrets.token_hex(24)}).encode())
+    print('REDIS_CONNECTIVITY=PASS; REDIS_AUTHENTICATION=PASS; REDIS_INVALID_PASSWORD=DENIED; REDIS_APPLICATION_SMOKE=NOT_APPLICABLE',flush=True)
     b.require(runtime_env['SKIA_REQUIRE_RESTRICTED_RUNTIME_DB']=='true','RESTRICTED_MODE')
     logs=d.run(['logs',t['api']])
+    for key in ('REDIS_PASSWORD','JWT_SECRET','GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET'):
+        b.require(runtime_env[key].encode() not in logs,'SECRET_LOG_LEAK')
     for key in model.MAPPING:
         b.require(runtime_env[key].encode() not in logs and
                   unquote(urlsplit(runtime_env[key]).password).encode() not in logs,'SECRET_LOG_LEAK')
