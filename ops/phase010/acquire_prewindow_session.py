@@ -39,11 +39,15 @@ REASONS = {
 
 
 class SafeStop(e.Rejected):
-    def __init__(self, stage, reason, http_class=None):
+    def __init__(self, stage, reason, http_class=None, auth_http_status=None):
         if reason not in REASONS.get(stage, ()):
             stage, reason, http_class = 'INTERNAL', 'UNEXPECTED_INTERNAL_ERROR', None
         self.stage, self.reason = stage, reason
         self.http_class = http_class if http_class in ('4XX', '5XX') else None
+        self.auth_http_status = (auth_http_status if stage == 'AUTH'
+                                 and reason == 'AUTH_HTTP_REJECTED'
+                                 and type(auth_http_status) is int
+                                 and 100 <= auth_http_status <= 599 else None)
         super().__init__(reason)
 
     def report(self):
@@ -57,6 +61,8 @@ class SafeStop(e.Rejected):
               ('NO' if self.stage in ('PRECHECK', 'INPUT') else 'UNKNOWN'))
         if self.http_class:
             print('HTTP_STATUS_CLASS=' + self.http_class)
+        if self.auth_http_status is not None:
+            print('AUTH_HTTP_STATUS=' + str(self.auth_http_status))
 
 
 @contextmanager
@@ -71,9 +77,9 @@ def boundary(stage, reason):
         raise SafeStop(stage, reason) from None
 
 
-def require(ok, stage, reason, http_class=None):
+def require(ok, stage, reason, http_class=None, auth_http_status=None):
     if not ok:
-        raise SafeStop(stage, reason, http_class)
+        raise SafeStop(stage, reason, http_class, auth_http_status)
 
 
 def request(method, path, payload=None, token=None):
@@ -117,8 +123,10 @@ def acquire(email, password, identity, transport=request):
         payload = json.dumps({'email': email, 'password': password}).encode()
     with boundary('AUTH', 'AUTH_RESPONSE_INVALID'):
         status, headers, _ = transport('POST', '/api/auth/login', payload)
+    require(type(status) is int and 100 <= status <= 599, 'AUTH', 'AUTH_RESPONSE_INVALID')
     require(status == 200, 'AUTH', 'AUTH_HTTP_REJECTED',
-            '4XX' if 400 <= status < 500 else '5XX' if 500 <= status < 600 else None)
+            '4XX' if 400 <= status < 500 else '5XX' if 500 <= status < 600 else None,
+            auth_http_status=status)
     cookies = [v for k, v in headers if k.lower() == 'set-cookie'
                and v.startswith('session_token=')]
     require(len(cookies) == 1, 'AUTH', 'TOKEN_OR_SESSION_MISSING')
